@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add Agent tool loop: model can call GitLab API tools (file_read, search_code, git_log) during chat for deeper codebase context.
+- Add unified `callWithTools` API across OpenAI, Anthropic, and Gemini runtimes with provider-specific tool call formats.
+- Add tool call event display in chat UI showing real-time tool execution progress.
 - Add multi-provider support: OpenAI-compatible, Anthropic, and Google Gemini with provider-specific runtimes and factory pattern.
 - Add provider selector tabs in settings with auto-fill defaults (base URL, model, API key placeholder).
 - Add configurable rule pack management: structured RulePack schema with regex pattern matching, glob-based file path scoping (include/exclude), versioning, and built-in rule migration.

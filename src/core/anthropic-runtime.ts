@@ -1,4 +1,5 @@
 import { diffContext } from './diff';
+import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
 import type {
   ChatMessage,
   CodeSelection,
@@ -6,8 +7,18 @@ import type {
   RuntimeSettings,
 } from './types';
 
+export type ToolCallResponse = { type: 'text'; content: string } | { type: 'tool_calls'; calls: ToolCall[] };
+
+interface AnthropicContentBlock {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
 interface AnthropicResponse {
-  content?: { type: string; text: string }[];
+  content?: AnthropicContentBlock[];
   error?: { message?: string };
   stop_reason?: string;
 }
@@ -168,5 +179,88 @@ export class AnthropicRuntime {
     });
     if (!response.ok) throw new Error(`Anthropic API 返回 HTTP ${response.status}`);
     return true;
+  }
+
+  async callWithTools(
+    messages: { role: 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; toolName?: string }[],
+    tools: ToolDefinition[],
+    system: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ToolCallResponse> {
+    const anthropicTools = tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters,
+    }));
+
+    // Convert unified AgentMessage[] to Anthropic format
+    const anthropicMessages = this.convertToAnthropicMessages(messages);
+
+    const body: Record<string, unknown> = {
+      model: this.settings.model,
+      max_tokens: this.settings.effort === 'thorough' ? 8192 : 4096,
+      system,
+      messages: anthropicMessages,
+      tools: anthropicTools,
+    };
+
+    const response = await fetch(this.endpoint(), {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as AnthropicResponse;
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message ?? `Anthropic API 返回 HTTP ${response.status}`);
+    }
+
+    const toolUseBlocks = payload.content?.filter((block) => block.type === 'tool_use') ?? [];
+    if (toolUseBlocks.length > 0) {
+      return {
+        type: 'tool_calls',
+        calls: toolUseBlocks.map((block) => ({
+          id: block.id!,
+          name: block.name!,
+          arguments: block.input ?? {},
+        })),
+      };
+    }
+
+    const textParts = payload.content?.filter((block) => block.type === 'text') ?? [];
+    return { type: 'text', content: textParts.map((block) => block.text ?? '').join('') };
+  }
+
+  private convertToAnthropicMessages(
+    messages: { role: 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; toolName?: string }[],
+  ): { role: 'user' | 'assistant'; content: string | AnthropicContentBlock[] }[] {
+    const result: { role: 'user' | 'assistant'; content: string | AnthropicContentBlock[] }[] = [];
+    let pendingToolResults: AnthropicContentBlock[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'tool') {
+        pendingToolResults.push({
+          type: 'tool_result',
+          tool_use_id: msg.tool_call_id,
+          content: msg.content,
+        });
+      } else if (msg.role === 'user') {
+        if (pendingToolResults.length > 0) {
+          result.push({ role: 'user', content: [...pendingToolResults, { type: 'text', text: msg.content }] });
+          pendingToolResults = [];
+        } else {
+          result.push({ role: 'user', content: msg.content });
+        }
+      } else {
+        result.push({ role: 'assistant', content: msg.content });
+      }
+    }
+
+    if (pendingToolResults.length > 0) {
+      result.push({ role: 'user', content: pendingToolResults });
+    }
+
+    return result;
   }
 }

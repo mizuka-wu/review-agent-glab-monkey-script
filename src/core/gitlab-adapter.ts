@@ -253,6 +253,32 @@ export class GitLabAdapter {
       `/api/v4/projects/${this.projectRef()}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`,
     );
   }
+
+  async searchCode(query: string, ref: string, signal?: AbortSignal) {
+    const data = await this.request<{ filename: string; path: string; ref: string; startline: number; data: string }[]>(
+      `/api/v4/projects/${this.projectRef()}/search?scope=blobs&search=${encodeURIComponent(query)}&ref=${encodeURIComponent(ref)}`,
+      { signal },
+    );
+    return data.map((item) => ({
+      path: item.path,
+      line: item.startline,
+      ref: item.ref,
+      snippet: item.data,
+    }));
+  }
+
+  async getGitLog(path: string, ref: string, signal?: AbortSignal) {
+    const data = await this.request<{ id: string; short_id: string; title: string; created_at: string; author_name: string }[]>(
+      `/api/v4/projects/${this.projectRef()}/repository/commits?ref_name=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}&per_page=10`,
+      { signal },
+    );
+    return data.map((commit) => ({
+      sha: commit.short_id,
+      message: commit.title,
+      author: commit.author_name,
+      date: commit.created_at,
+    }));
+  }
 }
 
 export function mergeRequestRefFromPage(page: PageContext): MergeRequestRef | undefined {

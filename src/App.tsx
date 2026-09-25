@@ -7,7 +7,9 @@ import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
-import { createModelRuntime, type ModelRuntime } from './core/model-runtime';
+import { createModelRuntime, type ModelRuntime, type AgentMessage } from './core/model-runtime';
+import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
+import { GitLabToolExecutor } from './core/agent-tools';
 import { providerPresets } from './core/settings';
 import { ReviewEngine } from './core/review-engine';
 import {
@@ -80,6 +82,7 @@ export default function App({ page, adapter }: AppProps) {
   const [editingPackId, setEditingPackId] = useState<string | null>(null);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
+  const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
 
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
@@ -162,9 +165,33 @@ export default function App({ page, adapter }: AppProps) {
       return;
     }
     setResponding(true);
+    setToolEvents([]);
     try {
-      const answer = await runtime.chat(history, attachment);
-      setMessages((current) => [...current, { id: `assistant-${Date.now()}`, role: 'assistant', content: answer }]);
+      if (mergeRequestRef && mrContext) {
+        // Use agent loop with GitLab tools when on an MR page
+        const executor = new GitLabToolExecutor(adapter, mergeRequestRef, mrContext.diffRefs.headSha);
+        const agentMessages: AgentMessage[] = [
+          ...history.filter((m) => m.role !== 'system' && !m.error).map((m) => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.attachment
+              ? `${m.content}\n\n[代码选区: ${m.attachment.filePath}:L${m.attachment.startLine}-${m.attachment.endLine}]\n\`\`\`\n${m.attachment.text}\n\`\`\``
+              : m.content,
+          })),
+        ];
+        const result = await runAgentLoop(runtime, executor, agentMessages, {
+          onEvent: (event) => setToolEvents((prev) => [...prev, event]),
+        });
+        setMessages((current) => [...current, {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: result.text + (result.toolCalls.length > 0
+            ? `\n\n---\n🔧 调用了 ${result.toolCalls.length} 次工具，${result.iterations} 轮推理`
+            : ''),
+        }]);
+      } else {
+        const answer = await runtime.chat(history, attachment);
+        setMessages((current) => [...current, { id: `assistant-${Date.now()}`, role: 'assistant', content: answer }]);
+      }
     } catch (error) {
       setMessages((current) => [...current, {
         id: `error-${Date.now()}`, role: 'assistant', error: true,
@@ -465,7 +492,7 @@ export default function App({ page, adapter }: AppProps) {
             <div className="ra-messages" aria-live="polite">
               {messages.length === 0 && <div className="ra-empty-card"><h3>询问真实代码</h3><p>在页面中选中 Diff 代码，或直接输入关于当前 MR 的问题。</p><div className="ra-suggestions">{suggestions.map((item) => <button type="button" className="ra-suggestion" key={item} onClick={() => setDraft(item)}>{item}</button>)}</div></div>}
               {messages.map((message) => <div className={`ra-message ${message.role}${message.error ? ' error' : ''}`} key={message.id}><div className="ra-message-label">{message.role === 'user' ? '你' : 'Review Agent'}</div>{message.attachment && <div className="ra-attachment"><strong>{message.attachment.filePath}</strong><span>L{message.attachment.startLine}-{message.attachment.endLine}</span></div>}<div className="ra-message-body">{message.content}</div></div>)}
-              {responding && <div className="ra-message"><div className="ra-message-label">Review Agent</div><div className="ra-message-body"><LoaderCircle size={14} /> 正在调用模型服务…</div></div>}
+              {responding && <div className="ra-message"><div className="ra-message-label">Review Agent</div><div className="ra-message-body"><LoaderCircle size={14} /> 正在调用模型服务…{toolEvents.length > 0 && <div className="ra-tool-events">{toolEvents.map((event, idx) => <div key={idx} className={`ra-tool-event ${event.type}`}><span className="ra-tool-event-icon">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>{event.message}</div>)}</div>}</div></div>}
             </div>
             <form className="ra-composer" onSubmit={sendChat}>
               {attachment && <div className="ra-context-chip"><span>{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span><button type="button" className="ra-icon-btn on-light" onClick={() => setAttachment(undefined)} aria-label="移除代码附件"><X size={13} /></button></div>}

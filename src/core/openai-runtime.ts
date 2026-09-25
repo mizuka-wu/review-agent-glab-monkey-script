@@ -1,4 +1,5 @@
 import { diffContext } from './diff';
+import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
 import type {
   ChatMessage,
   CodeSelection,
@@ -6,8 +7,16 @@ import type {
   RuntimeSettings,
 } from './types';
 
+export type ToolCallResponse = { type: 'text'; content: string } | { type: 'tool_calls'; calls: ToolCall[] };
+
+interface OpenAIToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
 interface ChatCompletionResponse {
-  choices?: { message?: { content?: string } }[];
+  choices?: { message?: { content?: string; tool_calls?: OpenAIToolCall[] } }[];
   error?: { message?: string };
 }
 
@@ -160,5 +169,57 @@ export class OpenAIRuntime {
     });
     if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}`);
     return true;
+  }
+
+  async callWithTools(
+    messages: { role: 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string }[],
+    tools: ToolDefinition[],
+    system: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ToolCallResponse> {
+    const openaiTools = tools.map((tool) => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
+
+    const openaiMessages = [
+      { role: 'system' as const, content: system },
+      ...messages,
+    ];
+
+    const response = await fetch(endpoint(this.settings.modelBaseUrl, '/chat/completions'), {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        model: this.settings.model,
+        messages: openaiMessages,
+        tools: openaiTools,
+        temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+      }),
+      signal: options.signal,
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message ?? `模型服务返回 HTTP ${response.status}`);
+    }
+
+    const message = payload.choices?.[0]?.message;
+    if (message?.tool_calls && message.tool_calls.length > 0) {
+      return {
+        type: 'tool_calls',
+        calls: message.tool_calls.map((tc) => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments),
+        })),
+      };
+    }
+
+    return { type: 'text', content: message?.content ?? '' };
   }
 }

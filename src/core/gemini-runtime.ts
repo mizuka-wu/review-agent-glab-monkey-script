@@ -1,4 +1,5 @@
 import { diffContext } from './diff';
+import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
 import type {
   ChatMessage,
   CodeSelection,
@@ -6,8 +7,12 @@ import type {
   RuntimeSettings,
 } from './types';
 
+export type ToolCallResponse = { type: 'text'; content: string } | { type: 'tool_calls'; calls: ToolCall[] };
+
 interface GeminiPart {
-  text: string;
+  text?: string;
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: { name: string; response: { content: string; error?: string } };
 }
 
 interface GeminiContent {
@@ -171,5 +176,91 @@ export class GeminiRuntime {
     });
     if (!response.ok) throw new Error(`Gemini API 返回 HTTP ${response.status}`);
     return true;
+  }
+
+  async callWithTools(
+    messages: { role: 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; toolName?: string }[],
+    tools: ToolDefinition[],
+    system: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ToolCallResponse> {
+    const geminiTools = [{
+      function_declarations: tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+    }];
+
+    const contents = this.convertToGeminiContents(messages);
+
+    const body: Record<string, unknown> = {
+      contents,
+      systemInstruction: { parts: [{ text: system }] },
+      tools: geminiTools,
+      generationConfig: {
+        temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+      },
+    };
+
+    const response = await fetch(this.endpoint('generateContent'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as GeminiResponse;
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error?.message ?? `Gemini API 返回 HTTP ${response.status}`);
+    }
+
+    const parts = payload.candidates?.[0]?.content?.parts ?? [];
+    const functionCalls = parts.filter((part) => part.functionCall);
+    if (functionCalls.length > 0) {
+      return {
+        type: 'tool_calls',
+        calls: functionCalls.map((part, index) => ({
+          id: `gemini-call-${index}`,
+          name: part.functionCall!.name,
+          arguments: part.functionCall!.args,
+        })),
+      };
+    }
+
+    return { type: 'text', content: parts.map((part) => part.text ?? '').join('') };
+  }
+
+  private convertToGeminiContents(
+    messages: { role: 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string; toolName?: string }[],
+  ): GeminiContent[] {
+    const result: GeminiContent[] = [];
+    let pendingResponses: GeminiPart[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'tool') {
+        pendingResponses.push({
+          functionResponse: {
+            name: msg.toolName ?? 'unknown',
+            response: { content: msg.content },
+          },
+        });
+      } else if (msg.role === 'user') {
+        if (pendingResponses.length > 0) {
+          result.push({ role: 'user', parts: [...pendingResponses, { text: msg.content }] });
+          pendingResponses = [];
+        } else {
+          result.push({ role: 'user', parts: [{ text: msg.content }] });
+        }
+      } else {
+        result.push({ role: 'model', parts: [{ text: msg.content }] });
+      }
+    }
+
+    if (pendingResponses.length > 0) {
+      result.push({ role: 'user', parts: pendingResponses });
+    }
+
+    return result;
   }
 }

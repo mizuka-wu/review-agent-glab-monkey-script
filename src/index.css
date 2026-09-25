@@ -704,6 +704,35 @@ select:focus-visible {
   font-size: 10px;
 }
 
+/* Agent Tool Events */
+.ra-tool-events {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+.ra-tool-event {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  color: #4a5568;
+  background: #f1f5f9;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.ra-tool-event.tool_call { color: #2453a6; background: #e0eafc; }
+.ra-tool-event.tool_result { color: #176b3a; background: #dff4e7; }
+.ra-tool-event.error { color: #a52a22; background: #fde5e2; }
+.ra-tool-event-icon {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-family: monospace;
+  font-weight: 700;
+}
+
 /* Provider Tabs */
 .ra-provider-tabs {
   display: grid;
