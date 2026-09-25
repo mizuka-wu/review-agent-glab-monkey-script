@@ -125,7 +125,10 @@ export interface ChatMessage {
   error?: boolean;
 }
 
+export type ModelProvider = 'openai' | 'anthropic' | 'gemini';
+
 export interface RuntimeSettings {
+  provider: ModelProvider;
   modelBaseUrl: string;
   apiKey: string;
   model: string;

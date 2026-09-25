@@ -7,7 +7,8 @@ import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
-import { OpenAIRuntime } from './core/openai-runtime';
+import { createModelRuntime, type ModelRuntime } from './core/model-runtime';
+import { providerPresets } from './core/settings';
 import { ReviewEngine } from './core/review-engine';
 import {
   addRulePack,
@@ -80,7 +81,7 @@ export default function App({ page, adapter }: AppProps) {
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
 
-  const runtime = useMemo(() => new OpenAIRuntime(settings), [settings]);
+  const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
   const mergeRequestRef = useMemo(() => mergeRequestRefFromPage(page), [page]);
   const runtimeConfigured = runtime.configured;
@@ -491,11 +492,29 @@ export default function App({ page, adapter }: AppProps) {
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">
-            <h3 className="ra-section-title">OpenAI-compatible 模型</h3>
+            <h3 className="ra-section-title">模型提供商</h3>
+            <div className="ra-provider-tabs">
+              {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`ra-provider-tab${settings.provider === key ? ' active' : ''}`}
+                  onClick={() => {
+                    const provider = key as RuntimeSettings['provider'];
+                    setSettings({
+                      ...settings,
+                      provider,
+                      modelBaseUrl: preset.defaultBaseUrl,
+                      model: preset.defaultModel,
+                    });
+                  }}
+                >{preset.label}</button>
+              ))}
+            </div>
             <div className="ra-settings-grid">
-              <div className="ra-field"><label htmlFor="model-url">Base URL</label><input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} /></div>
-              <div className="ra-field"><label htmlFor="model-name">模型</label><input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></div>
-              <div className="ra-field"><label htmlFor="api-key">API Key</label><input id="api-key" type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} autoComplete="off" /></div>
+              <div className="ra-field"><label htmlFor="model-url">Base URL</label><input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} /></div>
+              <div className="ra-field"><label htmlFor="model-name">模型</label><input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} placeholder={providerPresets[settings.provider].defaultModel} /></div>
+              <div className="ra-field"><label htmlFor="api-key">API Key</label><input id="api-key" type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} autoComplete="off" placeholder={providerPresets[settings.provider].placeholderKey} /></div>
               <div className="ra-field"><label htmlFor="gitlab-token">GitLab PAT（可选）</label><input id="gitlab-token" type="password" value={settings.gitlabToken} onChange={(event) => setSettings({ ...settings, gitlabToken: event.target.value })} autoComplete="off" /></div>
               <div className="ra-field"><label htmlFor="effort">审查强度</label><select id="effort" value={settings.effort} onChange={(event) => setSettings({ ...settings, effort: event.target.value as RuntimeSettings['effort'] })}><option value="fast">fast</option><option value="balanced">balanced</option><option value="thorough">thorough</option></select></div>
               <div className="ra-field"><label htmlFor="language">输出语言</label><select id="language" value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as RuntimeSettings['language'] })}><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></div>

@@ -704,6 +704,33 @@ select:focus-visible {
   font-size: 10px;
 }
 
+/* Provider Tabs */
+.ra-provider-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  margin-bottom: 12px;
+  padding: 3px;
+  background: #e9edf3;
+  border-radius: 6px;
+}
+.ra-provider-tab {
+  min-height: 32px;
+  padding: 5px 8px;
+  color: #5a687c;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+}
+.ra-provider-tab.active {
+  color: #1b437d;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(31, 43, 62, 0.12);
+}
+
 /* Rule Pack Management */
 .ra-rule-pack-list { display: grid; gap: 8px; margin-bottom: 12px; }
 .ra-rule-pack-item {

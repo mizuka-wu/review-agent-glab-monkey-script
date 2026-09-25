@@ -1,9 +1,38 @@
-import type { RuntimeSettings } from './types';
+import type { ModelProvider, RuntimeSettings } from './types';
+
+export interface ProviderPreset {
+  label: string;
+  defaultBaseUrl: string;
+  defaultModel: string;
+  placeholderKey: string;
+}
+
+export const providerPresets: Record<ModelProvider, ProviderPreset> = {
+  openai: {
+    label: 'OpenAI-compatible',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o-mini',
+    placeholderKey: 'sk-...',
+  },
+  anthropic: {
+    label: 'Anthropic',
+    defaultBaseUrl: 'https://api.anthropic.com',
+    defaultModel: 'claude-sonnet-4-20250514',
+    placeholderKey: 'sk-ant-...',
+  },
+  gemini: {
+    label: 'Google Gemini',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+    defaultModel: 'gemini-2.0-flash',
+    placeholderKey: 'AIza...',
+  },
+};
 
 export const defaultSettings: RuntimeSettings = {
-  modelBaseUrl: 'https://api.openai.com/v1',
+  provider: 'openai',
+  modelBaseUrl: providerPresets.openai.defaultBaseUrl,
   apiKey: '',
-  model: 'gpt-4o-mini',
+  model: providerPresets.openai.defaultModel,
   gitlabToken: '',
   effort: 'balanced',
   language: 'zh-CN',
