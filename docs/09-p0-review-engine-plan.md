@@ -85,4 +85,4 @@ P0 稳定后已开始 P1 第一批浏览器侧增强：
 - [x] Session / Manifest / Resume：保存脱敏 Review 清单，同一 MR + `head_sha` 刷新后可显式恢复。
 - [x] 中断的运行会话恢复为 `cancelled`，未完成结果继续禁止发布。
 
-P1 剩余未完成项：规则包管理。
+- [x] 规则包管理：结构化 RulePack schema、路径匹配（include/exclude glob）、版本管理、内置规则迁移、自定义规则包增删改查、JSON 导入导出、规则包/规则级别启停、GM/localStorage 持久化。

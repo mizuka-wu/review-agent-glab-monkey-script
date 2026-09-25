@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bot, Check, ExternalLink, LoaderCircle, MessageSquare, Play, RefreshCw,
-  Send, Settings, Sparkles, Square, X,
+  Bot, Check, Download, ExternalLink, FileText, LoaderCircle, MessageSquare, Package,
+  Play, Plus, RefreshCw, Save, Send, Settings, Sparkles, Square, Trash2, Upload, X,
 } from 'lucide-react';
 import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
@@ -9,6 +9,20 @@ import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { OpenAIRuntime } from './core/openai-runtime';
 import { ReviewEngine } from './core/review-engine';
+import {
+  addRulePack,
+  BUILT_IN_PACK,
+  exportRulePack,
+  generateRuleId,
+  generateRulePackId,
+  importRulePack,
+  loadRulePacks,
+  removeRulePack,
+  saveRulePacks,
+  validateRulePack,
+  type RuleDef,
+  type RulePack,
+} from './core/rule-packs';
 import {
   createReviewSession,
   loadLatestReviewSession,
@@ -61,9 +75,13 @@ export default function App({ page, adapter }: AppProps) {
   const [publishing, setPublishing] = useState(false);
   const [savedSession, setSavedSession] = useState<ReviewSessionManifest | undefined>(undefined);
   const [toast, setToast] = useState('');
+  const [rulePacks, setRulePacks] = useState<RulePack[]>([BUILT_IN_PACK]);
+  const [editingPackId, setEditingPackId] = useState<string | null>(null);
+  const [importText, setImportText] = useState('');
+  const [importError, setImportError] = useState('');
 
   const runtime = useMemo(() => new OpenAIRuntime(settings), [settings]);
-  const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings), [runtime, settings]);
+  const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
   const mergeRequestRef = useMemo(() => mergeRequestRefFromPage(page), [page]);
   const runtimeConfigured = runtime.configured;
 
@@ -71,6 +89,9 @@ export default function App({ page, adapter }: AppProps) {
     let active = true;
     void loadSettings().then((loaded) => {
       if (active) setSettings(loaded);
+    });
+    void loadRulePacks().then((loaded) => {
+      if (active) setRulePacks(loaded);
     });
     return () => { active = false; };
   }, []);
@@ -273,6 +294,107 @@ export default function App({ page, adapter }: AppProps) {
     setToast('已恢复上次 Review 会话');
   };
 
+  // --- Rule Pack Management ---
+
+  const toggleRulePack = async (packId: string) => {
+    const next = rulePacks.map((pack) => pack.id === packId ? { ...pack, enabled: !pack.enabled } : pack);
+    setRulePacks(next);
+    await saveRulePacks(next);
+    setToast('规则包状态已更新');
+  };
+
+  const toggleRule = async (packId: string, ruleId: string) => {
+    const next = rulePacks.map((pack) => {
+      if (pack.id !== packId) return pack;
+      return {
+        ...pack,
+        rules: pack.rules.map((rule) => rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule),
+      };
+    });
+    setRulePacks(next);
+    await saveRulePacks(next);
+  };
+
+  const deleteRulePack = async (packId: string) => {
+    const next = await removeRulePack(packId);
+    setRulePacks(next);
+    if (editingPackId === packId) setEditingPackId(null);
+    setToast('规则包已删除');
+  };
+
+  const createNewPack = async () => {
+    const newPack: RulePack = {
+      id: generateRulePackId(),
+      name: '自定义规则包',
+      version: '1.0.0',
+      description: '',
+      enabled: true,
+      builtIn: false,
+      rules: [],
+    };
+    const next = await addRulePack(newPack);
+    setRulePacks(next);
+    setEditingPackId(newPack.id);
+    setToast('已创建新规则包');
+  };
+
+  const updatePack = async (updated: RulePack) => {
+    const next = rulePacks.map((pack) => pack.id === updated.id ? updated : pack);
+    setRulePacks(next);
+    await saveRulePacks(next);
+  };
+
+  const addRuleToPack = async (packId: string) => {
+    const newRule: RuleDef = {
+      id: generateRuleId(),
+      enabled: true,
+      severity: 'medium',
+      category: 'maintainability',
+      title: '新规则',
+      content: '',
+      matchPatterns: [{ type: 'regex', pattern: '' }],
+    };
+    const next = rulePacks.map((pack) => {
+      if (pack.id !== packId) return pack;
+      return { ...pack, rules: [...pack.rules, newRule] };
+    });
+    setRulePacks(next);
+    await saveRulePacks(next);
+  };
+
+  const removeRuleFromPack = async (packId: string, ruleId: string) => {
+    const next = rulePacks.map((pack) => {
+      if (pack.id !== packId) return pack;
+      return { ...pack, rules: pack.rules.filter((rule) => rule.id !== ruleId) };
+    });
+    setRulePacks(next);
+    await saveRulePacks(next);
+  };
+
+  const handleImportPack = async () => {
+    setImportError('');
+    const result = importRulePack(importText);
+    if (result.errors.length > 0) {
+      setImportError(result.errors.join('; '));
+      return;
+    }
+    if (result.pack) {
+      const next = await addRulePack(result.pack);
+      setRulePacks(next);
+      setImportText('');
+      setEditingPackId(result.pack.id);
+      setToast('规则包已导入');
+    }
+  };
+
+  const handleExportPack = (pack: RulePack) => {
+    const json = exportRulePack(pack);
+    void navigator.clipboard?.writeText(json);
+    setToast('规则包 JSON 已复制到剪贴板');
+  };
+
+  const editingPack = rulePacks.find((pack) => pack.id === editingPackId);
+
   const locateFinding = (finding: Finding) => {
     const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-line-number], .line_holder'));
     const row = rows.find((candidate) => {
@@ -380,6 +502,112 @@ export default function App({ page, adapter }: AppProps) {
             </div>
             <div className="ra-modal-actions settings-actions"><button type="button" className="ra-btn danger" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button><button type="button" className="ra-btn" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button><button type="button" className="ra-btn primary" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button></div>
             <div className="ra-connection-list"><div className="ra-connection"><div className="ra-connection-title"><strong>GitLab API</strong><span className={`ra-badge ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
+
+            <h3 className="ra-section-title" style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
+            <p className="ra-section-copy">配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
+
+            <div className="ra-rule-pack-list">
+              {rulePacks.map((pack) => (
+                <div key={pack.id} className={`ra-rule-pack-item${pack.enabled ? '' : ' disabled'}`}>
+                  <div className="ra-rule-pack-header">
+                    <div className="ra-rule-pack-info">
+                      <strong>{pack.name}</strong>
+                      <span className="ra-badge neutral">v{pack.version}</span>
+                      <span className="ra-badge neutral">{pack.rules.length} 条规则</span>
+                      {pack.builtIn && <span className="ra-badge info">内置</span>}
+                    </div>
+                    <div className="ra-rule-pack-actions">
+                      <button type="button" className="ra-icon-btn" title={pack.enabled ? '禁用' : '启用'} onClick={() => void toggleRulePack(pack.id)}>
+                        {pack.enabled ? '✓' : '✗'}
+                      </button>
+                      <button type="button" className="ra-icon-btn" title="编辑" onClick={() => setEditingPackId(editingPackId === pack.id ? null : pack.id)}>
+                        <FileText size={13} />
+                      </button>
+                      {!pack.builtIn && <>
+                        <button type="button" className="ra-icon-btn" title="导出" onClick={() => handleExportPack(pack)}>
+                          <Download size={13} />
+                        </button>
+                        <button type="button" className="ra-icon-btn" title="删除" onClick={() => void deleteRulePack(pack.id)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </>}
+                    </div>
+                  </div>
+                  {pack.description && <p className="ra-rule-pack-desc">{pack.description}</p>}
+
+                  {editingPackId === pack.id && (
+                    <div className="ra-rule-pack-detail">
+                      {!pack.builtIn && (
+                        <div className="ra-settings-grid" style={{ marginBottom: 8 }}>
+                          <div className="ra-field">
+                            <label>名称</label>
+                            <input value={pack.name} onChange={(e) => void updatePack({ ...pack, name: e.target.value })} />
+                          </div>
+                          <div className="ra-field">
+                            <label>版本</label>
+                            <input value={pack.version} onChange={(e) => void updatePack({ ...pack, version: e.target.value })} />
+                          </div>
+                          <div className="ra-field" style={{ gridColumn: '1 / -1' }}>
+                            <label>描述</label>
+                            <input value={pack.description ?? ''} onChange={(e) => void updatePack({ ...pack, description: e.target.value })} placeholder="可选描述" />
+                          </div>
+                        </div>
+                      )}
+                      {pack.rules.map((rule) => (
+                        <div key={rule.id} className={`ra-rule-item${rule.enabled ? '' : ' disabled'}`}>
+                          <div className="ra-rule-header">
+                            <label className="ra-rule-toggle">
+                              <input type="checkbox" checked={rule.enabled} onChange={() => void toggleRule(pack.id, rule.id)} />
+                              <span className="ra-rule-title">{rule.title}</span>
+                            </label>
+                            <div className="ra-rule-badges">
+                              <span className={`ra-badge ${rule.severity === 'high' || rule.severity === 'critical' ? 'error' : rule.severity === 'medium' ? 'warning' : 'neutral'}`}>{rule.severity}</span>
+                              <span className="ra-badge neutral">{rule.category}</span>
+                            </div>
+                            {!pack.builtIn && (
+                              <button type="button" className="ra-icon-btn" title="删除规则" onClick={() => void removeRuleFromPack(pack.id, rule.id)}>
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
+                          {rule.matchPatterns.length > 0 && (
+                            <div className="ra-rule-patterns">
+                              {rule.matchPatterns.map((pattern, idx) => (
+                                <code key={idx} className="ra-rule-pattern">{pattern.pattern}</code>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {!pack.builtIn && (
+                        <button type="button" className="ra-btn" style={{ marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
+                          <Plus size={13} /> 添加规则
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="ra-rule-pack-footer">
+              <button type="button" className="ra-btn" onClick={() => void createNewPack()}>
+                <Plus size={13} /> 新建规则包
+              </button>
+              <div className="ra-import-section">
+                <textarea
+                  className="ra-import-textarea"
+                  value={importText}
+                  onChange={(e) => { setImportText(e.target.value); setImportError(''); }}
+                  placeholder='粘贴规则包 JSON…'
+                  rows={3}
+                />
+                {importError && <p className="ra-import-error">{importError}</p>}
+                <button type="button" className="ra-btn" disabled={!importText.trim()} onClick={() => void handleImportPack()}>
+                  <Upload size={13} /> 导入规则包
+                </button>
+              </div>
+            </div>
           </div>}
         </div>
       </aside>
