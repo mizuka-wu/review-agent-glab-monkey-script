@@ -45,12 +45,20 @@ async function routeGitLab(page: Page, requests: string[] = []) {
   await page.route('https://gitlab.test/**', async (route) => {
     const url = new URL(route.request().url());
     requests.push(url.pathname);
-    if (url.pathname.endsWith('/merge_requests/248/diffs')) {
+    if (route.request().resourceType() === 'document') {
+      await route.fulfill({ contentType: 'text/html', body: mockHtml });
+      return;
+    }
+    if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/diffs')) {
       await route.fulfill({ json: [diff] });
       return;
     }
-    if (url.pathname.endsWith('/merge_requests/248')) {
+    if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248')) {
       await route.fulfill({ json: mergeRequest });
+      return;
+    }
+    if (url.pathname.endsWith('/discussions') && route.request().method() === 'GET') {
+      await route.fulfill({ json: [] });
       return;
     }
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'POST') {
@@ -80,7 +88,7 @@ test('loads real GitLab diff, runs rule review, and publishes a confirmed discus
   await page.goto('https://gitlab.test/acme/app/-/merge_requests/248/diffs');
 
   await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('tab', { name: 'Review' }).click();
   await expect(page.getByText('已从 GitLab API 读取 1 个文件的真实 Diff。')).toBeVisible();
   await page.getByRole('button', { name: '开始 Review' }).click();
 
@@ -97,9 +105,9 @@ test('loads real GitLab diff, runs rule review, and publishes a confirmed discus
   const request = await discussionRequest;
   expect(request.postData()).toContain('body=Edited+review+comment');
   expect(request.postData()).toContain('position%5Bhead_sha%5D=head-sha');
-  expect(request.postData()).toContain('position%5Bnew_line%5D=1');
+  expect(request.postData()).toContain('position%5Bnew_line%5D=2');
   await expect(page.getByText('行级 Discussion 已发布')).toBeVisible();
-  await expect(finding.getByRole('button', { name: '已发布' })).toBeVisible();
+  await expect(finding.getByRole('button', { name: '已发布', exact: true })).toBeVisible();
   expect(requests.some((path) => path.endsWith('/diffs'))).toBe(true);
 });
 
