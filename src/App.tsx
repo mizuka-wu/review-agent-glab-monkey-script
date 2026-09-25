@@ -11,6 +11,7 @@ import { createModelRuntime, type ModelRuntime, type AgentMessage } from './core
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
 import { CompositeToolExecutor, GitLabToolExecutor } from './core/agent-tools';
 import { McpClient } from './core/mcp-client';
+import { probeCapabilities, exportSiteConfig, type ExtendedCapabilities, type DiagnosticEntry } from './core/capabilities';
 import { providerPresets } from './core/settings';
 import { ReviewEngine } from './core/review-engine';
 import {
@@ -84,6 +85,8 @@ export default function App({ page, adapter }: AppProps) {
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
   const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
+  const [capabilities, setCapabilities] = useState<ExtendedCapabilities | undefined>(undefined);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
 
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
@@ -148,6 +151,19 @@ export default function App({ page, adapter }: AppProps) {
     const timer = window.setTimeout(() => setToast(''), 3500);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  // Probe GitLab capabilities once page context is available
+  useEffect(() => {
+    if (!page.origin) return;
+    let active = true;
+    void probeCapabilities(page.origin, settings.gitlabToken).then(({ capabilities: caps, diagnostics: diags }) => {
+      if (active) {
+        setCapabilities(caps);
+        setDiagnostics(diags);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [page.origin, settings.gitlabToken]);
 
   const sendChat = async (event: FormEvent) => {
     event.preventDefault();
@@ -700,6 +716,49 @@ export default function App({ page, adapter }: AppProps) {
                 </div>
                 <p>浏览器油猴脚本仅支持 HTTP 传输（POST JSON-RPC）。不支持 stdio 本地进程。URL 以 /sse 结尾时自动使用 SSE 模式。</p>
               </div>
+            </div>
+
+            <h3 className="ra-section-title" style={{ marginTop: 20 }}>兼容性诊断</h3>
+            {capabilities && <div className="ra-connection-list">
+              <div className="ra-connection">
+                <div className="ra-connection-title">
+                  <strong>GitLab 实例状态</strong>
+                  <span className={`ra-badge ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.gitlabVersion ?? '未知版本'}</span>
+                </div>
+                <div className="ra-capability-box">
+                  <div className="ra-capability-row"><span>认证</span><span className={`ra-badge ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.authMode}</span></div>
+                  <div className="ra-capability-row"><span>API 读取</span><span className={`ra-badge ${capabilities.canReadMergeRequests ? 'success' : 'error'}`}>{capabilities.canReadMergeRequests ? '可用' : '不可用'}</span></div>
+                  <div className="ra-capability-row"><span>代码搜索</span><span className={`ra-badge ${capabilities.canSearchCode ? 'success' : 'neutral'}`}>{capabilities.canSearchCode ? '可用' : '不可用'}</span></div>
+                  <div className="ra-capability-row"><span>评论发布</span><span className={`ra-badge ${capabilities.canCreateDiscussions ? 'success' : 'error'}`}>{capabilities.canCreateDiscussions ? '可用' : '不可用'}</span></div>
+                  <div className="ra-capability-row"><span>CSRF Token</span><span className={`ra-badge ${capabilities.csrfAvailable ? 'success' : 'warning'}`}>{capabilities.csrfAvailable ? '存在' : '缺失'}</span></div>
+                </div>
+              </div>
+            </div>}
+            {capabilities?.warnings && capabilities.warnings.length > 0 && (
+              <div className="ra-alert" role="alert" style={{ margin: '8px 0 0' }}>
+                {capabilities.warnings.join(' ')}
+              </div>
+            )}
+            {diagnostics.length > 0 && (
+              <div className="ra-capability-box" style={{ marginTop: 8 }}>
+                {diagnostics.map((diag, idx) => (
+                  <div key={idx} className="ra-tool-event" style={{ fontSize: 9, opacity: 0.85 }}>
+                    <span className="ra-tool-event-icon">{diag.level === 'error' ? '✗' : diag.level === 'warn' ? '⚠' : '·'}</span>
+                    <span>[{diag.source}] {diag.message}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="ra-empty-actions" style={{ marginTop: 8 }}>
+              <button type="button" className="ra-btn" onClick={() => {
+                const config = exportSiteConfig(page, capabilities ?? {
+                  authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false,
+                  canSearchCode: false, canReadRepository: true, canPaginateDiffs: true,
+                  maxDiffPageSize: 100, authMode: 'none', domAvailable: true, csrfAvailable: true, warnings: [],
+                }, settings as unknown as Record<string, unknown>);
+                void navigator.clipboard?.writeText(config);
+                setToast('站点配置已复制到剪贴板');
+              }}><Download size={13} /> 导出配置</button>
             </div>
           </div>}
         </div>
