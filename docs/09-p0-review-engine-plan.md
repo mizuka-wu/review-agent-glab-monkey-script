@@ -66,8 +66,10 @@ GitLab MR / Diff
 ## 5. 后续顺序
 
 1. **P1**：完整文件读取、跨文件 relocation、Session / Manifest / Resume、Finding 编辑和规则包。
-2. **P2**：Agent tool loop（✅ file_read/search_code/git_log）、MCP、多 Provider（✅ OpenAI/Anthropic/Gemini）、CI Bot。
-3. **P3**：Gateway、IDE 插件和团队化能力。
+2. **P2**：Agent tool loop（✅ file_read/search_code/git_log）、MCP（✅ Streamable HTTP）、多 Provider（✅ OpenAI/Anthropic/Gemini）、CI Bot（需服务端，跳过）。
+3. **M3 自部署兼容**：✅ 能力探测、DOM 降级、配置导出、日志脱敏、诊断面板。
+4. **M5 Review 硬化**：✅ 证据充分度检查、严重度校准、相似 Finding 合并、审查强度预算。
+5. **P3**：Gateway、IDE 插件和团队化能力（后续）。
 
 本地 Gateway 仍然重要，但不阻塞 P0 浏览器 Review 引擎。P0 的接口保留 `ReviewRuntime` 抽象，未来 Gateway 可以在不改 Finding Pipeline 和发布层的情况下替换 `OpenAIRuntime`。
 

@@ -83,33 +83,58 @@ export async function loadFullFiles(
   const files: FullFileSnapshot[] = [];
   const omitted: FullFileOmission[] = [];
   const seen = new Set<string>();
-  let totalCharacters = 0;
 
+  // Deduplicate and filter paths
+  const validPaths: string[] = [];
   for (const rawPath of paths) {
     const path = rawPath.trim();
     if (!path || seen.has(path)) continue;
     seen.add(path);
-    if (files.length >= maxFiles) {
+    if (validPaths.length >= maxFiles) {
       omitted.push({ path, reason: 'budget', message: '完整文件数量达到上限' });
       continue;
     }
+    validPaths.push(path);
+  }
 
-    try {
-      const content = await loader(path, ref, signal);
-      if (content.length > maxFileCharacters) {
-        omitted.push({ path, reason: 'too_large', message: `文件超过 ${maxFileCharacters} 字符` });
-        continue;
-      }
-      if (totalCharacters + content.length > maxTotalCharacters) {
-        omitted.push({ path, reason: 'budget', message: '完整文件总预算不足' });
-        continue;
-      }
-      files.push(createFullFileSnapshot(path, ref, content));
-      totalCharacters += content.length;
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') throw error;
-      omitted.push({ path, reason: 'read_error', message: String(error) });
+  // Load files concurrently with a limit of 5
+  const CONCURRENCY = 5;
+  const results: { path: string; content?: string; error?: string }[] = [];
+
+  for (let i = 0; i < validPaths.length; i += CONCURRENCY) {
+    const batch = validPaths.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (path) => {
+        try {
+          const content = await loader(path, ref, signal);
+          return { path, content };
+        } catch (error) {
+          if ((error as Error).name === 'AbortError') throw error;
+          return { path, error: String(error) };
+        }
+      }),
+    );
+    results.push(...batchResults);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  }
+
+  let totalCharacters = 0;
+  for (const result of results) {
+    if (result.error) {
+      omitted.push({ path: result.path, reason: 'read_error', message: result.error });
+      continue;
     }
+    const content = result.content!;
+    if (content.length > maxFileCharacters) {
+      omitted.push({ path: result.path, reason: 'too_large', message: `文件超过 ${maxFileCharacters} 字符` });
+      continue;
+    }
+    if (totalCharacters + content.length > maxTotalCharacters) {
+      omitted.push({ path: result.path, reason: 'budget', message: '完整文件总预算不足' });
+      continue;
+    }
+    files.push(createFullFileSnapshot(result.path, ref, content));
+    totalCharacters += content.length;
   }
 
   return { files, omitted };

@@ -87,6 +87,8 @@ export default function App({ page, adapter }: AppProps) {
   const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
   const [capabilities, setCapabilities] = useState<ExtendedCapabilities | undefined>(undefined);
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
+  const [visibleFindingCount, setVisibleFindingCount] = useState(20);
+  const [diffLoadProgress, setDiffLoadProgress] = useState<{ loaded: number; hasMore: boolean } | null>(null);
 
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
@@ -112,9 +114,12 @@ export default function App({ page, adapter }: AppProps) {
     }
     void Promise.all([
       adapter.getMergeRequest(mergeRequestRef),
-      adapter.listDiffs(mergeRequestRef),
+      adapter.listDiffs(mergeRequestRef, {
+        onPage: (loaded, hasMore) => setDiffLoadProgress({ loaded, hasMore }),
+      }),
     ]).then(([context, diffs]) => {
       if (controller.signal.aborted) return;
+      setDiffLoadProgress(null);
       setMrContext(context);
       setFiles(diffs);
       setLoading(false);
@@ -534,7 +539,7 @@ export default function App({ page, adapter }: AppProps) {
 
           {activeTab === 'review' && <div className="ra-review-view">
             <h3 className="ra-section-title">Review 范围</h3>
-            <p className="ra-section-copy">{files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}</p>
+            <p className="ra-section-copy">{diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}</p>
             {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
               <div className="ra-empty-card">
                 <h3>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
@@ -547,7 +552,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             )}
             {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && <div className="ra-progress-card"><div className="ra-progress-head"><strong>{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong><span className="ra-badge info">进行中</span></div><div className="ra-progress-track"><div className="ra-progress-fill" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} /></div><button type="button" className="ra-btn danger" onClick={cancelReview}><Square size={13} />取消</button></div>}
-            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div></>}
+            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>{findings.length > visibleFindingCount && <button type="button" className="ra-btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setVisibleFindingCount((count) => count + 20)}>显示更多（还有 {findings.length - visibleFindingCount} 个）</button>}</>}
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">

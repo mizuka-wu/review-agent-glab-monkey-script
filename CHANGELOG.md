@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add review hardening (M5): evidence sufficiency check, severity calibration, similar finding merge, effort-based budget filtering.
+- Add self-deployment compatibility (M3): capability probe, DOM diff fallback, config export, log sanitization, diagnostics panel.
 - Add MCP integration: connect to local MCP servers via Streamable HTTP transport (GM.xmlHttpRequest). Extends agent tools with MCP-provided tools.
 - Add composite tool executor that dispatches between GitLab API tools and MCP tools.
 - Add Agent tool loop: model can call GitLab API tools (file_read, search_code, git_log) during chat for deeper codebase context.

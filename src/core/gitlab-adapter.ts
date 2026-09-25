@@ -190,16 +190,59 @@ export class GitLabAdapter {
     };
   }
 
-  async listDiffs(ref: MergeRequestRef): Promise<FileDiff[]> {
-    const files: FileDiff[] = [];
-    for (let page = 1; page <= 50; page += 1) {
-      const data = await this.request<unknown[]>(
-        `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=${page}`,
-      );
-      files.push(...data.map(normalizeFileDiff));
-      if (data.length < 100) break;
+  async listDiffs(
+    ref: MergeRequestRef,
+    options: { onPage?: (loaded: number, hasMore: boolean) => void; signal?: AbortSignal } = {},
+  ): Promise<FileDiff[]> {
+    // Fetch first page to determine total
+    const firstPage = await this.request<unknown[]>(
+      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=1`,
+      { signal: options.signal },
+    );
+
+    if (firstPage.length < 100) {
+      options.onPage?.(firstPage.length, false);
+      return firstPage.map(normalizeFileDiff);
     }
-    return files;
+
+    // Parallel fetch remaining pages with concurrency limit of 3
+    const allRaw: unknown[][] = [firstPage];
+    let page = 2;
+    let hasMore = true;
+    const CONCURRENCY = 3;
+
+    while (hasMore && page <= 50) {
+      const batchPages: number[] = [];
+      for (let i = 0; i < CONCURRENCY && page <= 50; i += 1) {
+        batchPages.push(page);
+        page += 1;
+      }
+
+      const batchResults = await Promise.all(
+        batchPages.map((p) =>
+          this.request<unknown[]>(
+            `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=${p}`,
+            { signal: options.signal },
+          ).catch(() => []),
+        ),
+      );
+
+      for (const result of batchResults) {
+        if (result.length === 0) {
+          hasMore = false;
+          break;
+        }
+        allRaw.push(result);
+        if (result.length < 100) {
+          hasMore = false;
+          break;
+        }
+      }
+
+      options.onPage?.(allRaw.reduce((sum, chunk) => sum + chunk.length, 0), hasMore);
+    }
+
+    return allRaw.flat().map(normalizeFileDiff);
   }
 
   async createDiscussion(
