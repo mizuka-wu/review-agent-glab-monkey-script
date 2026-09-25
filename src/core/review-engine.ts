@@ -2,7 +2,7 @@ import { anchorFindings } from './anchor';
 import { buildReviewContext, fileOmissionReason, includedFiles } from './context';
 import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } from './full-file';
 import { normalizeFindings, parseModelFindings } from './findings';
-import { runRuleReview } from './rules';
+import { BUILT_IN_PACK, runRulePackReview, type RulePack } from './rule-packs';
 import type {
   CodeSelection,
   FileDiff,
@@ -101,6 +101,7 @@ export class ReviewEngine {
   constructor(
     private readonly runtime: ReviewRuntime,
     private readonly settings: RuntimeSettings,
+    private readonly rulePacks: RulePack[] = [BUILT_IN_PACK],
   ) {}
 
   async run(input: {
@@ -154,7 +155,7 @@ export class ReviewEngine {
       }
     } else {
       source = 'rule';
-      findings = normalizeFindings(runRuleReview(files), files);
+      findings = normalizeFindings(runRulePackReview(files, this.rulePacks), files);
     }
 
     findings = anchorFindings(findings, files, fullFiles);
