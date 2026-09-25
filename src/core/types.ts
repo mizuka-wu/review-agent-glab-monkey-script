@@ -15,6 +15,12 @@ export interface FindingEvidence {
   quote: string;
 }
 
+export interface FindingAnchor {
+  source: 'diff' | 'full-file';
+  publishable: boolean;
+  relocatedFromPath?: string;
+}
+
 export interface Finding {
   id: string;
   fingerprint: string;
@@ -37,6 +43,7 @@ export interface Finding {
   comment: string;
   source: 'model' | 'rule';
   status: FindingStatus;
+  anchor?: FindingAnchor;
 }
 
 export interface DiffLine {
@@ -163,6 +170,31 @@ export interface ReviewContext {
   estimatedCharacters: number;
   budgetCharacters: number;
   omittedFiles: { path: string; reason: NonNullable<ReviewContextFile['omittedReason']> }[];
+  fullFiles: FullFileSnapshot[];
+  omittedFullFiles: FullFileOmission[];
+}
+
+export interface FullFileSnapshot {
+  path: string;
+  ref: string;
+  content: string;
+  lines: string[];
+}
+
+export type FullFileOmissionReason =
+  | 'binary'
+  | 'generated'
+  | 'lockfile'
+  | 'secret'
+  | 'unsupported'
+  | 'too_large'
+  | 'budget'
+  | 'read_error';
+
+export interface FullFileOmission {
+  path: string;
+  reason: FullFileOmissionReason;
+  message?: string;
 }
 
 export interface ReviewEngineResult {

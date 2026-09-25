@@ -149,7 +149,13 @@ export default function App({ page, adapter }: AppProps) {
     try {
       setReviewStatus('running');
       setReviewStatus('normalizing');
-      const result = await reviewEngine.run({ files: scopedFiles, selection: selected, signal: controller.signal });
+      const result = await reviewEngine.run({
+        files: scopedFiles,
+        selection: selected,
+        signal: controller.signal,
+        loadFile: (path, ref, signal) => adapter.getFile(path, ref),
+        fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
+      });
       if (controller.signal.aborted) return;
       setFindings(result.findings);
       setExpandedFinding(result.findings[0]?.id ?? '');
@@ -248,7 +254,7 @@ export default function App({ page, adapter }: AppProps) {
             <p className="ra-section-copy">{files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}</p>
             {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && <div className="ra-empty-card"><h3>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3><p>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p><button type="button" className="ra-btn primary" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</button></div>}
             {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && <div className="ra-progress-card"><div className="ra-progress-head"><strong>{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong><span className="ra-badge info">进行中</span></div><div className="ra-progress-track"><div className="ra-progress-fill" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} /></div><button type="button" className="ra-btn danger" onClick={cancelReview}><Square size={13} />取消</button></div>}
-            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onIgnore={() => setFindings((current) => current.map((item) => item.id === finding.id ? { ...item, status: 'ignored' } : item))} />)}</div></>}
+            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onIgnore={() => setFindings((current) => current.map((item) => item.id === finding.id ? { ...item, status: 'ignored' } : item))} />)}</div></>}
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">

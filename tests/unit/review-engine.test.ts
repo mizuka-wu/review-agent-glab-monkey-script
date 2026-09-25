@@ -76,6 +76,38 @@ describe('ReviewEngine', () => {
     const engine = new ReviewEngine(runtime, settings);
     expect((await engine.run({ files: [file] })).findings).toEqual([]);
   });
+
+  it('loads full-file context and relocates unique evidence across files', async () => {
+    const runtime = {
+      configured: true,
+      review: vi.fn().mockResolvedValue(JSON.stringify({ findings: [{
+        path: 'src/wrong.ts',
+        evidence: [{ path: 'src/helper.ts', quote: 'function helper() {' }],
+        existingCode: 'function helper() {\n  return 1;\n}',
+        category: 'bug',
+        severity: 'high',
+        confidence: 'high',
+        title: 'Cross-file risk',
+        content: 'Explain the risk.',
+      }] })),
+    };
+    const loader = vi.fn(async (path: string) => path === 'src/helper.ts'
+      ? 'function helper() {\n  return 1;\n}'
+      : 'const x = 1;\nconsole.log(x);\nreturn x;');
+    const engine = new ReviewEngine(runtime, settings);
+    const result = await engine.run({
+      files: [file],
+      loadFile: loader,
+      fullFileRef: 'head-sha',
+    });
+
+    expect(result.context.fullFiles.map((item) => item.path)).toEqual(expect.arrayContaining(['src/a.ts', 'src/helper.ts']));
+    expect(result.findings[0]).toMatchObject({
+      path: 'src/helper.ts',
+      anchor: { source: 'full-file', publishable: false, relocatedFromPath: 'src/wrong.ts' },
+    });
+    expect(result.warnings.join(' ')).toContain('跨文件重定位');
+  });
 });
 
 export type { Finding };

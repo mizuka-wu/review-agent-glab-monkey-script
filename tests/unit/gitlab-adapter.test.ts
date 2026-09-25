@@ -63,6 +63,17 @@ describe('GitLabAdapter', () => {
     expect(await adapter.listDiscussions(ref)).toHaveLength(1);
   });
 
+  it('reads repository files as raw text with encoded path and ref', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      expect(url.pathname).toContain('/repository/files/src%2Fa%20b.ts/raw');
+      expect(url.searchParams.get('ref')).toBe('head sha');
+      return new Response('const value = 1;\n', { status: 200 });
+    });
+    const adapter = new GitLabAdapter({ origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 }, '', fetcher);
+    await expect(adapter.getFile('src/a b.ts', 'head sha')).resolves.toBe('const value = 1;\n');
+  });
+
   it('rejects stale diff refs and deduplicates identical comments', async () => {
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input);

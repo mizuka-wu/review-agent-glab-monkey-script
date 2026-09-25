@@ -23,6 +23,8 @@ export function FindingCard({ finding, expanded, publishDisabled, onToggle, onLo
           <span className={`ra-severity ${finding.severity}`}>{severityLabel[finding.severity]}</span>
           <span className="ra-badge neutral">{categoryLabel[finding.category]}</span>
           <span className="ra-confidence">置信度 {finding.confidence === 'high' ? '高' : finding.confidence === 'medium' ? '中' : '低'}</span>
+          {finding.anchor?.relocatedFromPath && <span className="ra-badge info">跨文件重定位</span>}
+          {finding.anchor?.source === 'full-file' && <span className="ra-badge warning">完整文件锚定</span>}
           {finding.status === 'published' && <span className="ra-badge success">已发布</span>}
           {finding.status === 'ignored' && <span className="ra-badge neutral">已忽略</span>}
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -48,7 +50,13 @@ export function FindingCard({ finding, expanded, publishDisabled, onToggle, onLo
           <div className="ra-finding-actions">
             <button type="button" className="ra-btn" onClick={onLocate}><Crosshair size={14} />定位</button>
             <button type="button" className="ra-btn" onClick={onCopy}><Copy size={14} />复制评论</button>
-            <button type="button" className="ra-btn primary" onClick={onPublish} disabled={publishDisabled || finding.status === 'published'}>
+            <button
+              type="button"
+              className="ra-btn primary"
+              onClick={onPublish}
+              disabled={publishDisabled || finding.status === 'published'}
+              title={finding.anchor?.publishable === false ? '完整文件位置不能发布为 MR 行级 Discussion' : undefined}
+            >
               {finding.status === 'published' ? <Check size={14} /> : <MessageSquarePlus size={14} />}
               {finding.status === 'published' ? '已发布' : '发布到 GitLab'}
             </button>

@@ -70,3 +70,16 @@ GitLab MR / Diff
 3. **P3**：Gateway、IDE 插件和团队化能力。
 
 本地 Gateway 仍然重要，但不阻塞 P0 浏览器 Review 引擎。P0 的接口保留 `ReviewRuntime` 抽象，未来 Gateway 可以在不改 Finding Pipeline 和发布层的情况下替换 `OpenAIRuntime`。
+
+## 6. P1 继续开发记录
+
+P0 稳定后已开始 P1 第一批浏览器侧增强：
+
+- [x] GitLab raw 文件读取返回文本内容，并按文件路径 / ref 编码。
+- [x] Review 前按需读取变更文件完整内容，按 Diff 锚点生成预算内滑窗上下文。
+- [x] 完整文件读取支持文件数、单文件字符数、总字符数限制，并记录省略原因。
+- [x] 模型 Finding 的 `existingCode` 可在已读取完整文件中唯一匹配并跨文件重定位。
+- [x] 完整文件锚定结果显式标记为不可发布，不进入 GitLab 行级 Discussion 队列。
+- [x] Diff 中存在多个候选位置时拒绝猜测，不退化为完整文件模糊定位。
+
+后续 P1 仍包括 Session / Manifest / Resume、Finding 编辑和规则包管理。

@@ -120,6 +120,38 @@ export class GitLabAdapter {
     return (await response.json()) as T;
   }
 
+  private async requestText(path: string, options: RequestOptions = {}): Promise<string> {
+    const headers: Record<string, string> = {
+      Accept: 'text/plain',
+      ...options.headers,
+    };
+    if (this.gitlabToken) headers['PRIVATE-TOKEN'] = this.gitlabToken;
+
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.page.origin}${path}`, {
+        method: options.method ?? 'GET',
+        headers,
+        body: options.body,
+        credentials: 'same-origin',
+        signal: options.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') throw error;
+      throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
+    }
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => response.statusText);
+      throw new GitLabApiError(
+        response.status,
+        `GitLab API ${response.status}：${detail.slice(0, 300)}`,
+        errorCode(response.status),
+      );
+    }
+    return response.text();
+  }
+
   private projectRef() {
     return projectApiIdentifier(this.page);
   }
@@ -217,7 +249,7 @@ export class GitLabAdapter {
   }
 
   async getFile(path: string, ref: string) {
-    return this.request<{ content: string }>(
+    return this.requestText(
       `/api/v4/projects/${this.projectRef()}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`,
     );
   }

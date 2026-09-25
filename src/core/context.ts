@@ -10,7 +10,7 @@ const lockfilePattern = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.loc
 const secretPattern = /(?:^|\/)(?:\.env(?:\..*)?|id_(?:rsa|ed25519)|.*\.(?:pem|p12|key))$/i;
 const generatedPattern = /(?:^|\/)(?:dist|build|vendor|node_modules|coverage|target)\/|(?:\.min\.js|\.generated\.|_generated\.|\.lock$)/i;
 
-function isReviewable(file: FileDiff): NonNullable<ReviewContextFile['omittedReason']> | undefined {
+export function fileOmissionReason(file: FileDiff): NonNullable<ReviewContextFile['omittedReason']> | undefined {
   if (file.binary) return 'binary';
   if (file.generated || generatedPattern.test(file.newPath)) return 'generated';
   if (lockfilePattern.test(file.newPath)) return 'lockfile';
@@ -49,7 +49,7 @@ export function buildReviewContext(input: {
   let estimatedCharacters = 0;
 
   for (const file of sourceFiles) {
-    const reason = isReviewable(file);
+    const reason = fileOmissionReason(file);
     const size = file.diff.length + file.newPath.length;
     if (reason) {
       files.push({ ...file, included: false, omittedReason: reason });
@@ -72,6 +72,8 @@ export function buildReviewContext(input: {
     estimatedCharacters,
     budgetCharacters,
     omittedFiles,
+    fullFiles: [],
+    omittedFullFiles: [],
   };
 }
 
