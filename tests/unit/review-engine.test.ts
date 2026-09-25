@@ -10,6 +10,7 @@ const settings = {
   gitlabToken: '',
   effort: 'balanced' as const,
   language: 'zh-CN' as const,
+  mcp: { enabled: false, serverUrl: '' },
 };
 
 const file = normalizeFileDiff({
@@ -40,7 +41,8 @@ describe('ReviewEngine', () => {
         severity: 'high',
         confidence: 'high',
         title: 'Unsafe value',
-        content: 'Explain the risk.',
+        content: 'Explain the risk in detail with clear reasoning.',
+        evidence: [{ path: 'src/a.ts', lines: 'L1', quote: 'const x = 1;' }],
       }] })),
     };
     const engine = new ReviewEngine(runtime, settings);
@@ -54,8 +56,8 @@ describe('ReviewEngine', () => {
     const runtime = {
       configured: true,
       review: vi.fn().mockResolvedValue(JSON.stringify({ findings: [
-        { path: 'src/a.ts', line: 1, category: 'bug', severity: 'low', confidence: 'low', title: 'Same', content: 'Same' },
-        { path: 'src/a.ts', line: 2, category: 'bug', severity: 'high', confidence: 'high', title: 'Same', content: 'Same' },
+        { path: 'src/a.ts', line: 1, category: 'bug', severity: 'low', confidence: 'low', title: 'Same', content: 'Same issue description', existingCode: 'const x = 1;', evidence: [{ path: 'src/a.ts', lines: 'L1', quote: 'const x = 1;' }] },
+        { path: 'src/a.ts', line: 2, category: 'bug', severity: 'high', confidence: 'high', title: 'Same', content: 'Same issue description', existingCode: 'console.log(x);', evidence: [{ path: 'src/a.ts', lines: 'L2', quote: 'console.log(x);' }] },
       ] })),
     };
     const engine = new ReviewEngine(runtime, { ...settings, effort: 'fast' });
@@ -88,7 +90,7 @@ describe('ReviewEngine', () => {
         severity: 'high',
         confidence: 'high',
         title: 'Cross-file risk',
-        content: 'Explain the risk.',
+        content: 'Explain the cross-file risk with detailed analysis.',
       }] })),
     };
     const loader = vi.fn(async (path: string) => path === 'src/helper.ts'

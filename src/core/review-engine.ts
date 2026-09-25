@@ -2,6 +2,7 @@ import { anchorFindings } from './anchor';
 import { buildReviewContext, fileOmissionReason, includedFiles } from './context';
 import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } from './full-file';
 import { normalizeFindings, parseModelFindings } from './findings';
+import { hardenFindings } from './finding-hardening';
 import { BUILT_IN_PACK, runRulePackReview, type RulePack } from './rule-packs';
 import type {
   CodeSelection,
@@ -159,9 +160,14 @@ export class ReviewEngine {
     }
 
     findings = anchorFindings(findings, files, fullFiles);
-    if (this.settings.effort === 'fast') {
-      findings = findings.filter((finding) => finding.confidence !== 'low');
-    }
+
+    // Apply hardening: severity calibration, evidence check, similar merge, effort budget
+    const hardened = hardenFindings(findings, files, this.settings.effort);
+    findings = hardened.findings;
+
+    if (hardened.merged > 0) warnings.push(`合并了 ${hardened.merged} 个相似 Finding。`);
+    if (hardened.severityAdjusted > 0) warnings.push(`校准了 ${hardened.severityAdjusted} 个 Finding 的严重度。`);
+    if (hardened.filtered > 0) warnings.push(`按证据充分度或审查强度过滤了 ${hardened.filtered} 个 Finding。`);
 
     const relocated = findings.filter((finding) => finding.anchor?.relocatedFromPath).length;
     const fullFileAnchored = findings.filter((finding) => finding.anchor?.source === 'full-file').length;
