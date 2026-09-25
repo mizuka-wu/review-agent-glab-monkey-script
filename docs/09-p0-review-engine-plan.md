@@ -81,5 +81,8 @@ P0 稳定后已开始 P1 第一批浏览器侧增强：
 - [x] 模型 Finding 的 `existingCode` 可在已读取完整文件中唯一匹配并跨文件重定位。
 - [x] 完整文件锚定结果显式标记为不可发布，不进入 GitLab 行级 Discussion 队列。
 - [x] Diff 中存在多个候选位置时拒绝猜测，不退化为完整文件模糊定位。
+- [x] Finding 编辑：标题、说明、评论草稿、分类、严重度和置信度可修改，保留稳定指纹。
+- [x] Session / Manifest / Resume：保存脱敏 Review 清单，同一 MR + `head_sha` 刷新后可显式恢复。
+- [x] 中断的运行会话恢复为 `cancelled`，未完成结果继续禁止发布。
 
-后续 P1 仍包括 Session / Manifest / Resume、Finding 编辑和规则包管理。
+P1 剩余未完成项：规则包管理。

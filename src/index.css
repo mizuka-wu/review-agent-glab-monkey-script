@@ -590,6 +590,11 @@ select:focus-visible {
 .ra-code-change .before { color: #7f2d27; background: #fdebea; }
 .ra-code-change .after { color: #1f6840; background: #e3f4e9; }
 .ra-finding-actions { flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.ra-empty-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.ra-session-meta { margin-top: 9px; color: #738096; font-size: 9px; }
+.ra-finding-editor { display: grid; gap: 10px; padding: 11px 0 3px; }
+.ra-finding-editor .ra-field textarea { min-height: 72px; }
+.ra-editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 
 .ra-connection-list { display: grid; gap: 8px; }
 .ra-connection { display: grid; gap: 8px; }

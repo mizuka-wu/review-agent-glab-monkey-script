@@ -5,9 +5,21 @@ import {
 } from 'lucide-react';
 import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
+import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { OpenAIRuntime } from './core/openai-runtime';
 import { ReviewEngine } from './core/review-engine';
+import {
+  createReviewSession,
+  loadLatestReviewSession,
+  resumeReviewSession,
+  reviewSessionKey,
+  saveReviewSession,
+  summarizeReviewContext,
+  toSessionFinding,
+  updateReviewSession,
+  type ReviewSessionManifest,
+} from './core/session';
 import { captureCodeSelection } from './core/selection';
 import { clearSensitiveSettings, defaultSettings, loadSettings, saveSettings } from './core/settings';
 import type {
@@ -27,6 +39,7 @@ const suggestions = ['解释这段变更的失败路径', '检查并发与幂等
 export default function App({ page, adapter }: AppProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const reviewAbort = useRef<AbortController | undefined>(undefined);
+  const currentSessionRef = useRef<ReviewSessionManifest | undefined>(undefined);
   const [settings, setSettings] = useState<RuntimeSettings>(defaultSettings);
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -46,6 +59,7 @@ export default function App({ page, adapter }: AppProps) {
   const [publishFinding, setPublishFinding] = useState<Finding | undefined>(undefined);
   const [publishBody, setPublishBody] = useState('');
   const [publishing, setPublishing] = useState(false);
+  const [savedSession, setSavedSession] = useState<ReviewSessionManifest | undefined>(undefined);
   const [toast, setToast] = useState('');
 
   const runtime = useMemo(() => new OpenAIRuntime(settings), [settings]);
@@ -75,6 +89,12 @@ export default function App({ page, adapter }: AppProps) {
       setMrContext(context);
       setFiles(diffs);
       setLoading(false);
+      if (mergeRequestRef) {
+        void loadLatestReviewSession(reviewSessionKey(mergeRequestRef, context.diffRefs.headSha))
+          .then((session) => {
+            if (!controller.signal.aborted) setSavedSession(session);
+          });
+      }
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
         setLoadError(error instanceof Error ? error.message : String(error));
@@ -145,6 +165,21 @@ export default function App({ page, adapter }: AppProps) {
     const scopedFiles = scope === 'selection'
       ? files.filter((file) => file.newPath === selected?.filePath)
       : files;
+    const session = mergeRequestRef && mrContext
+      ? createReviewSession({
+        ref: mergeRequestRef,
+        headSha: mrContext.diffRefs.headSha,
+        title: mrContext.title,
+        scope,
+        source: runtimeConfigured ? 'model' : 'rule',
+        settings,
+      })
+      : undefined;
+    if (session) {
+      currentSessionRef.current = session;
+      setSavedSession(session);
+      void saveReviewSession(session);
+    }
 
     try {
       setReviewStatus('running');
@@ -160,11 +195,30 @@ export default function App({ page, adapter }: AppProps) {
       setFindings(result.findings);
       setExpandedFinding(result.findings[0]?.id ?? '');
       setReviewStatus('completed');
+      if (session) {
+        const completed = updateReviewSession(session, {
+          status: 'completed',
+          source: result.source,
+          findings: result.findings.map(toSessionFinding),
+          warnings: result.warnings,
+          context: summarizeReviewContext(result.context),
+        });
+        currentSessionRef.current = completed;
+        setSavedSession(completed);
+        void saveReviewSession(completed);
+      }
       if (result.warnings.length > 0) setToast(result.warnings[0]);
     } catch (error) {
       if (controller.signal.aborted || (error as Error).name === 'AbortError') return;
-      setReviewError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setReviewError(message);
       setReviewStatus('failed');
+      if (session) {
+        const failed = updateReviewSession(session, { status: 'failed', error: message });
+        currentSessionRef.current = failed;
+        setSavedSession(failed);
+        void saveReviewSession(failed);
+      }
     }
   };
 
@@ -172,6 +226,51 @@ export default function App({ page, adapter }: AppProps) {
     reviewAbort.current?.abort();
     setReviewStatus('cancelled');
     setReviewError('运行已取消。未完成结果不会进入发布队列。');
+    const session = currentSessionRef.current;
+    if (session) {
+      const cancelled = updateReviewSession(session, {
+        status: 'cancelled',
+        error: '运行已取消。未完成结果不会进入发布队列。',
+      });
+      currentSessionRef.current = cancelled;
+      setSavedSession(cancelled);
+      void saveReviewSession(cancelled);
+    }
+  };
+
+  const persistFindings = (next: Finding[]) => {
+    const session = currentSessionRef.current;
+    if (!session) return;
+    const updated = updateReviewSession(session, { findings: next.map(toSessionFinding) });
+    currentSessionRef.current = updated;
+    setSavedSession(updated);
+    void saveReviewSession(updated);
+  };
+
+  const editFinding = (id: string, edit: FindingEdit) => {
+    const next = findings.map((finding) => finding.id === id ? applyFindingEdit(finding, edit) : finding);
+    setFindings(next);
+    persistFindings(next);
+    setToast('Finding 修改已保存');
+  };
+
+  const ignoreFinding = (id: string) => {
+    const next = findings.map((item) => item.id === id ? { ...item, status: 'ignored' as const } : item);
+    setFindings(next);
+    persistFindings(next);
+  };
+
+  const resumeSession = async () => {
+    if (!savedSession) return;
+    const resumed = resumeReviewSession(savedSession);
+    currentSessionRef.current = resumed.session;
+    setSavedSession(resumed.session);
+    setFindings(resumed.findings);
+    setExpandedFinding(resumed.findings[0]?.id ?? '');
+    setReviewStatus(resumed.status);
+    setReviewError(resumed.error ?? '');
+    await saveReviewSession(resumed.session);
+    setToast('已恢复上次 Review 会话');
   };
 
   const locateFinding = (finding: Finding) => {
@@ -202,9 +301,11 @@ export default function App({ page, adapter }: AppProps) {
         deletedFile: publishFinding.deletedFile,
         diffRefs: mrContext.diffRefs,
       });
-      setFindings((current) => current.map((finding) =>
+      const next = findings.map((finding) =>
         finding.id === publishFinding.id ? { ...finding, status: 'published' } : finding,
-      ));
+      );
+      setFindings(next);
+      persistFindings(next);
       setPublishFinding(undefined);
       setToast('行级 Discussion 已发布');
     } catch (error) {
@@ -252,9 +353,19 @@ export default function App({ page, adapter }: AppProps) {
           {activeTab === 'review' && <div className="ra-review-view">
             <h3 className="ra-section-title">Review 范围</h3>
             <p className="ra-section-copy">{files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}</p>
-            {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && <div className="ra-empty-card"><h3>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3><p>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p><button type="button" className="ra-btn primary" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</button></div>}
+            {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
+              <div className="ra-empty-card">
+                <h3>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
+                <p>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
+                <div className="ra-empty-actions">
+                  <button type="button" className="ra-btn primary" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</button>
+                  {savedSession && <button type="button" className="ra-btn" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</button>}
+                </div>
+                {savedSession && <p className="ra-session-meta">上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
+              </div>
+            )}
             {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && <div className="ra-progress-card"><div className="ra-progress-head"><strong>{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong><span className="ra-badge info">进行中</span></div><div className="ra-progress-track"><div className="ra-progress-fill" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} /></div><button type="button" className="ra-btn danger" onClick={cancelReview}><Square size={13} />取消</button></div>}
-            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onIgnore={() => setFindings((current) => current.map((item) => item.id === finding.id ? { ...item, status: 'ignored' } : item))} />)}</div></>}
+            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div></>}
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">
