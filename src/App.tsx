@@ -13,6 +13,7 @@ import { CompositeToolExecutor, GitLabToolExecutor } from './core/agent-tools';
 import { McpClient } from './core/mcp-client';
 import { probeCapabilities, exportSiteConfig, type ExtendedCapabilities, type DiagnosticEntry } from './core/capabilities';
 import { providerPresets } from './core/settings';
+import { getUsageSummary, clearUsage, formatTokenCount, formatCost, type UsageSummary } from './core/usage';
 import { ReviewEngine } from './core/review-engine';
 import {
   addRulePack,
@@ -89,6 +90,7 @@ export default function App({ page, adapter }: AppProps) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
   const [visibleFindingCount, setVisibleFindingCount] = useState(20);
   const [diffLoadProgress, setDiffLoadProgress] = useState<{ loaded: number; hasMore: boolean } | null>(null);
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
 
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
@@ -102,6 +104,9 @@ export default function App({ page, adapter }: AppProps) {
     });
     void loadRulePacks().then((loaded) => {
       if (active) setRulePacks(loaded);
+    });
+    void getUsageSummary().then((summary) => {
+      if (active && summary.callCount > 0) setUsageSummary(summary);
     });
     return () => { active = false; };
   }, []);
@@ -583,8 +588,52 @@ export default function App({ page, adapter }: AppProps) {
               <div className="ra-field"><label htmlFor="effort">审查强度</label><select id="effort" value={settings.effort} onChange={(event) => setSettings({ ...settings, effort: event.target.value as RuntimeSettings['effort'] })}><option value="fast">fast</option><option value="balanced">balanced</option><option value="thorough">thorough</option></select></div>
               <div className="ra-field"><label htmlFor="language">输出语言</label><select id="language" value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as RuntimeSettings['language'] })}><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></div>
             </div>
+
+            <h4 style={{ margin: '12px 0 6px', fontSize: 11, color: '#4d5b70' }}>认证模式</h4>
+            <div className="ra-settings-grid">
+              <div className="ra-field">
+                <label htmlFor="auth-mode">Auth Mode</label>
+                <select id="auth-mode" value={settings.auth?.mode ?? 'bearer'} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, mode: e.target.value as RuntimeSettings['auth']['mode'] } })}>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="api-key-header">API Key Header</option>
+                  <option value="query-param">Query Parameter</option>
+                  <option value="custom">自定义 Header</option>
+                </select>
+              </div>
+              {(settings.auth?.mode === 'api-key-header' || settings.auth?.mode === 'custom') && (
+                <div className="ra-field">
+                  <label htmlFor="auth-header-name">Header 名称</label>
+                  <input id="auth-header-name" value={settings.auth?.apiKeyHeader ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyHeader: e.target.value } })} placeholder="api-key" />
+                </div>
+              )}
+              {settings.auth?.mode === 'query-param' && (
+                <div className="ra-field">
+                  <label htmlFor="auth-param-name">Query 参数名</label>
+                  <input id="auth-param-name" value={settings.auth?.apiKeyQueryParam ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyQueryParam: e.target.value } })} placeholder="key" />
+                </div>
+              )}
+            </div>
             <div className="ra-modal-actions settings-actions"><button type="button" className="ra-btn danger" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button><button type="button" className="ra-btn" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button><button type="button" className="ra-btn primary" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button></div>
             <div className="ra-connection-list"><div className="ra-connection"><div className="ra-connection-title"><strong>GitLab API</strong><span className={`ra-badge ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
+
+            <h3 className="ra-section-title" style={{ marginTop: 20 }}>Token 用量统计</h3>
+            {usageSummary ? (
+              <div className="ra-capability-box">
+                <div className="ra-capability-row"><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
+                <div className="ra-capability-row"><span>输入 Tokens</span><strong>{formatTokenCount(usageSummary.totalInputTokens)}</strong></div>
+                <div className="ra-capability-row"><span>输出 Tokens</span><strong>{formatTokenCount(usageSummary.totalOutputTokens)}</strong></div>
+                <div className="ra-capability-row"><span>估算费用</span><strong>{formatCost(usageSummary.totalEstimatedCost)}</strong></div>
+                {Object.entries(usageSummary.byModel).map(([key, data]) => (
+                  <div key={key} className="ra-capability-row" style={{ fontSize: 9, opacity: 0.8 }}>
+                    <span>{key}（{data.count} 次）</span>
+                    <span>{formatTokenCount(data.inputTokens + data.outputTokens)} tok · {formatCost(data.estimatedCost)}</span>
+                  </div>
+                ))}
+                <button type="button" className="ra-btn" style={{ marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
+              </div>
+            ) : (
+              <p className="ra-section-copy">暂无用量记录。模型调用后会自动统计。</p>
+            )}
 
             <h3 className="ra-section-title" style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
             <p className="ra-section-copy">配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>

@@ -126,10 +126,27 @@ export interface ChatMessage {
 }
 
 export type ModelProvider = 'openai' | 'anthropic' | 'gemini';
+export type AuthMode = 'bearer' | 'api-key-header' | 'query-param' | 'custom';
 
 export interface McpSettings {
   enabled: boolean;
   serverUrl: string;
+}
+
+export interface AuthSettings {
+  mode: AuthMode;
+  customHeaders: Record<string, string>;
+  apiKeyHeader: string;
+  apiKeyQueryParam: string;
+}
+
+export interface UsageRecord {
+  timestamp: string;
+  provider: ModelProvider;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
 }
 
 export interface RuntimeSettings {
@@ -141,6 +158,7 @@ export interface RuntimeSettings {
   effort: 'fast' | 'balanced' | 'thorough';
   language: 'zh-CN' | 'en-US';
   mcp: McpSettings;
+  auth: AuthSettings;
 }
 
 export interface AdapterCapabilities {

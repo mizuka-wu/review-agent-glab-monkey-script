@@ -1,5 +1,6 @@
 import { diffContext } from './diff';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
+import { parseGeminiUsage, recordUsage } from './usage';
 import type {
   ChatMessage,
   CodeSelection,
@@ -102,6 +103,13 @@ export class GeminiRuntime {
         ?.map((part) => part.text)
         .join('');
       if (!content) throw new Error('Gemini API 没有返回文本内容');
+
+      // Record usage
+      const usage = parseGeminiUsage(payload as unknown as Record<string, unknown>);
+      if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+        void recordUsage('gemini', this.settings.model, usage.inputTokens, usage.outputTokens);
+      }
+
       return content;
     }
     throw new Error('Gemini API 重试次数已用尽');

@@ -1,5 +1,6 @@
 import { diffContext } from './diff';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
+import { parseOpenAIUsage, recordUsage } from './usage';
 import type {
   ChatMessage,
   CodeSelection,
@@ -61,11 +62,41 @@ export class OpenAIRuntime {
   }
 
   private headers() {
-    return {
+    const auth = this.settings.auth;
+    const base: Record<string, string> = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      ...(this.settings.apiKey ? { Authorization: `Bearer ${this.settings.apiKey}` } : {}),
     };
+
+    // Custom headers from auth settings
+    if (auth?.customHeaders) {
+      Object.assign(base, auth.customHeaders);
+    }
+
+    // Auth mode
+    if (this.settings.apiKey) {
+      const mode = auth?.mode ?? 'bearer';
+      if (mode === 'bearer') {
+        base['Authorization'] = `Bearer ${this.settings.apiKey}`;
+      } else if (mode === 'api-key-header') {
+        base[auth?.apiKeyHeader || 'api-key'] = this.settings.apiKey;
+      } else if (mode === 'custom') {
+        base[auth?.apiKeyHeader || 'Authorization'] = this.settings.apiKey;
+      }
+      // query-param mode: key goes in URL, not headers
+    }
+
+    return base;
+  }
+
+  private buildUrl(path: string): string {
+    const auth = this.settings.auth;
+    let url = endpoint(this.settings.modelBaseUrl, path);
+    if (this.settings.apiKey && auth?.mode === 'query-param') {
+      const param = auth.apiKeyQueryParam || 'key';
+      url += `${url.includes('?') ? '&' : '?'}${param}=${encodeURIComponent(this.settings.apiKey)}`;
+    }
+    return url;
   }
 
   async complete(
@@ -73,7 +104,7 @@ export class OpenAIRuntime {
     options: { json?: boolean; signal?: AbortSignal } = {},
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const response = await fetch(endpoint(this.settings.modelBaseUrl, '/chat/completions'), {
+      const response = await fetch(this.buildUrl('/chat/completions'), {
         method: 'POST',
         headers: this.headers(),
         body: JSON.stringify({
@@ -96,6 +127,13 @@ export class OpenAIRuntime {
       }
       const content = payload.choices?.[0]?.message?.content;
       if (!content) throw new Error('模型服务没有返回文本内容');
+
+      // Record usage
+      const usage = parseOpenAIUsage(payload as unknown as Record<string, unknown>);
+      if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+        void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
+      }
+
       return content;
     }
     throw new Error('模型服务重试次数已用尽');

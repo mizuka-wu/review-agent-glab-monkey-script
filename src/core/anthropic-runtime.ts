@@ -1,5 +1,6 @@
 import { diffContext } from './diff';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
+import { parseAnthropicUsage, recordUsage } from './usage';
 import type {
   ChatMessage,
   CodeSelection,
@@ -105,6 +106,13 @@ export class AnthropicRuntime {
       const textParts = payload.content?.filter((part) => part.type === 'text') ?? [];
       const content = textParts.map((part) => part.text).join('');
       if (!content) throw new Error('Anthropic API 没有返回文本内容');
+
+      // Record usage
+      const usage = parseAnthropicUsage(payload as unknown as Record<string, unknown>);
+      if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+        void recordUsage('anthropic', this.settings.model, usage.inputTokens, usage.outputTokens);
+      }
+
       return content;
     }
     throw new Error('Anthropic API 重试次数已用尽');
