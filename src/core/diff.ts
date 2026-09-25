@@ -1,4 +1,5 @@
 import type { DiffLine, FileDiff } from './types';
+import { fullFileContext } from './full-file';
 
 const HUNK_HEADER = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/;
 
@@ -74,7 +75,8 @@ export function diffContext(files: FileDiff[], maxCharacters = 60_000) {
   let used = 0;
 
   for (const file of files) {
-    const chunk = `### ${file.newPath}\n${file.diff}`;
+    const context = fullFileContext(file);
+    const chunk = `### ${file.newPath}\n${file.diff}${context ? `\n\n${context}` : ''}`;
     if (used + chunk.length > maxCharacters) {
       chunks.push(`### ${file.newPath}\n[diff omitted: context budget exceeded]`);
       break;

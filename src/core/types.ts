@@ -15,10 +15,20 @@ export interface FindingEvidence {
   quote: string;
 }
 
+export interface FindingAnchor {
+  source: 'diff' | 'full-file';
+  publishable: boolean;
+  relocatedFromPath?: string;
+}
+
 export interface Finding {
   id: string;
   fingerprint: string;
   path: string;
+  oldPath?: string;
+  newPath?: string;
+  newFile?: boolean;
+  deletedFile?: boolean;
   line: number;
   endLine: number;
   side: 'old' | 'new';
@@ -33,6 +43,7 @@ export interface Finding {
   comment: string;
   source: 'model' | 'rule';
   status: FindingStatus;
+  anchor?: FindingAnchor;
 }
 
 export interface DiffLine {
@@ -47,6 +58,9 @@ export interface FileDiff {
   oldPath: string;
   newPath: string;
   diff: string;
+  newFileContent?: string;
+  binary?: boolean;
+  generated?: boolean;
   newFile: boolean;
   deletedFile: boolean;
   renamedFile: boolean;
@@ -128,13 +142,64 @@ export interface AdapterCapabilities {
 export interface DiscussionDraft {
   body: string;
   path: string;
+  oldPath?: string;
+  newPath?: string;
   startLine: number;
   endLine: number;
   side: 'old' | 'new';
+  newFile?: boolean;
+  deletedFile?: boolean;
   diffRefs: DiffRefs;
 }
 
 export interface PublishedDiscussion {
   id: string;
   noteId: string;
+  deduplicated?: boolean;
+}
+
+export interface ReviewContextFile extends FileDiff {
+  included: boolean;
+  omittedReason?: 'binary' | 'generated' | 'lockfile' | 'secret' | 'unsupported' | 'budget';
+}
+
+export interface ReviewContext {
+  files: ReviewContextFile[];
+  selection?: CodeSelection;
+  background?: string;
+  estimatedCharacters: number;
+  budgetCharacters: number;
+  omittedFiles: { path: string; reason: NonNullable<ReviewContextFile['omittedReason']> }[];
+  fullFiles: FullFileSnapshot[];
+  omittedFullFiles: FullFileOmission[];
+}
+
+export interface FullFileSnapshot {
+  path: string;
+  ref: string;
+  content: string;
+  lines: string[];
+}
+
+export type FullFileOmissionReason =
+  | 'binary'
+  | 'generated'
+  | 'lockfile'
+  | 'secret'
+  | 'unsupported'
+  | 'too_large'
+  | 'budget'
+  | 'read_error';
+
+export interface FullFileOmission {
+  path: string;
+  reason: FullFileOmissionReason;
+  message?: string;
+}
+
+export interface ReviewEngineResult {
+  findings: Finding[];
+  context: ReviewContext;
+  source: 'model' | 'rule';
+  warnings: string[];
 }

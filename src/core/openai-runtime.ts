@@ -15,6 +15,20 @@ function endpoint(baseUrl: string, path: string) {
   return `${baseUrl.replace(/\/$/, '')}${path}`;
 }
 
+function shouldRetry(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function wait(milliseconds: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(resolve, milliseconds);
+    signal?.addEventListener('abort', () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
 function selectionContext(selection?: CodeSelection) {
   if (!selection) return '';
   return [
@@ -49,25 +63,33 @@ export class OpenAIRuntime {
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
     options: { json?: boolean; signal?: AbortSignal } = {},
   ) {
-    const response = await fetch(endpoint(this.settings.modelBaseUrl, '/chat/completions'), {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: this.settings.model,
-        messages,
-        temperature: this.settings.effort === 'fast' ? 0 : 0.2,
-        ...(options.json ? { response_format: { type: 'json_object' } } : {}),
-      }),
-      signal: options.signal,
-    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await fetch(endpoint(this.settings.modelBaseUrl, '/chat/completions'), {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          model: this.settings.model,
+          messages,
+          temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+          ...(options.json ? { response_format: { type: 'json_object' } } : {}),
+        }),
+        signal: options.signal,
+      });
 
-    const payload = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
-    if (!response.ok || payload.error) {
-      throw new Error(payload.error?.message ?? `模型服务返回 HTTP ${response.status}`);
+      const payload = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
+      if (!response.ok || payload.error) {
+        const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}`;
+        if (attempt < 2 && shouldRetry(response.status)) {
+          await wait(250 * 2 ** attempt, options.signal);
+          continue;
+        }
+        throw new Error(message);
+      }
+      const content = payload.choices?.[0]?.message?.content;
+      if (!content) throw new Error('模型服务没有返回文本内容');
+      return content;
     }
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) throw new Error('模型服务没有返回文本内容');
-    return content;
+    throw new Error('模型服务重试次数已用尽');
   }
 
   async chat(
@@ -105,8 +127,12 @@ export class OpenAIRuntime {
     selection: CodeSelection | undefined,
     language: RuntimeSettings['language'],
     signal?: AbortSignal,
+    background?: string,
   ) {
-    const context = selection ? selectionContext(selection) : diffContext(files);
+    const context = [
+      selection ? selectionContext(selection) : diffContext(files),
+      background ? `\n\n业务背景：\n${background}` : '',
+    ].join('');
     const strictness =
       this.settings.effort === 'thorough'
         ? '可报告更多问题，但仍须给出可复核证据。'
@@ -119,7 +145,7 @@ export class OpenAIRuntime {
         {
           role: 'system',
           content:
-            `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。位置必须来自 diff 新旧行号。${strictness}${language === 'en-US' ? ' Write findings in English.' : ' 所有字段使用简体中文。'}`,
+            `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。existingCode 必须是目标文件中的连续原文；跨文件证据使用 evidence.path。主 Finding 应优先锚定 Diff 行，完整文件只能作为上下文或证据，不能单独作为可发布位置。${strictness}${language === 'en-US' ? ' Write findings in English.' : ' 所有字段使用简体中文。'}`,
         },
         { role: 'user', content: context },
       ],

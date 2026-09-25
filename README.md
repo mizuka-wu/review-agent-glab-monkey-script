@@ -80,6 +80,7 @@ git push --follow-tags
 7. [本地 Agent Gateway 协议草案](docs/06-agent-gateway-contract.md)
 8. [安全、隐私与密钥治理](docs/07-security-privacy.md)
 9. [测试、验收与发布](docs/08-testing-acceptance.md)
+10. [P0 Review Engine 开发计划](docs/09-p0-review-engine-plan.md)
 
 ## 仓库结构
 

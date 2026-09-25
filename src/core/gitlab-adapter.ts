@@ -54,13 +54,23 @@ export function buildDiscussionPayload(input: DiscussionDraft) {
   payload.set('position[base_sha]', input.diffRefs.baseSha);
   payload.set('position[head_sha]', input.diffRefs.headSha);
   payload.set('position[start_sha]', input.diffRefs.startSha);
-  payload.set('position[new_path]', input.path);
-  payload.set('position[old_path]', input.path);
+  const oldPath = input.oldPath ?? input.path;
+  const newPath = input.newPath ?? input.path;
+  payload.set('position[new_path]', input.deletedFile ? '/dev/null' : newPath);
+  payload.set('position[old_path]', input.newFile ? '/dev/null' : oldPath);
 
   if (input.side === 'new') {
     payload.set('position[new_line]', String(input.endLine));
+    if (input.startLine !== input.endLine) {
+      payload.set('position[line_range][start][new_line]', String(input.startLine));
+      payload.set('position[line_range][end][new_line]', String(input.endLine));
+    }
   } else {
     payload.set('position[old_line]', String(input.endLine));
+    if (input.startLine !== input.endLine) {
+      payload.set('position[line_range][start][old_line]', String(input.startLine));
+      payload.set('position[line_range][end][old_line]', String(input.endLine));
+    }
   }
 
   return payload;
@@ -110,6 +120,38 @@ export class GitLabAdapter {
     return (await response.json()) as T;
   }
 
+  private async requestText(path: string, options: RequestOptions = {}): Promise<string> {
+    const headers: Record<string, string> = {
+      Accept: 'text/plain',
+      ...options.headers,
+    };
+    if (this.gitlabToken) headers['PRIVATE-TOKEN'] = this.gitlabToken;
+
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.page.origin}${path}`, {
+        method: options.method ?? 'GET',
+        headers,
+        body: options.body,
+        credentials: 'same-origin',
+        signal: options.signal,
+      });
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') throw error;
+      throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
+    }
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => response.statusText);
+      throw new GitLabApiError(
+        response.status,
+        `GitLab API ${response.status}：${detail.slice(0, 300)}`,
+        errorCode(response.status),
+      );
+    }
+    return response.text();
+  }
+
   private projectRef() {
     return projectApiIdentifier(this.page);
   }
@@ -149,16 +191,38 @@ export class GitLabAdapter {
   }
 
   async listDiffs(ref: MergeRequestRef): Promise<FileDiff[]> {
-    const data = await this.request<unknown[]>(
-      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100`,
-    );
-    return data.map(normalizeFileDiff);
+    const files: FileDiff[] = [];
+    for (let page = 1; page <= 50; page += 1) {
+      const data = await this.request<unknown[]>(
+        `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=${page}`,
+      );
+      files.push(...data.map(normalizeFileDiff));
+      if (data.length < 100) break;
+    }
+    return files;
   }
 
   async createDiscussion(
     ref: MergeRequestRef,
     draft: DiscussionDraft,
   ): Promise<PublishedDiscussion> {
+    const current = await this.getMergeRequest(ref);
+    if (current.diffRefs.headSha !== draft.diffRefs.headSha) {
+      throw new GitLabApiError(409, 'MR 已更新，当前 Finding 的 diff_refs 已过期', 'stale_diff_refs');
+    }
+
+    const discussions = await this.listDiscussions(ref);
+    const existing = discussions.find((discussion) =>
+      discussion.notes?.some((note) => note.body === draft.body),
+    );
+    if (existing) {
+      return {
+        id: existing.id,
+        noteId: String(existing.notes?.[0]?.id ?? ''),
+        deduplicated: true,
+      };
+    }
+
     const response = await this.request<{ id: string; notes?: { id: number }[] }>(
       `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions`,
       {
@@ -173,8 +237,20 @@ export class GitLabAdapter {
   }
 
   async listDiscussions(ref: MergeRequestRef) {
-    return this.request<{ id: string; notes?: { id: number; body: string }[] }[]>(
-      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions?per_page=100`,
+    const discussions: { id: string; notes?: { id: number; body: string }[] }[] = [];
+    for (let page = 1; page <= 50; page += 1) {
+      const data = await this.request<{ id: string; notes?: { id: number; body: string }[] }[]>(
+        `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions?per_page=100&page=${page}`,
+      );
+      discussions.push(...data);
+      if (data.length < 100) break;
+    }
+    return discussions;
+  }
+
+  async getFile(path: string, ref: string) {
+    return this.requestText(
+      `/api/v4/projects/${this.projectRef()}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`,
     );
   }
 }
