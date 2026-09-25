@@ -33,6 +33,7 @@ export function fingerprintFinding(input: {
   existingCode: string;
   category: FindingCategory;
   title: string;
+  line?: number;
 }) {
   const source = [
     'gitlab-review-agent-v1',
@@ -40,6 +41,7 @@ export function fingerprintFinding(input: {
     input.existingCode.replace(/\s+/g, '').toLowerCase(),
     input.category,
     normalizeText(input.title).toLowerCase(),
+    String(input.line ?? 0),
   ].join('\u0000');
 
   let first = 0x811c9dc5;
@@ -81,11 +83,14 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
     if (!value || typeof value !== 'object') continue;
     const item = value as Record<string, unknown>;
     const path = normalizeText(item.path ?? item.filePath);
-    const line = Number(item.line ?? item.startLine);
+    const lineValue = Number(item.line ?? item.startLine);
+    const line = Number.isInteger(lineValue) && lineValue >= 1 ? lineValue : 0;
     const title = normalizeText(item.title);
     const content = normalizeText(item.content ?? item.description);
+    const existingCode = typeof item.existingCode === 'string' ? item.existingCode : '';
+    const file = files.find((candidate) => candidate.newPath === path || candidate.oldPath === path);
 
-    if (!path || !Number.isInteger(line) || line < 1 || !title || !content) continue;
+    if (!path || (!line && !existingCode) || !title || !content) continue;
 
     const category = oneOf(item.category, categories, 'bug');
     const severity = oneOf(item.severity, severities, 'medium');
@@ -93,10 +98,9 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
     const endLineValue = Number(item.endLine ?? line);
     const endLine = Number.isInteger(endLineValue) && endLineValue >= line ? endLineValue : line;
     const suggestedSide = item.side === 'old' ? 'old' : 'new';
-    const anchoredLine = findDiffLine(files, path, suggestedSide, line);
+    const anchoredLine = line ? findDiffLine(files, path, suggestedSide, line) : undefined;
     const side = anchoredLine ? suggestedSide : findDiffLine(files, path, 'new', line) ? 'new' : 'old';
-    const existingCode = typeof item.existingCode === 'string' ? item.existingCode : '';
-    const fingerprint = fingerprintFinding({ path, existingCode, category, title });
+    const fingerprint = fingerprintFinding({ path, existingCode, category, title, line });
 
     if (seen.has(fingerprint)) continue;
     seen.add(fingerprint);
@@ -105,6 +109,10 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
       id: fingerprint,
       fingerprint,
       path,
+      oldPath: file?.oldPath,
+      newPath: file?.newPath,
+      newFile: file?.newFile,
+      deletedFile: file?.deletedFile,
       line,
       endLine,
       side,

@@ -20,6 +20,16 @@
 | M5 Review 硬化 | 3-4 周 | 定位、去重、反思、预算、评测 | 评测集达到质量门槛 |
 | M6 团队化 / CI | 待定 | 规则包、审计、Bot、发布流程 | 团队试点通过 |
 
+## 2.1 当前执行顺序：P0 Review Engine
+
+Gateway 不阻塞浏览器 Review 引擎。当前优先实现 [P0 Review Engine 开发计划](09-p0-review-engine-plan.md)：
+
+- Context Builder、Finding 锚定、去重和置信过滤。
+- GitLab Diff / Discussion 分页、stale `diff_refs` 和幂等发布。
+- 模型取消、重试和可复核失败状态。
+
+本地 Gateway、Agent 工具循环和 CI Bot 在 P0 稳定后再进入开发。
+
 周期按 1-2 名前端 + 0.5 名后端 / Agent + 产品 / 设计兼职投入估算。若只有一名开发，M1-M3 预计 8-11 周。
 
 ## 3. M0：计划与原型

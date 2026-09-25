@@ -19,6 +19,10 @@ export interface Finding {
   id: string;
   fingerprint: string;
   path: string;
+  oldPath?: string;
+  newPath?: string;
+  newFile?: boolean;
+  deletedFile?: boolean;
   line: number;
   endLine: number;
   side: 'old' | 'new';
@@ -47,6 +51,9 @@ export interface FileDiff {
   oldPath: string;
   newPath: string;
   diff: string;
+  newFileContent?: string;
+  binary?: boolean;
+  generated?: boolean;
   newFile: boolean;
   deletedFile: boolean;
   renamedFile: boolean;
@@ -128,13 +135,39 @@ export interface AdapterCapabilities {
 export interface DiscussionDraft {
   body: string;
   path: string;
+  oldPath?: string;
+  newPath?: string;
   startLine: number;
   endLine: number;
   side: 'old' | 'new';
+  newFile?: boolean;
+  deletedFile?: boolean;
   diffRefs: DiffRefs;
 }
 
 export interface PublishedDiscussion {
   id: string;
   noteId: string;
+  deduplicated?: boolean;
+}
+
+export interface ReviewContextFile extends FileDiff {
+  included: boolean;
+  omittedReason?: 'binary' | 'generated' | 'lockfile' | 'secret' | 'unsupported' | 'budget';
+}
+
+export interface ReviewContext {
+  files: ReviewContextFile[];
+  selection?: CodeSelection;
+  background?: string;
+  estimatedCharacters: number;
+  budgetCharacters: number;
+  omittedFiles: { path: string; reason: NonNullable<ReviewContextFile['omittedReason']> }[];
+}
+
+export interface ReviewEngineResult {
+  findings: Finding[];
+  context: ReviewContext;
+  source: 'model' | 'rule';
+  warnings: string[];
 }

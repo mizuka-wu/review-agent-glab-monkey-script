@@ -10,9 +10,10 @@ const file = normalizeFileDiff({
 
 describe('finding pipeline', () => {
   it('creates stable fingerprints independent of whitespace and case', () => {
-    const first = fingerprintFinding({ path: 'a.ts', existingCode: 'foo(  )', category: 'bug', title: 'Broken Flow' });
-    const second = fingerprintFinding({ path: 'a.ts', existingCode: 'foo()', category: 'bug', title: 'broken flow' });
+    const first = fingerprintFinding({ path: 'a.ts', existingCode: 'foo(  )', category: 'bug', title: 'Broken Flow', line: 4 });
+    const second = fingerprintFinding({ path: 'a.ts', existingCode: 'foo()', category: 'bug', title: 'broken flow', line: 4 });
     expect(first).toBe(second);
+    expect(first).not.toBe(fingerprintFinding({ path: 'a.ts', existingCode: 'foo()', category: 'bug', title: 'broken flow', line: 5 }));
   });
 
   it('normalizes enums, defaults and evidence', () => {

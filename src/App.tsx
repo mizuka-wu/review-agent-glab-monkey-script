@@ -6,9 +6,8 @@ import {
 import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
-import { normalizeFindings, parseModelFindings } from './core/findings';
 import { OpenAIRuntime } from './core/openai-runtime';
-import { runRuleReview } from './core/rules';
+import { ReviewEngine } from './core/review-engine';
 import { captureCodeSelection } from './core/selection';
 import { clearSensitiveSettings, defaultSettings, loadSettings, saveSettings } from './core/settings';
 import type {
@@ -50,6 +49,7 @@ export default function App({ page, adapter }: AppProps) {
   const [toast, setToast] = useState('');
 
   const runtime = useMemo(() => new OpenAIRuntime(settings), [settings]);
+  const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings), [runtime, settings]);
   const mergeRequestRef = useMemo(() => mergeRequestRefFromPage(page), [page]);
   const runtimeConfigured = runtime.configured;
 
@@ -148,30 +148,13 @@ export default function App({ page, adapter }: AppProps) {
 
     try {
       setReviewStatus('running');
-      let result: Finding[];
-      if (runtimeConfigured) {
-        const raw = await runtime.review(scopedFiles, selected, settings.language, controller.signal);
-        setReviewStatus('normalizing');
-        result = parseModelFindings(raw, scopedFiles);
-      } else if (selected) {
-        result = runRuleReview([{
-          oldPath: selected.filePath,
-          newPath: selected.filePath,
-          diff: selected.text.split('\n').map((line) => `+${line}`).join('\n'),
-          newFile: false,
-          deletedFile: false,
-          renamedFile: false,
-          lines: [],
-        }]);
-        result = normalizeFindings(result, scopedFiles);
-      } else {
-        result = runRuleReview(scopedFiles);
-        result = normalizeFindings(result, scopedFiles);
-      }
+      setReviewStatus('normalizing');
+      const result = await reviewEngine.run({ files: scopedFiles, selection: selected, signal: controller.signal });
       if (controller.signal.aborted) return;
-      setFindings(result);
-      setExpandedFinding(result[0]?.id ?? '');
+      setFindings(result.findings);
+      setExpandedFinding(result.findings[0]?.id ?? '');
       setReviewStatus('completed');
+      if (result.warnings.length > 0) setToast(result.warnings[0]);
     } catch (error) {
       if (controller.signal.aborted || (error as Error).name === 'AbortError') return;
       setReviewError(error instanceof Error ? error.message : String(error));
@@ -204,9 +187,13 @@ export default function App({ page, adapter }: AppProps) {
       await adapter.createDiscussion(mergeRequestRef, {
         body: publishBody,
         path: publishFinding.path,
+        oldPath: publishFinding.oldPath ?? publishFinding.path,
+        newPath: publishFinding.newPath ?? publishFinding.path,
         startLine: publishFinding.line,
         endLine: publishFinding.endLine,
         side: publishFinding.side,
+        newFile: publishFinding.newFile,
+        deletedFile: publishFinding.deletedFile,
         diffRefs: mrContext.diffRefs,
       });
       setFindings((current) => current.map((finding) =>
