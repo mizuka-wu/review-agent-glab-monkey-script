@@ -12,14 +12,10 @@ export default defineConfig({
       userscript: {
         name: 'Review Agent for GitLab',
         namespace: 'review-agent-glab',
-        description: 'Selection chat and structured code review for GitLab merge requests.',
+        description: 'Real GitLab diff review, selection chat, and confirmed discussion publishing.',
         author: 'Review Agent contributors',
         icon: 'https://about.gitlab.com/images/press/press-kit-icon.svg',
-        match: [
-          'https://gitlab.com/*',
-          'http://localhost/*',
-          'http://127.0.0.1/*',
-        ],
+        match: ['https://*/*', 'http://*/*'],
         grant: ['GM.getValue', 'GM.setValue', 'GM.deleteValue', 'GM.xmlHttpRequest'],
         'run-at': 'document-idle',
         noframes: true,

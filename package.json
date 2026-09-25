@@ -2,13 +2,16 @@
   "name": "review-agent-glab-monkey-script",
   "private": true,
   "version": "0.1.0",
-  "description": "GitLab review agent userscript prototype with selection chat and structured review workflows.",
+  "description": "GitLab review agent userscript with real diff review, selection chat, and confirmed discussion publishing.",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test": "pnpm test:unit && pnpm test:e2e",
     "build": "pnpm typecheck && vite build",
-    "check": "pnpm typecheck && pnpm build",
+    "check": "pnpm typecheck && pnpm test",
     "preview": "vite preview"
   },
   "imports": {
@@ -39,11 +42,19 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^5.0.2",
+    "jsdom": "^30.1.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.11",
-    "vite-plugin-monkey": "^8.0.0"
+    "vite-plugin-monkey": "^8.0.0",
+    "vitest": "^5.0.2"
   }
 }
