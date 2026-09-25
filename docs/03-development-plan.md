@@ -24,9 +24,9 @@
 
 ### 第一批：Provider 与模型层（高优先级）
 
-- [ ] **企业网关认证模式**：自定义 Header（`api-key`、`X-Auth-Token`）、Azure OpenAI 风格 URL、自定义 auth scheme。
-- [ ] **密钥存储安全**：不存明文 localStorage，混淆存储，设置页安全提示。
-- [ ] **Token / 成本统计**：解析 API 响应 `usage` 字段，跨会话累计 token 用量与估算费用。
+- [x] **企业网关认证模式**：自定义 Header（`api-key`、`X-Auth-Token`）、Azure OpenAI 风格 URL、自定义 auth scheme。
+- [x] **密钥存储安全**：不存明文 localStorage，混淆存储，设置页安全提示。
+- [x] **Token / 成本统计**：解析 API 响应 `usage` 字段，跨会话累计 token 用量与估算费用。
 
 ### 第二批：Review 与交互增强
 
