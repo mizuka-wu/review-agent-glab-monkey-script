@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release artifact
+        run: pnpm build
+
+      - name: Prepare release bundle
+        run: |
+          mkdir -p release
+          cp dist/*.user.js release/
+          cp README.md release/README.md
+          cp docs/*.md release/
+          (cd release && sha256sum *.user.js *.md > SHA256SUMS)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v$(jq -r .version package.json)"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          gh release create "${TAG}" release/* \
+            --repo "${{ github.repository }}" \
+            --title "Review Agent for GitLab ${TAG}" \
+            --generate-notes \
+            || gh release upload "${TAG}" release/* \
+            --repo "${{ github.repository }}" \
+            --clobber

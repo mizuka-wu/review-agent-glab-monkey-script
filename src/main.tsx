@@ -5,9 +5,10 @@ import './index.css';
 
 ReactDOM.createRoot(
   (() => {
-    const app = document.createElement('div');
-    document.body.append(app);
-    return app;
+    const root = document.createElement('div');
+    root.id = 'root';
+    document.body.append(root);
+    return root;
   })(),
 ).render(
   <React.StrictMode>

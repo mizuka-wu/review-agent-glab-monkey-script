@@ -1,11 +1,14 @@
 {
   "name": "review-agent-glab-monkey-script",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "GitLab review agent userscript prototype with selection chat and structured review workflows.",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "pnpm typecheck && vite build",
+    "check": "pnpm typecheck && pnpm build",
     "preview": "vite preview"
   },
   "imports": {
