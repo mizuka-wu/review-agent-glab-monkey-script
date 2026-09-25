@@ -44,6 +44,7 @@ export interface Finding {
   source: 'model' | 'rule';
   status: FindingStatus;
   anchor?: FindingAnchor;
+  edited?: boolean;
 }
 
 export interface DiffLine {
