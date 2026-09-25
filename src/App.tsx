@@ -9,7 +9,8 @@ import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { createModelRuntime, type ModelRuntime, type AgentMessage } from './core/model-runtime';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
-import { GitLabToolExecutor } from './core/agent-tools';
+import { CompositeToolExecutor, GitLabToolExecutor } from './core/agent-tools';
+import { McpClient } from './core/mcp-client';
 import { providerPresets } from './core/settings';
 import { ReviewEngine } from './core/review-engine';
 import {
@@ -168,8 +169,23 @@ export default function App({ page, adapter }: AppProps) {
     setToolEvents([]);
     try {
       if (mergeRequestRef && mrContext) {
-        // Use agent loop with GitLab tools when on an MR page
-        const executor = new GitLabToolExecutor(adapter, mergeRequestRef, mrContext.diffRefs.headSha);
+        // Use agent loop with GitLab + MCP tools when on an MR page
+        const gitlabExecutor = new GitLabToolExecutor(adapter, mergeRequestRef, mrContext.diffRefs.headSha);
+        let compositeExecutor = new CompositeToolExecutor(gitlabExecutor);
+
+        // Initialize MCP client if enabled
+        if (settings.mcp?.enabled && settings.mcp.serverUrl) {
+          try {
+            const mcpClient = new McpClient({ url: settings.mcp.serverUrl, enabled: true });
+            await mcpClient.initialize();
+            if (mcpClient.availableTools.length > 0) {
+              compositeExecutor = new CompositeToolExecutor(gitlabExecutor, mcpClient);
+            }
+          } catch (mcpError) {
+            console.warn('MCP 连接失败，仅使用 GitLab 工具:', mcpError);
+          }
+        }
+
         const agentMessages: AgentMessage[] = [
           ...history.filter((m) => m.role !== 'system' && !m.error).map((m) => ({
             role: m.role as 'user' | 'assistant',
@@ -178,7 +194,7 @@ export default function App({ page, adapter }: AppProps) {
               : m.content,
           })),
         ];
-        const result = await runAgentLoop(runtime, executor, agentMessages, {
+        const result = await runAgentLoop(runtime, compositeExecutor, agentMessages, {
           onEvent: (event) => setToolEvents((prev) => [...prev, event]),
         });
         setMessages((current) => [...current, {
@@ -652,6 +668,37 @@ export default function App({ page, adapter }: AppProps) {
                 <button type="button" className="ra-btn" disabled={!importText.trim()} onClick={() => void handleImportPack()}>
                   <Upload size={13} /> 导入规则包
                 </button>
+              </div>
+            </div>
+
+            <h3 className="ra-section-title" style={{ marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
+            <p className="ra-section-copy">连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
+            <div className="ra-settings-grid">
+              <div className="ra-field">
+                <label htmlFor="mcp-enabled">启用 MCP</label>
+                <select id="mcp-enabled" value={settings.mcp?.enabled ? 'on' : 'off'} onChange={(e) => setSettings({ ...settings, mcp: { ...settings.mcp, enabled: e.target.value === 'on' } })}>
+                  <option value="off">关闭</option>
+                  <option value="on">开启</option>
+                </select>
+              </div>
+              <div className="ra-field">
+                <label htmlFor="mcp-url">MCP Server URL</label>
+                <input
+                  id="mcp-url"
+                  value={settings.mcp?.serverUrl ?? ''}
+                  onChange={(e) => setSettings({ ...settings, mcp: { ...settings.mcp, serverUrl: e.target.value } })}
+                  placeholder="http://127.0.0.1:3000/mcp"
+                  disabled={!settings.mcp?.enabled}
+                />
+              </div>
+            </div>
+            <div className="ra-connection-list" style={{ marginTop: 10 }}>
+              <div className="ra-connection">
+                <div className="ra-connection-title">
+                  <strong>MCP 传输类型</strong>
+                  <span className="ra-badge info">Streamable HTTP</span>
+                </div>
+                <p>浏览器油猴脚本仅支持 HTTP 传输（POST JSON-RPC）。不支持 stdio 本地进程。URL 以 /sse 结尾时自动使用 SSE 模式。</p>
               </div>
             </div>
           </div>}

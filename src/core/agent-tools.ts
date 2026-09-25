@@ -158,3 +158,35 @@ export class GitLabToolExecutor {
 // --- Max iterations guard ---
 
 export const MAX_TOOL_ITERATIONS = 5;
+
+// --- Composite executor for GitLab + MCP tools ---
+
+export class CompositeToolExecutor {
+  private readonly mcpToolNames = new Set<string>();
+
+  constructor(
+    private readonly gitlabExecutor: GitLabToolExecutor,
+    private readonly mcpExecutor?: { callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>; availableTools: ToolDefinition[] },
+  ) {
+    if (mcpExecutor) {
+      for (const tool of mcpExecutor.availableTools) {
+        this.mcpToolNames.add(tool.name);
+      }
+    }
+  }
+
+  get availableTools(): ToolDefinition[] {
+    const tools = [...GITLAB_TOOLS];
+    if (this.mcpExecutor) {
+      tools.push(...this.mcpExecutor.availableTools);
+    }
+    return tools;
+  }
+
+  async execute(toolCall: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
+    if (this.mcpToolNames.has(toolCall.name) && this.mcpExecutor) {
+      return this.mcpExecutor.callTool(toolCall.name, toolCall.arguments, signal);
+    }
+    return this.gitlabExecutor.execute(toolCall);
+  }
+}

@@ -36,6 +36,7 @@ export const defaultSettings: RuntimeSettings = {
   gitlabToken: '',
   effort: 'balanced',
   language: 'zh-CN',
+  mcp: { enabled: false, serverUrl: 'http://127.0.0.1:3000/mcp' },
 };
 
 const STORAGE_KEY = 'review-agent-settings-v1';

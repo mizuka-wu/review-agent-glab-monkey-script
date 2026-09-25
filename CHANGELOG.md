@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add MCP integration: connect to local MCP servers via Streamable HTTP transport (GM.xmlHttpRequest). Extends agent tools with MCP-provided tools.
+- Add composite tool executor that dispatches between GitLab API tools and MCP tools.
 - Add Agent tool loop: model can call GitLab API tools (file_read, search_code, git_log) during chat for deeper codebase context.
 - Add unified `callWithTools` API across OpenAI, Anthropic, and Gemini runtimes with provider-specific tool call formats.
 - Add tool call event display in chat UI showing real-time tool execution progress.

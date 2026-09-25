@@ -127,6 +127,11 @@ export interface ChatMessage {
 
 export type ModelProvider = 'openai' | 'anthropic' | 'gemini';
 
+export interface McpSettings {
+  enabled: boolean;
+  serverUrl: string;
+}
+
 export interface RuntimeSettings {
   provider: ModelProvider;
   modelBaseUrl: string;
@@ -135,6 +140,7 @@ export interface RuntimeSettings {
   gitlabToken: string;
   effort: 'fast' | 'balanced' | 'thorough';
   language: 'zh-CN' | 'en-US';
+  mcp: McpSettings;
 }
 
 export interface AdapterCapabilities {

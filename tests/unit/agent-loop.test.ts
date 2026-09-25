@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GitLabToolExecutor, GITLAB_TOOLS, MAX_TOOL_ITERATIONS } from '../../src/core/agent-tools';
+import { CompositeToolExecutor, GitLabToolExecutor, GITLAB_TOOLS, MAX_TOOL_ITERATIONS } from '../../src/core/agent-tools';
 import { runAgentLoop, type AgentLoopEvent } from '../../src/core/agent-loop';
 import type { AgentMessage, ModelRuntime, ToolCallResponse } from '../../src/core/model-runtime';
 
@@ -19,14 +19,15 @@ function makeRuntime(responses: ToolCallResponse[]): ModelRuntime {
 }
 
 function makeExecutor() {
-  return {
-    execute: vi.fn(async (call: { id: string; name: string }) => ({
-      toolCallId: call.id,
-      name: call.name,
-      content: `result of ${call.name}`,
-      isError: false,
-    })),
-  } as unknown as GitLabToolExecutor;
+  const mockExecute = vi.fn(async (call: { id: string; name: string }) => ({
+    toolCallId: call.id,
+    name: call.name,
+    content: `result of ${call.name}`,
+    isError: false,
+  }));
+  const mockGitlab = { execute: mockExecute } as unknown as GitLabToolExecutor;
+  const executor = new CompositeToolExecutor(mockGitlab);
+  return { executor, mockExecute };
 }
 
 const initialMessages: AgentMessage[] = [
@@ -59,7 +60,7 @@ describe('agent-tools', () => {
 describe('runAgentLoop', () => {
   it('returns text immediately when model does not call tools', async () => {
     const runtime = makeRuntime([{ type: 'text', content: 'final answer' }]);
-    const executor = makeExecutor();
+    const { executor } = makeExecutor();
 
     const result = await runAgentLoop(runtime, executor, initialMessages);
     expect(result.text).toBe('final answer');
@@ -75,14 +76,14 @@ describe('runAgentLoop', () => {
       },
       { type: 'text', content: 'answer after tool' },
     ]);
-    const executor = makeExecutor();
+    const { executor, mockExecute } = makeExecutor();
 
     const result = await runAgentLoop(runtime, executor, initialMessages);
     expect(result.text).toBe('answer after tool');
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolResults).toHaveLength(1);
     expect(result.iterations).toBe(2);
-    expect(executor.execute).toHaveBeenCalledWith({
+    expect(mockExecute).toHaveBeenCalledWith({
       id: 'tc1',
       name: 'file_read',
       arguments: { path: 'src/app.ts' },
@@ -100,7 +101,7 @@ describe('runAgentLoop', () => {
       },
       { type: 'text', content: 'done' },
     ]);
-    const executor = makeExecutor();
+    const { executor } = makeExecutor();
 
     const result = await runAgentLoop(runtime, executor, initialMessages);
     expect(result.toolCalls).toHaveLength(2);
@@ -115,7 +116,7 @@ describe('runAgentLoop', () => {
         calls: [{ id: `tc${i}`, name: 'file_read', arguments: { path: 'x.ts' } }],
       })),
     );
-    const executor = makeExecutor();
+    const { executor } = makeExecutor();
 
     const result = await runAgentLoop(runtime, executor, initialMessages);
     expect(result.iterations).toBe(MAX_TOOL_ITERATIONS);
@@ -130,7 +131,7 @@ describe('runAgentLoop', () => {
       },
       { type: 'text', content: 'ok' },
     ]);
-    const executor = makeExecutor();
+    const { executor } = makeExecutor();
     const collectedEvents: AgentLoopEvent[] = [];
 
     await runAgentLoop(runtime, executor, initialMessages, {
@@ -150,7 +151,7 @@ describe('runAgentLoop', () => {
       },
       { type: 'text', content: 'fallback answer' },
     ]);
-    const executor = {
+    const mockGitlab = {
       execute: vi.fn(async (call: { id: string; name: string }) => ({
         toolCallId: call.id,
         name: call.name,
@@ -158,6 +159,7 @@ describe('runAgentLoop', () => {
         isError: true,
       })),
     } as unknown as GitLabToolExecutor;
+    const executor = new CompositeToolExecutor(mockGitlab);
 
     const result = await runAgentLoop(runtime, executor, initialMessages);
     expect(result.text).toBe('fallback answer');
@@ -172,7 +174,7 @@ describe('runAgentLoop', () => {
       },
       { type: 'text', content: 'based on search results...' },
     ]);
-    const executor = makeExecutor();
+    const { executor } = makeExecutor();
 
     await runAgentLoop(runtime, executor, initialMessages);
 
