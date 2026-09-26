@@ -57,6 +57,7 @@ interface AppProps {
 }
 
 const suggestions = ['解释这段变更的失败路径', '检查并发与幂等性', '补充可执行的测试建议'];
+const CHAT_STORAGE_KEY = 'review-agent-chat-v1';
 
 export default function App({ page, adapter }: AppProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -102,9 +103,6 @@ export default function App({ page, adapter }: AppProps) {
   const [sortBy, setSortBy] = useState<'severity' | 'line' | 'path'>('severity');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
-
-  // Chat persistence
-  const CHAT_STORAGE_KEY = 'review-agent-chat-v1';
 
   useEffect(() => {
     // Restore chat history

@@ -183,8 +183,16 @@ export function generateRuleId(): string {
 
 // --- Evaluation ---
 
+const patternCache = new Map<string, RegExp>();
+
 function compilePattern(pattern: RulePattern): RegExp {
-  return new RegExp(pattern.pattern, pattern.flags ?? '');
+  const key = `${pattern.pattern}:${pattern.flags ?? ''}`;
+  let compiled = patternCache.get(key);
+  if (!compiled) {
+    compiled = new RegExp(pattern.pattern, pattern.flags ?? '');
+    patternCache.set(key, compiled);
+  }
+  return compiled;
 }
 
 function evaluateRuleOnLine(rule: RuleDef, line: string): boolean {

@@ -153,11 +153,15 @@ export class McpClient {
       throw new Error(`MCP server 返回 HTTP ${status}`);
     }
 
-    // Handle SSE-style response (text/event-stream)
+    // Handle SSE-style response (text/event-stream): collect all data: lines
     let responseText = text;
     if (text.includes('data:')) {
-      const dataLine = text.split('\n').find((line) => line.startsWith('data:'));
-      if (dataLine) responseText = dataLine.slice(5).trim();
+      const dataLines = text.split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim());
+      if (dataLines.length > 0) {
+        responseText = dataLines.join('');
+      }
     }
 
     const response = JSON.parse(responseText) as JsonRpcResponse;
