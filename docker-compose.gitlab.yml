@@ -4,7 +4,7 @@
 
 services:
   gitlab:
-    image: gitlab/gitlab-ce:17.3.3-ce.0
+    image: gitlab/gitlab-ce:latest
     platform: linux/amd64
     container_name: gitlab-test
     hostname: gitlab.test
