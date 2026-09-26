@@ -9,7 +9,7 @@ services:
     container_name: gitlab-test
     hostname: gitlab.test
     ports:
-      - "8929:80"
+      - "8929:8929"
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://localhost:8929'
@@ -17,7 +17,7 @@ services:
       - gitlab_data:/var/opt/gitlab
       - gitlab_logs:/var/log/gitlab
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8929/-/readiness"]
+      test: ["CMD", "curl", "-f", "http://localhost:8929/users/sign_in"]
       interval: 15s
       timeout: 5s
       retries: 40
