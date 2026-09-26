@@ -46,6 +46,7 @@ jobs:
           mkdir -p public
           cp -R dist/. public/
           cp README.md public/README.md
+          cp LICENSE public/LICENSE
           cp -R docs public/docs
 
       - name: Upload Pages artifact

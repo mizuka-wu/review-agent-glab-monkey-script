@@ -3,10 +3,9 @@
 ## 1. 架构目标
 
 - 页面适配、GitLab 数据访问、模型调用和 UI 状态互不耦合。
-- 浏览器直连与本地 Gateway 使用同一套请求、事件和 Finding 契约。
 - 确定性模块负责定位、过滤、预算、去重和发布；Agent 只负责理解与判断。
 - 所有写入操作可预览、可确认、可追踪。
-- 无 Gateway 时保留可用的浅层体验，有 Gateway 时平滑升级。
+- 纯浏览器端实现，无需服务端或本地进程。
 
 ## 2. 分层架构
 
@@ -24,20 +23,20 @@
         │                     │                   │
 ┌───────▼────────┐   ┌────────▼─────────┐  ┌──────▼──────────┐
 │ GitLab Adapter │   │ Context Builder  │  │ Review UI       │
-│ REST/GraphQL   │   │ diff · scope     │  │ Chat · Findings │
+│ REST           │   │ diff · scope     │  │ Chat · Findings │
 │ auth · position│   │ budget · redact  │  │ publish preview │
 └───────┬────────┘   └────────┬─────────┘  └─────────────────┘
         │                     │
 ┌───────▼─────────────────────▼────────────────────────────────┐
 │ Runtime Abstraction                                          │
-│  DirectModelClient              AgentGatewayClient           │
-│  chat / shallow review          chat / tools / review jobs   │
-└─────────────────────────┬────────────────────────────────────┘
-                          │
-┌─────────────────────────▼────────────────────────────────────┐
-│ Optional Local Agent Gateway                                 │
-│  provider adapters · repository tools · rules · sessions     │
-│  job runner · streaming · cache · audit                      │
+│  OpenAIRuntime · AnthropicRuntime · GeminiRuntime            │
+│  chat / review / tools / streaming                           │
+└───────┬──────────────────────────────────────────────────────┘
+        │
+┌───────▼──────────────────────────────────────────────────────┐
+│ Agent Tool Loop                                              │
+│  file_read · search_code · git_log · MCP tools               │
+│  CompositeToolExecutor · cancel · retry                      │
 └──────────────────────────────────────────────────────────────┘
 ```
 

@@ -40,8 +40,9 @@ jobs:
           mkdir -p release
           cp dist/*.user.js release/
           cp README.md release/README.md
+          cp LICENSE release/LICENSE
           cp docs/*.md release/
-          (cd release && sha256sum *.user.js *.md > SHA256SUMS)
+          (cd release && sha256sum *.user.js *.md LICENSE > SHA256SUMS)
 
       - name: Publish GitHub release
         env:

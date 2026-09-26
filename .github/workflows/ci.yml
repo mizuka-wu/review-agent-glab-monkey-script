@@ -42,6 +42,12 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
       - name: Upload userscript artifact
         uses: actions/upload-artifact@v4
         with:
