@@ -157,4 +157,4 @@ Draft → User Confirm → GitLab Discussion Publish
 
 ## License
 
-待确定。
+[MIT](LICENSE)

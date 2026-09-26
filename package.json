@@ -2,6 +2,7 @@
   "name": "review-agent-glab-monkey-script",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "GitLab review agent userscript with real diff review, selection chat, and confirmed discussion publishing.",
   "type": "module",
   "scripts": {
