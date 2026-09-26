@@ -67,12 +67,12 @@ $PASS" 2>&1 | tail -3
 do_get_password() {
   echo "获取 root 密码..."
   local pass
-  pass=$(docker compose -f "$COMPOSE_FILE" exec -T gitlab cat /etc/gitlab/initial_root_password 2>/dev/null | grep -oP 'Password: \K\S+' | tr -d '\r\n')
+  pass=$(docker compose -f "$COMPOSE_FILE" exec -T gitlab cat /etc/gitlab/initial_root_password 2>/dev/null | sed -n 's/.*Password: *\([^ ]*\).*/\1/p' | tr -d '\r\n')
   if [ -n "$pass" ]; then
     echo "root 密码: $pass"
     return 0
   fi
-  pass=$(docker compose -f "$COMPOSE_FILE" logs 2>&1 | grep -oP 'Password: \K\S+' | tail -1)
+  pass=$(docker compose -f "$COMPOSE_FILE" logs 2>&1 | sed -n 's/.*Password: *\([^ ]*\).*/\1/p' | tail -1)
   if [ -n "$pass" ]; then
     echo "root 密码: $pass"
     return 0
