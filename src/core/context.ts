@@ -1,4 +1,3 @@
-import { diffContext } from './diff';
 import type {
   CodeSelection,
   FileDiff,
@@ -81,8 +80,4 @@ export function includedFiles(context: ReviewContext): FileDiff[] {
   return context.files
     .filter((file) => file.included)
     .map(({ included: _included, omittedReason: _omittedReason, ...file }) => file);
-}
-
-export function contextText(context: ReviewContext) {
-  return diffContext(includedFiles(context), context.budgetCharacters);
 }

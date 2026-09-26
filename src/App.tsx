@@ -247,17 +247,19 @@ export default function App({ page, adapter }: AppProps) {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // Probe GitLab capabilities once page context is available
+  // Probe GitLab capabilities once page context is available (debounced)
   useEffect(() => {
     if (!page.origin) return;
     let active = true;
-    void probeCapabilities(page.origin, settings.gitlabToken).then(({ capabilities: caps, diagnostics: diags }) => {
-      if (active) {
-        setCapabilities(caps);
-        setDiagnostics(diags);
-      }
-    }).catch(() => {});
-    return () => { active = false; };
+    const timer = window.setTimeout(() => {
+      void probeCapabilities(page.origin, settings.gitlabToken).then(({ capabilities: caps, diagnostics: diags }) => {
+        if (active) {
+          setCapabilities(caps);
+          setDiagnostics(diags);
+        }
+      }).catch(() => {});
+    }, 500);
+    return () => { active = false; window.clearTimeout(timer); };
   }, [page.origin, settings.gitlabToken]);
 
   // Load session history for the session browser
@@ -701,7 +703,7 @@ export default function App({ page, adapter }: AppProps) {
               <h2><Bot size={17} /> Review Agent</h2>
               <p>{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
             </div>
-            <button type="button" className="ra-icon-btn" onClick={() => setPanelOpen(false)} aria-label="关闭侧栏"><X size={16} /></button>
+            <button type="button" className="ra-icon-btn" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"><X size={16} /></button>
           </div>
         </div>
 

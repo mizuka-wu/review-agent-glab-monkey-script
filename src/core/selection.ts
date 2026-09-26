@@ -50,5 +50,3 @@ export function captureCodeSelection(
 export function isSelectionInsideHost(target: EventTarget | null, host: HTMLElement) {
   return target instanceof Node && host.contains(target);
 }
-
-export { textFromNode };

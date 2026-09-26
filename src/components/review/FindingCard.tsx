@@ -60,7 +60,7 @@ export function FindingCard({
         <div className="ra-finding-meta">
           {onSelect && (
             <span className="ra-finding-checkbox" onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-              <input type="checkbox" checked={selected ?? false} onChange={onSelect} aria-label="选择此 Finding" />
+              <input type="checkbox" checked={selected ?? false} onChange={() => {}} aria-label="选择此 Finding" />
             </span>
           )}
           <span className={`ra-severity ${finding.severity}`}>{severityLabel[finding.severity]}</span>
