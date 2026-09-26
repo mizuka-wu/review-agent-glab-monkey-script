@@ -30,9 +30,9 @@
 
 ### 第二批：Review 与交互增强
 
-- [ ] **流式输出 (SSE)**：逐 token 流式渲染到聊天和 Review 进度。
-- [ ] **聊天 Markdown 渲染**：代码块、表格、列表等格式化。
-- [ ] **Discussion 同步**：读取已有 GitLab Discussion，避免重复评论。
+- [x] **流式输出 (SSE)**：逐 token 流式渲染到聊天和 Review 进度。
+- [x] **聊天 Markdown 渲染**：代码块、表格、列表等格式化。
+- [x] **Discussion 同步**：读取已有 GitLab Discussion，避免重复评论。
 
 ### 第三批：功能深化
 
