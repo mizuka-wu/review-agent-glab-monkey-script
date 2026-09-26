@@ -42,12 +42,23 @@ function wait(milliseconds: number, signal?: AbortSignal) {
 function selectionContext(selection?: CodeSelection) {
   if (!selection) return '';
   return [
-    `选中文件：${selection.filePath}`,
-    `位置：${selection.side}:${selection.startLine}-${selection.endLine}`,
+    `Selected file: ${selection.filePath}`,
+    `Location: ${selection.side}:${selection.startLine}-${selection.endLine}`,
     '```text',
     selection.text,
     '```',
   ].join('\n');
+}
+
+function chatSystemPrompt(language: 'zh-CN' | 'en-US') {
+  return language === 'en-US'
+    ? 'You are a GitLab code review assistant. Answer only based on the given code. Clearly distinguish confirmed facts from inference. Do not fabricate file contents.'
+    : '你是 GitLab 代码评审助手。只基于给出的代码回答，明确区分已确认事实和推断。回答使用简体中文，避免编译造文件内容。';
+}
+
+function reviewSystemPrompt(language: 'zh-CN' | 'en-US', strictness: string) {
+  const lang = language === 'en-US' ? ' Write findings in English.' : ' 所有字段使用简体中文。';
+  return `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。existingCode 必须是目标文件中的连续原文；跨文件证据使用 evidence.path。主 Finding 应优先锚定 Diff 行，完整文件只能作为上下文或证据，不能单独作为可发布位置。${strictness}${lang}`;
 }
 
 export class OpenAIRuntime {
@@ -206,8 +217,7 @@ export class OpenAIRuntime {
       [
         {
           role: 'system',
-          content:
-            '你是 GitLab 代码评审助手。只基于给出的代码回答，明确区分已确认事实和推断。回答使用简体中文，避免编译造文件内容。',
+          content: chatSystemPrompt(this.settings.language),
         },
         ...(selection && !messages.some((message) => message.attachment)
           ? [{ role: 'user' as const, content: selectionContext(selection) }]
@@ -240,8 +250,7 @@ export class OpenAIRuntime {
       [
         {
           role: 'system',
-          content:
-            `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。existingCode 必须是目标文件中的连续原文；跨文件证据使用 evidence.path。主 Finding 应优先锚定 Diff 行，完整文件只能作为上下文或证据，不能单独作为可发布位置。${strictness}${language === 'en-US' ? ' Write findings in English.' : ' 所有字段使用简体中文。'}`,
+          content: reviewSystemPrompt(language, strictness),
         },
         { role: 'user', content: context },
       ],

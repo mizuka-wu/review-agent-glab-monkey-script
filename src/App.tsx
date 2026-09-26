@@ -96,11 +96,91 @@ export default function App({ page, adapter }: AppProps) {
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   const [batchPublishing, setBatchPublishing] = useState(false);
   const [batchPublishTarget, setBatchPublishTarget] = useState<'review' | 'chat'>('review');
+  const [filterSeverity, setFilterSeverity] = useState<string>('all');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'severity' | 'line' | 'path'>('severity');
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
+
+  // Chat persistence
+  const CHAT_STORAGE_KEY = 'review-agent-chat-v1';
+
+  useEffect(() => {
+    // Restore chat history
+    try {
+      const stored = localStorage.getItem(CHAT_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as ChatMessage[];
+        if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed.slice(-50));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    // Save chat history when messages change
+    if (messages.length > 0) {
+      try {
+        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-50)));
+      } catch { /* ignore */ }
+    }
+  }, [messages]);
 
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
   const mergeRequestRef = useMemo(() => mergeRequestRefFromPage(page), [page]);
   const runtimeConfigured = runtime.configured;
+
+  // Filter and sort findings
+  const filteredFindings = useMemo(() => {
+    let result = [...findings];
+    if (filterSeverity !== 'all') result = result.filter((f) => f.severity === filterSeverity);
+    if (filterCategory !== 'all') result = result.filter((f) => f.category === filterCategory);
+    if (filterStatus !== 'all') result = result.filter((f) => f.status === filterStatus);
+
+    const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    result.sort((a, b) => {
+      if (sortBy === 'severity') return severityOrder[a.severity] - severityOrder[b.severity];
+      if (sortBy === 'line') return a.line - b.line;
+      return a.path.localeCompare(b.path);
+    });
+    return result;
+  }, [findings, filterSeverity, filterCategory, filterStatus, sortBy]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (publishFinding) setPublishFinding(undefined);
+        else if (batchPublishTarget === 'review') setBatchPublishTarget('chat');
+        else if (editingPackId) setEditingPackId(null);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (!reviewStatus || reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') {
+          void startReview(attachment ? 'selection' : 'all');
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setActiveTab((current) => current === 'chat' ? 'review' : current === 'review' ? 'settings' : 'chat');
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [publishFinding, batchPublishTarget, editingPackId, reviewStatus, attachment]);
+
+  // Online/offline detection
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -181,6 +261,21 @@ export default function App({ page, adapter }: AppProps) {
     }).catch(() => {});
     return () => { active = false; };
   }, [page.origin, settings.gitlabToken]);
+
+  // Load session history for the session browser
+  useEffect(() => {
+    if (activeTab !== 'settings') return;
+    let active = true;
+    void (async () => {
+      const storage = (globalThis as typeof globalThis & { GM?: { getValue: (k: string, fb: unknown) => Promise<unknown> } }).GM;
+      const raw = storage
+        ? await storage.getValue('review-agent-review-sessions-v1', {})
+        : JSON.parse(localStorage.getItem('review-agent-review-sessions-v1') ?? '{}');
+      const sessions = Object.values(raw ?? {}) as ReviewSessionManifest[];
+      if (active) setSessionHistory(sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10));
+    })();
+    return () => { active = false; };
+  }, [activeTab]);
 
   const sendChat = async (event: FormEvent) => {
     event.preventDefault();
@@ -617,6 +712,7 @@ export default function App({ page, adapter }: AppProps) {
 
         <div className="ra-panel-body">
           {loadError && <div className="ra-alert error" role="alert">{loadError}<button type="button" className="ra-btn" onClick={() => location.reload()}><RefreshCw size={13} />重试</button></div>}
+          {!isOnline && <div className="ra-alert" role="alert" style={{ color: '#8c2d26', background: '#fde8e5', border: '1px solid #efb9b3' }}>网络已断开，部分功能可能不可用。</div>}
           {activeTab === 'chat' && <div className="ra-chat">
             <div className="ra-messages" aria-live="polite">
               {messages.length === 0 && <div className="ra-empty-card"><h3>询问真实代码</h3><p>在页面中选中 Diff 代码，或直接输入关于当前 MR 的问题。</p><div className="ra-suggestions">{suggestions.map((item) => <button type="button" className="ra-suggestion" key={item} onClick={() => setDraft(item)}>{item}</button>)}</div></div>}
@@ -645,6 +741,40 @@ export default function App({ page, adapter }: AppProps) {
             )}
             {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && <div className="ra-progress-card"><div className="ra-progress-head"><strong>{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong><span className="ra-badge info">进行中</span></div><div className="ra-progress-track"><div className="ra-progress-fill" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} /></div><button type="button" className="ra-btn danger" onClick={cancelReview}><Square size={13} />取消</button></div>}
             {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div>
+
+              {/* Filter and sort controls */}
+              <div className="ra-filter-bar">
+                <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} aria-label="按严重度筛选">
+                  <option value="all">全部严重度</option>
+                  <option value="critical">严重</option>
+                  <option value="high">高</option>
+                  <option value="medium">中</option>
+                  <option value="low">低</option>
+                </select>
+                <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} aria-label="按分类筛选">
+                  <option value="all">全部分类</option>
+                  <option value="bug">缺陷</option>
+                  <option value="security">安全</option>
+                  <option value="performance">性能</option>
+                  <option value="maintainability">可维护性</option>
+                  <option value="test">测试</option>
+                </select>
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="按状态筛选">
+                  <option value="all">全部状态</option>
+                  <option value="draft">草稿</option>
+                  <option value="published">已发布</option>
+                  <option value="ignored">已忽略</option>
+                </select>
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序方式">
+                  <option value="severity">按严重度</option>
+                  <option value="line">按行号</option>
+                  <option value="path">按文件</option>
+                </select>
+              </div>
+              {filteredFindings.length !== findings.length && (
+                <p className="ra-section-copy">显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
+              )}
+
               {selectedFindings.size > 0 && (
                 <div className="ra-batch-bar">
                   <span>已选 {selectedFindings.size} 个</span>
@@ -659,7 +789,7 @@ export default function App({ page, adapter }: AppProps) {
                   <button type="button" className="ra-btn" onClick={selectAllPublishable}>全选可发布</button>
                 </div>
               )}
-              <div className="ra-finding-list">{findings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} selected={selectedFindings.has(finding.id)} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onSelect={() => toggleFindingSelection(finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>{findings.length > visibleFindingCount && <button type="button" className="ra-btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setVisibleFindingCount((count) => count + 20)}>显示更多（还有 {findings.length - visibleFindingCount} 个）</button>}</>}
+              <div className="ra-finding-list">{filteredFindings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} selected={selectedFindings.has(finding.id)} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onSelect={() => toggleFindingSelection(finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>{filteredFindings.length > visibleFindingCount && <button type="button" className="ra-btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setVisibleFindingCount((count) => count + 20)}>显示更多（还有 {filteredFindings.length - visibleFindingCount} 个）</button>}</>}
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">
@@ -916,6 +1046,21 @@ export default function App({ page, adapter }: AppProps) {
                 setToast('站点配置已复制到剪贴板');
               }}><Download size={13} /> 导出配置</button>
             </div>
+
+            {sessionHistory.length > 0 && <>
+              <h3 className="ra-section-title" style={{ marginTop: 20 }}>Review 会话历史</h3>
+              <div className="ra-connection-list">
+                {sessionHistory.map((session) => (
+                  <div key={session.id} className="ra-connection">
+                    <div className="ra-connection-title">
+                      <strong>{session.projectPath} !{session.mergeRequestIid}</strong>
+                      <span className={`ra-badge ${session.status === 'completed' ? 'success' : session.status === 'failed' ? 'error' : session.status === 'cancelled' ? 'warning' : 'info'}`}>{session.status}</span>
+                    </div>
+                    <p style={{ fontSize: 9 }}>{session.findings.length} Findings · {session.source} · {new Date(session.updatedAt).toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
+            </>}
           </div>}
         </div>
       </aside>
