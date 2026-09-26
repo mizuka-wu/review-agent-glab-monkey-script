@@ -42,15 +42,15 @@
 - [x] **Commit / Branch Review**：对 commit 或 branch diff 做 Review。
 - [x] **评测集 + 基准脚本**：8 个 fixture，detection rate / precision / false positive 量化，回归门禁。
 
-### 低优先级（待定）
+### 低优先级
 
-- Finding 筛选排序 UI。
-- 聊天历史持久化。
-- Review 会话历史浏览。
-- 键盘快捷键。
-- 错误恢复 / 离线状态。
-- 多语言 Prompt 适配。
-- MR 页面内嵌摘要。
+- [x] Finding 筛选排序 UI。
+- [x] 聊天历史持久化。
+- [x] Review 会话历史浏览。
+- [x] 键盘快捷键。
+- [x] 错误恢复 / 离线状态。
+- [x] 多语言 Prompt 适配。
+- [x] MR 页面内嵌摘要。
 
 ## 4. 不做的事
 
