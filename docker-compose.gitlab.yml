@@ -1,6 +1,5 @@
 # GitLab CE 测试容器
-# 启动: ./scripts/gitlab.sh start
-# 访问: http://localhost:8929 (root / 5iveRage)
+# 端口映射可按需修改: HOST_PORT:8929
 
 services:
   gitlab:
@@ -16,12 +15,6 @@ services:
     volumes:
       - gitlab_data:/var/opt/gitlab
       - gitlab_logs:/var/log/gitlab
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8929/users/sign_in"]
-      interval: 15s
-      timeout: 5s
-      retries: 40
-      start_period: 120s
 
 volumes:
   gitlab_data:
