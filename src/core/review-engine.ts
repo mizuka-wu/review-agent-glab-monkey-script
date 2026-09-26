@@ -77,25 +77,7 @@ function withFullFiles(
 }
 
 export function buildSelectionContext(selection: CodeSelection) {
-  return buildReviewContext({ files: [selectionFileFor(selection)], selection });
-}
-
-function selectionFileFor(selection: CodeSelection): FileDiff {
-  const lines = selection.text.split('\n');
-  return {
-    oldPath: selection.filePath,
-    newPath: selection.filePath,
-    diff: lines.map((line) => `+${line}`).join('\n'),
-    newFile: false,
-    deletedFile: false,
-    renamedFile: false,
-    lines: lines.map((text, index) => ({
-      hunkId: 'selection',
-      newLine: selection.startLine + index,
-      kind: 'added',
-      text,
-    })),
-  };
+  return buildReviewContext({ files: [], selection });
 }
 
 export class ReviewEngine {
