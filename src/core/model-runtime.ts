@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
+import type { ToolCall, ToolDefinition } from './agent-tools';
 import { AnthropicRuntime } from './anthropic-runtime';
 import { GeminiRuntime } from './gemini-runtime';
 import { OpenAIRuntime } from './openai-runtime';

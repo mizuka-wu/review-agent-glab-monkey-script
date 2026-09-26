@@ -309,11 +309,15 @@ export class OpenAIRuntime {
     if (message?.tool_calls && message.tool_calls.length > 0) {
       return {
         type: 'tool_calls',
-        calls: message.tool_calls.map((tc) => ({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments),
-        })),
+        calls: message.tool_calls.map((tc) => {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(tc.function.arguments);
+          } catch {
+            // Model returned invalid JSON in arguments; use empty args
+          }
+          return { id: tc.id, name: tc.function.name, arguments: args };
+        }),
       };
     }
 
