@@ -208,20 +208,26 @@ export function generateRuleId(): string {
 
 // --- Evaluation ---
 
-const patternCache = new Map<string, RegExp>();
+const patternCache = new Map<string, RegExp | null>();
 
-function compilePattern(pattern: RulePattern): RegExp {
+function compilePattern(pattern: RulePattern): RegExp | null {
   const key = `${pattern.pattern}:${pattern.flags ?? ''}`;
-  let compiled = patternCache.get(key);
-  if (!compiled) {
+  if (patternCache.has(key)) return patternCache.get(key)!;
+  let compiled: RegExp | null = null;
+  try {
     compiled = new RegExp(pattern.pattern, pattern.flags ?? '');
-    patternCache.set(key, compiled);
+  } catch {
+    // Invalid regex from user-imported rule pack
   }
+  patternCache.set(key, compiled);
   return compiled;
 }
 
 function evaluateRuleOnLine(rule: RuleDef, line: string): boolean {
-  return rule.matchPatterns.some((pattern) => compilePattern(pattern).test(line));
+  return rule.matchPatterns.some((pattern) => {
+    const compiled = compilePattern(pattern);
+    return compiled ? compiled.test(line) : false;
+  });
 }
 
 function applySuggestion(original: string, template?: string): string {

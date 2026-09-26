@@ -237,7 +237,7 @@ export async function saveReviewSession(
   const sessions = await readSessions(storage);
   sessions[session.id] = session;
   const pruned = Object.values(sessions)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''))
     .slice(0, MAX_SESSIONS);
   await storage.setValue(STORAGE_KEY, Object.fromEntries(pruned.map((item) => [item.id, item])));
   return session;
@@ -250,5 +250,5 @@ export async function loadLatestReviewSession(
   const sessions = await readSessions(storage);
   return Object.values(sessions)
     .filter((session) => session.key === key)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+    .sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''))[0];
 }

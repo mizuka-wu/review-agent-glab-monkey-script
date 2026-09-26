@@ -139,7 +139,7 @@ export default function App({ page, adapter }: AppProps) {
     result.sort((a, b) => {
       if (sortBy === 'severity') return severityOrder[a.severity] - severityOrder[b.severity];
       if (sortBy === 'line') return a.line - b.line;
-      return a.path.localeCompare(b.path);
+      return (a.path ?? '').localeCompare(b.path ?? '');
     });
     return result;
   }, [findings, filterSeverity, filterCategory, filterStatus, sortBy]);
@@ -271,7 +271,7 @@ export default function App({ page, adapter }: AppProps) {
         ? await storage.getValue('review-agent-review-sessions-v1', {})
         : JSON.parse(localStorage.getItem('review-agent-review-sessions-v1') ?? '{}');
       const sessions = Object.values(raw ?? {}) as ReviewSessionManifest[];
-      if (active) setSessionHistory(sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10));
+      if (active) setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
     })();
     return () => { active = false; };
   }, [activeTab]);

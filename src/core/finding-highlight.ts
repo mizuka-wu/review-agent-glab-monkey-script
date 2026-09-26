@@ -18,9 +18,13 @@ export function highlightFindingOnPage(finding: Finding): HTMLElement[] {
       ?? pathContainer?.querySelector('.file-title-name')?.textContent?.trim()
       ?? '';
 
-    // Check if this row matches the finding
+    // Check if this row matches the finding (exact path match to avoid false positives)
     const matchesLine = lineNumber >= finding.line && lineNumber <= finding.endLine;
-    const matchesPath = filePath.includes(finding.path) || finding.path.includes(filePath);
+    const matchesPath = filePath === finding.path
+      || filePath === finding.newPath
+      || filePath === finding.oldPath
+      || (filePath.length > 0 && finding.path.endsWith(`/${filePath}`))
+      || (filePath.length > 0 && filePath.endsWith(`/${finding.path}`));
 
     if (matchesLine && (matchesPath || !filePath)) {
       row.setAttribute('data-ra-highlight', 'true');

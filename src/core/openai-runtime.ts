@@ -65,10 +65,18 @@ export class OpenAIRuntime {
   constructor(private readonly settings: RuntimeSettings) {}
 
   get configured() {
+    const isOfficialOpenAI = (() => {
+      try {
+        const url = new URL(this.settings.modelBaseUrl);
+        return url.hostname === 'api.openai.com';
+      } catch {
+        return false;
+      }
+    })();
     return Boolean(
       this.settings.modelBaseUrl &&
         this.settings.model &&
-        (this.settings.apiKey || !this.settings.modelBaseUrl.includes('api.openai.com')),
+        (this.settings.apiKey || !isOfficialOpenAI),
     );
   }
 
