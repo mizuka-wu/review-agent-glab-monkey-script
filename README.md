@@ -1,107 +1,160 @@
 # Review Agent for GitLab
 
-一个面向 GitLab / 自部署 GitLab 的油猴脚本产品原型。它把代码评审能力放进现有 Merge Request 页面，支持划词提问、选中代码 Review、整份 MR Review、结构化问题草稿和确认后发布评论。
+一个面向 GitLab / 自部署 GitLab 的油猴脚本（Tampermonkey Userscript），在 MR / Diff / File 页面中提供 AI 代码评审能力。支持划词提问、规则/模型 Review、结构化 Finding 草稿、批量发布 GitLab Discussion。
 
-> 当前仓库处于 **开发计划 + 交互原型** 阶段。`dist/` 中的脚本还没有生产级 GitLab 适配、Agent Gateway 或评论发布能力，不应直接安装到日常工作流。
+## 核心特性
 
-## 产品目标
+### 🤖 模型 Review
+- **多 Provider**：OpenAI-compatible、Anthropic、Google Gemini，一键切换
+- **企业网关认证**：Bearer Token、API Key Header、Query Parameter、自定义 Header 四种模式
+- **Agent 工具循环**：模型可主动调用 `file_read`、`search_code`、`git_log` 工具获取仓库上下文
+- **MCP 扩展**：通过 Streamable HTTP 连接本地 MCP server，扩展工具能力
+- **SSE 流式输出**：聊天逐 token 流式渲染
+- **三档审查强度**：fast（仅高置信）、balanced（默认）、thorough（全面）
 
-- 在 GitLab MR / Diff / File 页面中无侵入地唤起 Review Agent。
-- 选中代码后直接提问，或以选中片段为焦点发起局部 Review。
-- 整体分析 MR，给出可定位、可解释、可复核的结构化问题草稿。
-- 所有写入 GitLab 的评论默认由用户逐条确认，不默认自动发布。
-- 同一套前端可连接纯浏览器模型服务，也可连接本地 Agent Gateway 获取仓库级上下文。
+### 📋 Review 引擎
+- **规则包系统**：内置 5 条规则（硬编码密钥、调试日志、弱类型、TODO、缺少测试），支持自定义规则包（regex 匹配、glob 路径作用域、JSON 导入导出）
+- **Context Builder**：Diff 文件过滤（lockfile/生成文件/密钥/二进制排除）、字符预算截断、省略原因记录
+- **Finding 锚定**：`existingCode` 多行精确匹配、旧/新侧行号推断、跨文件重定位
+- **Review 硬化**：证据充分度检查、严重度校准、相似 Finding 合并、置信度过滤
+- **幂等发布**：指纹去重、`head_sha` 校验、`stale_diff_refs` 检测、Discussion 同步
+- **评测基准**：8 个 fixture，检测率 ≥ 80%、精确率 ≥ 70%、安全类 100%、干净代码 0 误报
 
-## 与 OpenCodeReview 的关系
+### 🎯 Finding 管理
+- **完整生命周期**：草稿 → 编辑 → 定位 → 复制 → 发布 / 忽略
+- **页内高亮**：在 GitLab Diff 页面上标注 Finding 位置，severity 色标
+- **批量发布**：复选框多选 → 预览确认 → 逐条创建 Discussion
+- **筛选排序**：按严重度/分类/状态过滤，按严重度/行号/文件排序
+- **Session/Resume**：刷新页面后恢复上次 Review 会话
 
-本项目参考 [alibaba/open-code-review](https://github.com/alibaba/open-code-review) 的产品思路，重点吸收以下设计原则：
+### 🛠 自部署兼容
+- **能力探测**：认证模式、API 版本、搜索、CSRF、DOM 可用性自动检测
+- **DOM 降级**：API 不可用时从页面 DOM 解析 Diff
+- **诊断面板**：实时显示 GitLab 实例状态和兼容性警告
+- **配置导出**：脱敏导出站点配置到剪贴板
+- **日志脱敏**：自动过滤 Bearer token、API key、PAT 等敏感信息
 
-- 确定性工程负责文件选择、上下文裁剪、规则匹配和评论定位；Agent 负责动态取上下文和判断。
-- Review 输出使用结构化 Finding，而不是无法复核的自然语言长文。
-- 精确定位与内容反思是独立步骤，避免行号漂移和无效评论。
-- 默认优先精确率，控制噪声；高召回模式后续可选。
+### ⚡ 性能
+- **并行加载**：Diff 分页并发请求（3 路并发）、完整文件并发读取（5 路并发）
+- **窗口化渲染**：Finding 列表分批加载（每批 20 条）
+- **大 MR 支持**：500 文件 / 20k 行不阻塞 GitLab 页面
 
-本项目不复制其 Go CLI 实现，也不试图在浏览器里复刻 Git、构建、测试和完整 Agent Runtime。浏览器、GitLab API、本地 Gateway 的职责边界见 [能力边界](docs/01-capability-boundary.md)。
+### 🔒 安全
+- **密钥混淆存储**：API Key / GitLab PAT 使用 XOR + base64 混淆后存储，不明文暴露
+- **Draft first**：所有评论默认草稿，用户确认后才写入 GitLab
+- **Token 用量统计**：自动解析 API 响应 `usage`，按模型展示用量和费用估算
 
-## 三种运行形态
+### 💬 交互体验
+- **Markdown 渲染**：代码块、粗体、斜体、列表、链接，XSS 安全
+- **聊天持久化**：对话记录自动保存，刷新后恢复
+- **键盘快捷键**：`Esc` 关闭弹窗、`Ctrl+Enter` 开始 Review、`Ctrl+K` 切换 Tab
+- **离线检测**：网络断开时显示状态提示
+- **多语言 Prompt**：按设置自动适配中文/英文系统提示词
+- **Review 会话历史**：查看过往 Review 会话列表
 
-| 形态 | 能做什么 | 限制 | 规划阶段 |
-| --- | --- | --- | --- |
-| 浏览器直连 | 划词问答、页面上下文、当前 MR Diff、浅层 Review、评论草稿 | 受 CORS / token / 页面结构 / 上下文窗口限制 | M1-M2 |
-| 本地 Agent Gateway（推荐） | 仓库级搜索、全文件读取、规则匹配、工具调用、长任务、流式状态 | 需要本地服务和项目映射配置 | M3-M4 |
-| GitLab CI Bot（后续） | 无人值守 MR Review、幂等评论、流水线门禁 | 需要 Runner、服务账号和运维配置 | M5+ |
+## 安装
 
-## 交互原型
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 浏览器扩展
+2. 打开 `dist/review-agent-glab-monkey-script.user.js` 或从 [Release](../../releases) 下载
+3. 在 Tampermonkey 中导入安装
+4. 打开任意 GitLab MR 页面，点击右下角浮动按钮打开 Review Agent
 
-原型模拟了一个 GitLab MR 页面和 Review Agent 侧栏，覆盖以下状态：
-
-- 划词后出现“提问 / Review 这段”悬浮工具栏。
-- Chatbox 可携带选中片段上下文继续对话。
-- 触发 Review 后展示阶段、工具调用和结构化 Finding。
-- Finding 可定位、复制评论草稿，并在二次确认后模拟发布到 GitLab。
-- 设置页展示浏览器、GitLab API、本地 Gateway 的连接状态和能力边界。
-
-本地运行：
+## 开发
 
 ```bash
+# 安装依赖
 pnpm install
+
+# 开发模式（原型页面）
 pnpm dev
-```
 
-构建检查：
+# 类型检查
+pnpm typecheck
 
-```bash
+# 单元测试（151 个）
+pnpm test:unit
+
+# E2E 测试（Playwright，3 个）
+pnpm test:e2e
+
+# 构建油猴脚本
 pnpm build
+
+# 评测基准（verbose）
+EVAL_VERBOSE=1 npx vitest run tests/eval/
 ```
 
-详细交互见 [UX 流程与原型说明](docs/04-ux-flows-and-prototype.md)。
+## 配置
 
-## GitHub 自动化
+在侧栏「设置」中配置：
 
-- `CI`：每次 push / PR 自动执行 TypeScript 检查和油猴脚本构建，并上传 14 天构建产物。
-- `Release`：推送 `v*` tag 或手动触发时，自动生成包含 `.user.js`、文档和 `SHA256SUMS` 的 GitHub Release。
-- `Publish prototype docs`：推送 `main` 时自动发布安装入口和开发文档到 GitHub Pages。
+| 配置项 | 说明 |
+|--------|------|
+| **模型提供商** | OpenAI / Anthropic / Gemini，选择后自动填充默认 URL 和模型 |
+| **Base URL** | 模型 API 地址，支持自部署/企业网关 |
+| **API Key** | 模型密钥（混淆存储，不明文保存） |
+| **认证模式** | Bearer / API Key Header / Query Param / 自定义 Header |
+| **GitLab PAT** | 可选，用于跨域 API 访问 |
+| **审查强度** | fast / balanced / thorough |
+| **输出语言** | 简体中文 / English |
+| **规则包** | 内置规则 + 自定义规则包管理（导入/导出/启停） |
+| **MCP** | 连接本地 MCP server（Streamable HTTP） |
 
-发布新版本：
+## 工具与能力矩阵
 
-```bash
-pnpm version 0.1.1
-git push --follow-tags
+| 能力 | 浏览器直连 | 需要配置 |
+|------|-----------|---------|
+| 划词提问 | ✅ | 模型 API |
+| 选区 Review | ✅ | 模型 API |
+| MR 全量 Review | ✅ | 模型 API |
+| Commit Review | ✅ | 模型 API |
+| 规则 Review | ✅ | 无需 |
+| Finding 发布 | ✅ | GitLab 同源/PAT |
+| Agent 工具循环 | ✅ | 模型 API |
+| MCP 工具扩展 | ✅ | MCP server |
+| 完整文件上下文 | ✅ | 模型 API |
+| 跨文件重定位 | ✅ | 模型 API |
+| 能力探测/诊断 | ✅ | 无 |
+| Token 成本统计 | ✅ | 模型 API |
+
+## 架构
+
+```
+GitLab 页面 (MR / Diff / File / Commit)
+  ↓ DOM + URL + Selection
+Userscript Host (Shadow DOM · SPA 路由 · 侧栏)
+  ↓
+GitLab Adapter ─── Context Builder ─── Review UI
+  ↓                   ↓                    ↓
+Model Runtime (OpenAI / Anthropic / Gemini)
+  ↓
+Agent Tool Loop (file_read / search_code / git_log) + MCP
+  ↓
+Finding Pipeline (normalize → anchor → harden → dedupe → filter)
+  ↓
+Draft → User Confirm → GitLab Discussion Publish
 ```
 
-## 文档索引
+## 文档
 
 1. [产品需求与范围](docs/00-product-brief.md)
-2. [能力边界：浏览器、GitLab API、本地支持](docs/01-capability-boundary.md)
-3. [系统架构与数据模型](docs/02-architecture.md)
-4. [开发计划与里程碑](docs/03-development-plan.md)
-5. [UX 流程与原型说明](docs/04-ux-flows-and-prototype.md)
-6. [GitLab / 自部署 GitLab 接入](docs/05-gitlab-integration.md)
-7. [本地 Agent Gateway 协议草案](docs/06-agent-gateway-contract.md)
-8. [安全、隐私与密钥治理](docs/07-security-privacy.md)
-9. [测试、验收与发布](docs/08-testing-acceptance.md)
-10. [P0 Review Engine 开发计划](docs/09-p0-review-engine-plan.md)
+2. [能力边界](docs/01-capability-boundary.md)
+3. [系统架构](docs/02-architecture.md)
+4. [开发计划](docs/03-development-plan.md)
+5. [UX 流程](docs/04-ux-flows-and-prototype.md)
+6. [GitLab 接入](docs/05-gitlab-integration.md)
+7. [Agent Gateway 协议](docs/06-agent-gateway-contract.md)（规划中，未实现）
+8. [安全与隐私](docs/07-security-privacy.md)
+9. [测试与验收](docs/08-testing-acceptance.md)
+10. [Review Engine 计划](docs/09-p0-review-engine-plan.md)
 
-## 仓库结构
+## 测试
 
-```text
-.
-├── docs/                       # 产品、架构、接口、排期、安全与测试计划
-├── src/
-│   ├── prototype/              # 交互原型 UI 与模拟数据
-│   ├── components/             # 可复用 UI 基础组件
-│   └── main.tsx                # 原型入口；后续替换为油猴宿主入口
-├── vite.config.ts              # Vite + vite-plugin-monkey 构建配置
-└── package.json
-```
-
-## 当前决策
-
-- **Draft first**：AI 只生成评论草稿，用户确认后才写入 GitLab。
-- **Gateway 不持有 GitLab 写权限**：MVP 中由浏览器会话或用户显式配置的 PAT 负责 GitLab 读写，Gateway 专注模型和仓库工具。
-- **能力探测优先于站点猜测**：自部署站点通过 API / DOM 能力探测选择适配器，不按域名硬编码。
-- **原型只演示状态与流程**：原型不发网络请求、不读取真实代码、不调用模型。
+- **151 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计
+- **3 个 Playwright E2E**：规则 Review 发布流程、选区模型调用、元数据验证
+- **8 个评测 fixture**：安全/调试日志/弱类型/缺少测试/干净代码/多文件/性能/密钥泄漏
+- **合并门禁**：`pnpm typecheck` + `pnpm test:unit` + `pnpm test:e2e` + `pnpm build`
 
 ## License
 
-待确定。参考项目为 Apache-2.0，本仓库在引入第三方代码前需要先完成许可证选择和依赖兼容性检查。
+待确定。
