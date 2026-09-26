@@ -10,13 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:local": "TEST_MODE=local-gitlab playwright test",
     "test": "pnpm test:unit && pnpm test:e2e",
     "build": "pnpm typecheck && vite build && node scripts/generate-meta.js",
     "check": "pnpm typecheck && pnpm test",
-    "preview": "vite preview",
-    "gitlab:start": "bash scripts/gitlab.sh start",
-    "gitlab:stop": "bash scripts/gitlab.sh stop"
+    "preview": "vite preview"
   },
   "imports": {
     "#components/*": "./src/components/*.tsx",

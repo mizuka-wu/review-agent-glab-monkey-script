@@ -1,14 +1,9 @@
 import { execFileSync } from 'node:child_process';
 
 export default function globalSetup() {
-  const testMode = process.env.TEST_MODE || 'mock';
-
-  if (testMode === 'local-gitlab') {
-    console.log('[E2E] 使用真实 GitLab 容器（TEST_MODE=local-gitlab）');
-    execFileSync('pnpm', ['build'], { stdio: 'inherit' });
-    return;
-  }
-
-  console.log('[E2E] 使用 Mock GitLab 响应（TEST_MODE=mock）');
+  const isRealGitlab = Boolean(process.env.GITLAB_URL && process.env.GITLAB_MR_URL);
+  console.log(isRealGitlab
+    ? `[E2E] 真实 GitLab 模式: ${process.env.GITLAB_MR_URL}`
+    : '[E2E] Mock 模式');
   execFileSync('pnpm', ['build'], { stdio: 'inherit' });
 }

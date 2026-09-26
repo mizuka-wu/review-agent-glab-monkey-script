@@ -1,15 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const testMode = process.env.TEST_MODE || 'mock';
-const isLocalGitlab = testMode === 'local-gitlab';
+const isRealGitlab = Boolean(process.env.GITLAB_URL && process.env.GITLAB_MR_URL);
 
 export default defineConfig({
   testDir: './tests/e2e',
-  globalSetup: isLocalGitlab
-    ? './tests/e2e/local-gitlab-setup.ts'
-    : './tests/e2e/global-setup.ts',
-  timeout: isLocalGitlab ? 60_000 : 30_000,
-  expect: { timeout: 8_000 },
+  globalSetup: './tests/e2e/global-setup.ts',
+  timeout: isRealGitlab ? 60_000 : 30_000,
+  expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
