@@ -164,7 +164,12 @@ export class McpClient {
       }
     }
 
-    const response = JSON.parse(responseText) as JsonRpcResponse;
+    let response: JsonRpcResponse;
+    try {
+      response = JSON.parse(responseText) as JsonRpcResponse;
+    } catch {
+      throw new Error(`MCP 响应不是有效 JSON: ${responseText.slice(0, 200)}`);
+    }
     if (response.error) {
       throw new Error(`MCP error ${response.error.code}: ${response.error.message}`);
     }

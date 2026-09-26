@@ -113,7 +113,12 @@ export function extractHunks(files: FileDiff[]): DiffHunk[] {
     for (const line of file.lines) {
       if (!hunkMap.has(line.hunkId)) {
         // Find the @@ header from the raw diff
-        const headerMatch = file.diff.match(new RegExp(`@@[^@]*${line.hunkId.replace(':', ',')}[^@]*@@[^\\n]*`));
+        // hunkId is "oldStart:newStart", e.g. "1:3"
+        const [oldStart, newStart] = line.hunkId.split(':');
+        const escapedOld = oldStart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escapedNew = newStart.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const headerPattern = new RegExp(`@@\\s+-${escapedOld}(?:,\\d+)?\\s+\\+${escapedNew}(?:,\\d+)?\\s+@@[^\\n]*`);
+        const headerMatch = file.diff.match(headerPattern);
         hunkMap.set(line.hunkId, {
           header: headerMatch?.[0] ?? `@@ ${line.hunkId} @@`,
           lines: [],

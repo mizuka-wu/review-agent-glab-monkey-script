@@ -209,6 +209,9 @@ const SENSITIVE_PATTERNS = [
   /sk-ant-[A-Za-z0-9-]{16,}/g,
   /AIza[A-Za-z0-9_-]{30,}/g,
   /glpat-[A-Za-z0-9_-]{16,}/g,
+  /gh[pousr]_[A-Za-z0-9]{20,}/g,
+  /AKIA[A-Z0-9]{16}/g,
+  /xox[baprs]-[A-Za-z0-9-]{10,}/g,
 ];
 
 export function sanitizeLog(input: string): string {

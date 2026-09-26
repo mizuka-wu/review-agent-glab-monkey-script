@@ -118,7 +118,7 @@ export async function runAgentLoop(
         detail: { toolName: call.name, toolCallId: call.id, iteration: iterations },
       });
 
-      const result = await executor.execute(call);
+      const result = await executor.execute(call, options.signal);
       allToolResults.push(result);
 
       emit({

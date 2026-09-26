@@ -120,11 +120,11 @@ export async function loadFullFiles(
 
   let totalCharacters = 0;
   for (const result of results) {
-    if (result.error) {
-      omitted.push({ path: result.path, reason: 'read_error', message: result.error });
+    if (result.error || !result.content) {
+      omitted.push({ path: result.path, reason: 'read_error', message: result.error ?? '读取结果为空' });
       continue;
     }
-    const content = result.content!;
+    const content = result.content;
     if (content.length > maxFileCharacters) {
       omitted.push({ path: result.path, reason: 'too_large', message: `文件超过 ${maxFileCharacters} 字符` });
       continue;

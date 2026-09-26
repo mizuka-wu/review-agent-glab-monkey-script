@@ -95,7 +95,7 @@ export default function App({ page, adapter }: AppProps) {
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   const [batchPublishing, setBatchPublishing] = useState(false);
-  const [batchPublishTarget, setBatchPublishTarget] = useState<'review' | 'chat'>('review');
+  const [showBatchConfirm, setShowBatchConfirm] = useState(false);
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -149,7 +149,7 @@ export default function App({ page, adapter }: AppProps) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (publishFinding) setPublishFinding(undefined);
-        else if (batchPublishTarget === 'review') setBatchPublishTarget('chat');
+        else if (showBatchConfirm) setShowBatchConfirm(false);
         else if (editingPackId) setEditingPackId(null);
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -165,7 +165,7 @@ export default function App({ page, adapter }: AppProps) {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [publishFinding, batchPublishTarget, editingPackId, reviewStatus, attachment]);
+  }, [publishFinding, showBatchConfirm, editingPackId, reviewStatus, attachment]);
 
   // Online/offline detection
   useEffect(() => {
@@ -656,7 +656,7 @@ export default function App({ page, adapter }: AppProps) {
     setFindings(next);
     persistFindings(next);
     setSelectedFindings(new Set());
-    setBatchPublishTarget('review');
+    setShowBatchConfirm(false);
     setToast(`批量发布完成：${successCount} 成功${failCount > 0 ? `，${failCount} 失败` : ''}`);
     setBatchPublishing(false);
   };
@@ -780,7 +780,7 @@ export default function App({ page, adapter }: AppProps) {
               {selectedFindings.size > 0 && (
                 <div className="ra-batch-bar">
                   <span>已选 {selectedFindings.size} 个</span>
-                  <button type="button" className="ra-btn primary" disabled={!mrContext || batchPublishing} onClick={() => setBatchPublishTarget('review')}>
+                  <button type="button" className="ra-btn primary" disabled={!mrContext || batchPublishing} onClick={() => setShowBatchConfirm(true)}>
                     <MessageSquare size={13} />{batchPublishing ? '发布中…' : `批量发布 ${selectedFindings.size} 条`}
                   </button>
                   <button type="button" className="ra-btn" onClick={clearSelection}>取消选择</button>
@@ -1071,7 +1071,7 @@ export default function App({ page, adapter }: AppProps) {
 
       {publishFinding && <div className="ra-modal-backdrop" role="presentation"><section className="ra-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="ra-modal-header"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="ra-icon-btn on-light" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="ra-modal-body"><div className="ra-publish-target"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="ra-publish-target"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="ra-field"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="ra-modal-actions"><button type="button" className="ra-btn" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="ra-btn primary" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
-      {batchPublishTarget === 'review' && selectedFindings.size > 0 && (
+      {showBatchConfirm && selectedFindings.size > 0 && (
         <div className="ra-modal-backdrop" role="presentation">
           <section className="ra-modal" role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
             <div className="ra-modal-header">
@@ -1079,7 +1079,7 @@ export default function App({ page, adapter }: AppProps) {
                 <h2 id="batch-publish-title">批量发布到 GitLab</h2>
                 <p>将选中的 {selectedFindings.size} 个 Finding 逐条创建行级 Discussion。</p>
               </div>
-              <button type="button" className="ra-icon-btn on-light" onClick={() => setBatchPublishTarget('chat')} aria-label="关闭批量发布"><X size={16} /></button>
+              <button type="button" className="ra-icon-btn on-light" onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
             </div>
             <div className="ra-modal-body">
               <div className="ra-publish-target">
@@ -1098,7 +1098,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
             <div className="ra-modal-actions">
-              <button type="button" className="ra-btn" onClick={() => setBatchPublishTarget('chat')}>取消</button>
+              <button type="button" className="ra-btn" onClick={() => setShowBatchConfirm(false)}>取消</button>
               <button type="button" className="ra-btn primary" disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
                 <MessageSquare size={14} />{batchPublishing ? '发布中…' : `确认批量发布 ${selectedFindings.size} 条`}
               </button>
