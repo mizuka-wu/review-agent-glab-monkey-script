@@ -65,23 +65,38 @@
 # 安装依赖
 pnpm install
 
-# 开发模式（原型页面）
+# 开发模式（自动构建 + 热更新）
 pnpm dev
+# 输出的 .user.js URL 直接在 Tampermonkey 中安装
+# 之后改代码自动重建，Tampermonkey 自动更新
 
 # 类型检查
 pnpm typecheck
 
-# 单元测试（151 个）
+# 单元测试
 pnpm test:unit
 
-# E2E 测试（Playwright，3 个）
+# E2E 测试
 pnpm test:e2e
 
-# 构建油猴脚本
+# 构建发布版油猴脚本
 pnpm build
 
-# 评测基准（verbose）
+# 评测基准
 EVAL_VERBOSE=1 npx vitest run tests/eval/
+```
+
+## 本地 GitLab 测试
+
+```bash
+# 启动 GitLab 容器（交互菜单）
+./scripts/gitlab.sh
+
+# 浏览器打开 http://127.0.0.1:8929 登录后创建 MR
+# 然后运行 E2E：
+GITLAB_URL=http://127.0.0.1:8929 \
+GITLAB_MR_URL=http://127.0.0.1:8929/<项目>/-/merge_requests/<id>/diffs \
+pnpm test:e2e
 ```
 
 ## 配置
