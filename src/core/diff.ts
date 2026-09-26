@@ -87,3 +87,66 @@ export function diffContext(files: FileDiff[], maxCharacters = 60_000) {
 
   return chunks.join('\n\n');
 }
+
+// --- Hunk extraction ---
+
+export interface DiffHunk {
+  fileId: string;
+  filePath: string;
+  hunkId: string;
+  header: string;
+  lines: DiffLine[];
+  addedCount: number;
+  removedCount: number;
+}
+
+/**
+ * Extract individual diff hunks from parsed diff files.
+ * Each hunk is a group of changed lines with its @@ header.
+ */
+export function extractHunks(files: FileDiff[]): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+
+  for (const file of files) {
+    const hunkMap = new Map<string, { header: string; lines: DiffLine[] }>();
+
+    for (const line of file.lines) {
+      if (!hunkMap.has(line.hunkId)) {
+        // Find the @@ header from the raw diff
+        const headerMatch = file.diff.match(new RegExp(`@@[^@]*${line.hunkId.replace(':', ',')}[^@]*@@[^\\n]*`));
+        hunkMap.set(line.hunkId, {
+          header: headerMatch?.[0] ?? `@@ ${line.hunkId} @@`,
+          lines: [],
+        });
+      }
+      hunkMap.get(line.hunkId)!.lines.push(line);
+    }
+
+    for (const [hunkId, data] of hunkMap) {
+      hunks.push({
+        fileId: `${file.newPath}:${hunkId}`,
+        filePath: file.newPath,
+        hunkId,
+        header: data.header,
+        lines: data.lines,
+        addedCount: data.lines.filter((l) => l.kind === 'added').length,
+        removedCount: data.lines.filter((l) => l.kind === 'removed').length,
+      });
+    }
+  }
+
+  return hunks;
+}
+
+/**
+ * Build context from specific hunks only (for hunk-level review).
+ */
+export function hunkContext(hunks: DiffHunk[]): string {
+  return hunks.map((hunk) => {
+    const diffText = hunk.lines.map((line) => {
+      const prefix = line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' ';
+      return `${prefix}${line.text}`;
+    }).join('\n');
+    return `### ${hunk.filePath}\n${hunk.header}\n${diffText}`;
+  }).join('\n\n');
+}

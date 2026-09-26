@@ -123,17 +123,19 @@ export default function App({ page, adapter }: AppProps) {
       return () => controller.abort();
     }
     void Promise.all([
-      adapter.getMergeRequest(mergeRequestRef),
-      adapter.listDiffs(mergeRequestRef, {
-        onPage: (loaded, hasMore) => setDiffLoadProgress({ loaded, hasMore }),
-      }),
+      mergeRequestRef ? adapter.getMergeRequest(mergeRequestRef) : Promise.resolve(undefined),
+      page.route === 'commit' && page.commitSha
+        ? adapter.listCommitDiffs(page.commitSha)
+        : mergeRequestRef
+          ? adapter.listDiffs(mergeRequestRef, { onPage: (loaded, hasMore) => setDiffLoadProgress({ loaded, hasMore }) })
+          : Promise.resolve([]),
     ]).then(([context, diffs]) => {
       if (controller.signal.aborted) return;
       setDiffLoadProgress(null);
       setMrContext(context);
       setFiles(diffs);
       setLoading(false);
-      if (mergeRequestRef) {
+      if (mergeRequestRef && context) {
         void loadLatestReviewSession(reviewSessionKey(mergeRequestRef, context.diffRefs.headSha))
           .then((session) => {
             if (!controller.signal.aborted) setSavedSession(session);

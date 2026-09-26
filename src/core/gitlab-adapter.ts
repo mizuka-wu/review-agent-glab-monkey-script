@@ -316,6 +316,43 @@ export class GitLabAdapter {
     );
   }
 
+  /**
+   * Get diffs for a single commit.
+   */
+  async listCommitDiffs(sha: string): Promise<FileDiff[]> {
+    const files: FileDiff[] = [];
+    for (let page = 1; page <= 50; page += 1) {
+      const data = await this.request<unknown[]>(
+        `/api/v4/projects/${this.projectRef()}/repository/commits/${encodeURIComponent(sha)}/diff?per_page=100&page=${page}`,
+      );
+      files.push(...data.map(normalizeFileDiff));
+      if (data.length < 100) break;
+    }
+    return files;
+  }
+
+  /**
+   * Get diffs between two refs (branch comparison).
+   */
+  async listCompareDiffs(fromRef: string, toRef: string): Promise<FileDiff[]> {
+    const data = await this.request<{
+      diffs: unknown[];
+      commits: { id: string; short_id: string; title: string }[];
+    }>(
+      `/api/v4/projects/${this.projectRef()}/repository/compare?from=${encodeURIComponent(fromRef)}&to=${encodeURIComponent(toRef)}`,
+    );
+    return (data.diffs ?? []).map(normalizeFileDiff);
+  }
+
+  /**
+   * Get commit metadata.
+   */
+  async getCommit(sha: string): Promise<{ id: string; short_id: string; title: string; message: string; created_at: string }> {
+    return this.request(
+      `/api/v4/projects/${this.projectRef()}/repository/commits/${encodeURIComponent(sha)}`,
+    );
+  }
+
   async searchCode(query: string, ref: string, signal?: AbortSignal) {
     const data = await this.request<{ filename: string; path: string; ref: string; startline: number; data: string }[]>(
       `/api/v4/projects/${this.projectRef()}/search?scope=blobs&search=${encodeURIComponent(query)}&ref=${encodeURIComponent(ref)}`,
