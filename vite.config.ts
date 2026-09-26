@@ -2,8 +2,15 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import monkey from 'vite-plugin-monkey';
+import { resolve } from 'node:path';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '#components': resolve(import.meta.dirname, 'src/components'),
+      '#lib': resolve(import.meta.dirname, 'src/lib'),
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

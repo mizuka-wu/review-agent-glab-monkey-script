@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { FindingCard } from './components/review/FindingCard';
+import { ChatThread } from './components/ChatThread';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { Markdown } from './components/Markdown';
 import { highlightFindingOnPage, clearHighlights, injectHighlightStyles } from './core/finding-highlight';
@@ -743,7 +744,7 @@ export default function App({ page, adapter }: AppProps) {
   };
 
   return (
-    <div ref={hostRef} className="relative z-[2147483000]">
+    <div ref={hostRef} className="relative">
       {!panelOpen && (
         <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
           className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg cursor-pointer border-0">
@@ -800,82 +801,78 @@ export default function App({ page, adapter }: AppProps) {
           )}
           {activeTab === 'chat' && (
             <div className="flex flex-col h-full">
-              <div className="flex-1 overflow-y-auto p-4" aria-live="polite">
-                {messages.length === 0 && (
-                  <div className="p-3 rounded-lg bg-muted border border-border">
-                    <h3 className="text-sm font-semibold m-0 mb-1">询问真实代码</h3>
-                    <p className="text-xs text-muted-foreground m-0">在页面中选中 Diff 代码，或直接输入关于当前 MR 的问题。</p>
-                    <div className="grid gap-1.5 mt-3">
-                      {suggestions.map((item) => (
-                        <button key={item} type="button" onClick={() => setDraft(item)}
-                          className="p-2 text-left text-xs rounded-md bg-card border border-border hover:bg-accent cursor-pointer">
-                          {item}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {messages.map((message) => (
-                  <div key={message.id} className="mb-3.5">
-                    <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">{message.role === 'user' ? '你' : 'Review Agent'}</div>
-                    {message.attachment && (
-                      <div className="grid gap-1 mb-1.5 p-2 rounded bg-info/10 border-l-[3px] border-info text-info text-[10px]">
-                        <strong>{message.attachment.filePath}</strong>
-                        <span>L{message.attachment.startLine}-{message.attachment.endLine}</span>
+              {attachment && (
+                <div className="flex items-center justify-between gap-2 mx-3 mt-2 p-1.5 rounded bg-info/10 border border-info/20 text-[10px] text-info">
+                  <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
+                  <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
+                </div>
+              )}
+              <ChatThread
+                messages={messages}
+                responding={responding}
+                onSend={(text) => {
+                  if (!text.trim() || responding) return;
+                  const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content: text, attachment };
+                  const history = [...messages, userMessage];
+                  setMessages(history);
+                  setDraft('');
+                  setAttachment(undefined);
+                  // Use history directly to avoid stale closure
+                  if (!runtimeConfigured) {
+                    setMessages([...history, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: '尚未配置模型。请在设置中填写 API Key。' }]);
+                    setActiveTab('settings');
+                    return;
+                  }
+                  setResponding(true);
+                  setToolEvents([]);
+                  void (async () => {
+                    try {
+                      if (mergeRequestRef && mrContext) {
+                        const gitlabExecutor = new GitLabToolExecutor(adapter, mrContext.diffRefs.headSha);
+                        let compositeExecutor = new CompositeToolExecutor(gitlabExecutor);
+                        const agentMessages: AgentMessage[] = history.filter((m) => m.role !== 'system' && !m.error).map((m) => ({
+                          role: m.role as 'user' | 'assistant',
+                          content: m.attachment ? `${m.content}\n\n[代码选区: ${m.attachment.filePath}:L${m.attachment.startLine}-${m.attachment.endLine}]\n\`\`\`\n${m.attachment.text}\n\`\`\`` : m.content,
+                        }));
+                        const result = await runAgentLoop(runtime, compositeExecutor, agentMessages, {
+                          onEvent: (event) => setToolEvents((prev) => [...prev, event]),
+                          language: settings.language,
+                        });
+                        setMessages((c) => [...c, { id: `assistant-${Date.now()}`, role: 'assistant', content: result.text }]);
+                      } else {
+                        const streamId = `stream-${Date.now()}`;
+                        setMessages((c) => [...c, { id: streamId, role: 'assistant', content: '' }]);
+                        let streamed = '';
+                        const answer = await runtime.chat(history, attachment, undefined, (token) => {
+                          streamed += token;
+                          setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: streamed } : m));
+                        });
+                        setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: answer } : m));
+                      }
+                    } catch (error) {
+                      setMessages((c) => [...c, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: `模型调用失败：${String(error)}` }]);
+                    } finally {
+                      setResponding(false);
+                    }
+                  })();
+                }}
+              />
+              {responding && toolEvents.length > 0 && (
+                <div className="px-3 pb-2">
+                  <div className="grid gap-1 p-2 rounded bg-muted border border-border">
+                    {toolEvents.map((event, idx) => (
+                      <div key={idx} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] ${
+                        event.type === 'tool_call' ? 'bg-info/10 text-info' :
+                        event.type === 'tool_result' ? 'bg-success/10 text-success' :
+                        event.type === 'error' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground'
+                      }`}>
+                        <span className="w-3.5 text-center font-bold">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>
+                        {event.message}
                       </div>
-                    )}
-                    <div className={`p-2.5 rounded-lg text-xs leading-relaxed ${
-                      message.error
-                        ? 'bg-destructive/10 text-destructive border border-destructive/20'
-                        : message.role === 'user'
-                          ? 'bg-info/10 border border-info/20'
-                          : 'bg-muted border border-border'
-                    }`}>
-                      {message.role === 'assistant' && !message.error ? <Markdown content={message.content} /> : message.content}
-                    </div>
-                  </div>
-                ))}
-                {responding && (
-                  <div className="mb-3.5">
-                    <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Review Agent</div>
-                    <div className="p-2.5 rounded-lg bg-muted border border-border text-xs">
-                      <LoaderCircle size={14} className="inline animate-spin" /> 正在调用模型服务…
-                      {toolEvents.length > 0 && (
-                        <div className="grid gap-1 mt-2 pt-2 border-t border-border">
-                          {toolEvents.map((event, idx) => (
-                            <div key={idx} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] ${
-                              event.type === 'tool_call' ? 'bg-info/10 text-info' :
-                              event.type === 'tool_result' ? 'bg-success/10 text-success' :
-                              event.type === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground'
-                            }`}>
-                              <span className="w-3.5 text-center font-bold">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>
-                              {event.message}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <form className="p-3 pt-0 bg-card border-t border-border" onSubmit={sendChat}>
-                {attachment && (
-                  <div className="flex items-center justify-between gap-2 mb-2 p-1.5 rounded bg-info/10 border border-info/20 text-[10px] text-info">
-                    <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
-                    <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
-                  </div>
-                )}
-                <div className="rounded-lg border border-border overflow-hidden bg-card">
-                  <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="询问当前 MR 或选中代码…" aria-label="提问内容"
-                    className="w-full min-h-[82px] p-2.5 text-xs leading-relaxed bg-transparent border-0 outline-none resize-y text-foreground" />
-                  <div className="flex items-center justify-between gap-2 p-1.5 bg-muted border-t border-border">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">
-                      {runtimeConfigured ? settings.model : '规则模式'}
-                    </span>
-                    <Button type="submit" size="sm" disabled={!draft.trim() || responding}><Send size={14} />发送</Button>
+                    ))}
                   </div>
                 </div>
-              </form>
+              )}
             </div>
           )}
 
@@ -887,8 +884,8 @@ export default function App({ page, adapter }: AppProps) {
               </p>
               {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
                 <div className="p-3 rounded-lg bg-muted border border-border">
-                  <h3 className="text-sm font-semibold m-0 mb-1">{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
-                  <p className="text-xs text-muted-foreground m-0">{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
+                  <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
+                  <p className="text-xs m-0" style={{ color: '#4a5568' }}>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
                   <div className="flex flex-wrap gap-2 mt-2.5">
                     <Button size="sm" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</Button>
                     {savedSession && <Button variant="outline" size="sm" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</Button>}
@@ -1284,10 +1281,10 @@ export default function App({ page, adapter }: AppProps) {
 
       {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('chat'); setPanelOpen(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
-      {publishFinding && <div className="fixed z-[200] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
+      {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
       {showBatchConfirm && selectedFindings.size > 0 && (
-        <div className="fixed z-[200] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation">
+        <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation">
           <section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
             <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border">
               <div>

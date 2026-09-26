@@ -5,33 +5,38 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0.02 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0.02 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0.02 260);
-  --primary: oklch(0.53 0.19 260);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.96 0.005 260);
-  --secondary-foreground: oklch(0.22 0.02 260);
-  --muted: oklch(0.96 0.005 260);
-  --muted-foreground: oklch(0.5 0.02 260);
-  --accent: oklch(0.95 0.02 260);
-  --accent-foreground: oklch(0.22 0.02 260);
-  --destructive: oklch(0.58 0.22 25);
-  --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.89 0.01 260);
-  --input: oklch(0.89 0.01 260);
-  --ring: oklch(0.53 0.19 260);
+  /* Design tokens (used by both our UI and assistant-ui) */
+  --background: #ffffff;
+  --foreground: #1a2332;
+  --card: #ffffff;
+  --card-foreground: #1a2332;
+  --popover: #ffffff;
+  --popover-foreground: #1a2332;
+  --primary: #245fc7;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f3f7;
+  --secondary-foreground: #2d3748;
+  --muted: #f4f6f9;
+  --muted-foreground: #5a6b80;
+  --accent: #e8edf3;
+  --accent-foreground: #2d3748;
+  --destructive: #d3453b;
+  --destructive-foreground: #ffffff;
+  --border: #d4dae3;
+  --input: #d4dae3;
+  --ring: #245fc7;
   --radius: 0.5rem;
-  --success: oklch(0.55 0.15 155);
-  --warning: oklch(0.68 0.14 75);
-  --info: oklch(0.53 0.19 260);
+  --success: #1a7a42;
+  --warning: #b8860b;
+  --info: #245fc7;
+  --panel-header: #1e2536;
+  --panel-header-foreground: #f0f4f8;
 
-  /* Panel header (dark) */
-  --panel-header: oklch(0.2 0.02 260);
-  --panel-header-foreground: oklch(0.95 0 0);
+  /* assistant-ui specific variables */
+  --thread-max-width: 100%;
+  --composer-bg: var(--background);
+  --composer-padding: 8px 12px;
+  --composer-radius: 12px;
 
   font-family: 'Geist Variable', Inter, ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
@@ -42,30 +47,30 @@
 }
 
 .dark {
-  --background: oklch(0.145 0.02 260);
-  --foreground: oklch(0.95 0 0);
-  --card: oklch(0.18 0.02 260);
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.18 0.02 260);
-  --popover-foreground: oklch(0.95 0 0);
-  --primary: oklch(0.65 0.19 260);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.22 0.02 260);
-  --secondary-foreground: oklch(0.95 0 0);
-  --muted: oklch(0.22 0.02 260);
-  --muted-foreground: oklch(0.65 0.02 260);
-  --accent: oklch(0.25 0.02 260);
-  --accent-foreground: oklch(0.95 0 0);
-  --destructive: oklch(0.62 0.22 25);
-  --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.28 0.02 260);
-  --input: oklch(0.28 0.02 260);
-  --ring: oklch(0.65 0.19 260);
-  --success: oklch(0.6 0.15 155);
-  --warning: oklch(0.72 0.14 75);
-  --info: oklch(0.65 0.19 260);
-  --panel-header: oklch(0.15 0.02 260);
-  --panel-header-foreground: oklch(0.95 0 0);
+  --background: #151b28;
+  --foreground: #e8edf3;
+  --card: #1c2433;
+  --card-foreground: #e8edf3;
+  --popover: #1c2433;
+  --popover-foreground: #e8edf3;
+  --primary: #5b9af0;
+  --primary-foreground: #ffffff;
+  --secondary: #242e40;
+  --secondary-foreground: #c8d4e2;
+  --muted: #242e40;
+  --muted-foreground: #8a9bb0;
+  --accent: #2a3548;
+  --accent-foreground: #e8edf3;
+  --destructive: #e05548;
+  --destructive-foreground: #ffffff;
+  --border: #2d3950;
+  --input: #2d3950;
+  --ring: #5b9af0;
+  --success: #2ecc71;
+  --warning: #f0b429;
+  --info: #5b9af0;
+  --panel-header: #111827;
+  --panel-header-foreground: #f0f4f8;
 }
 
 @theme inline {
@@ -108,7 +113,7 @@ html, body, #root {
   margin: 0;
 }
 
-/* Panel self-contained scope */
+/* Panel scope - minimal overrides, let assistant-ui style itself */
 .ra-host {
   color: var(--foreground);
   font-family: inherit;
@@ -120,4 +125,12 @@ html, body, #root {
 .ra-host select {
   font: inherit;
   letter-spacing: 0;
+}
+
+/* Ensure assistant-ui Thread fills the chat area */
+.ra-host .aui-root {
+  height: 100%;
+}
+.ra-host .aui-thread-root {
+  height: 100%;
 }

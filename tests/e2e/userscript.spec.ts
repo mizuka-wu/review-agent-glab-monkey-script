@@ -97,8 +97,9 @@ async function mountUserscript(page: Page, url: string, settings?: Record<string
       content: `localStorage.removeItem('review-agent-settings-v1');`,
     });
   }
-  await page.addInitScript({ content: bundle });
   await page.goto(url);
+  // Inject after page load so DOM is ready
+  await page.addScriptTag({ content: bundle });
 }
 
 // --- 测试 ---
@@ -110,8 +111,7 @@ test.describe('mock mode', () => {
     const requests: string[] = [];
     await routeGitLab(page, requests);
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
-
-    await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
+        await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
     await page.getByRole('tab', { name: 'Review' }).click();
     await expect(page.getByText('已从 GitLab API 读取 1 个文件的真实 Diff。')).toBeVisible();
     await page.getByRole('button', { name: '开始 Review' }).click();
@@ -143,6 +143,7 @@ test.describe('mock mode', () => {
       gitlabToken: '', effort: 'balanced', language: 'zh-CN',
     });
 
+        await page.getByRole('tab', { name: '提问' }).click();
     await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
     await page.locator('[data-line-number="1"] .ra-line-code').evaluate((element) => {
       const range = document.createRange();
@@ -155,8 +156,8 @@ test.describe('mock mode', () => {
     await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toBeVisible();
     await page.getByRole('button', { name: '问一下' }).click();
     await expect(page.getByText('src/payment.ts:L1-1')).toBeVisible();
-    await page.getByLabel('提问内容').fill('这段代码有什么风险？');
-    await page.getByRole('button', { name: '发送' }).click();
+    await page.getByLabel('Message input').fill('这段代码有什么风险？');
+    await page.getByLabel('Send message').click();
     await expect(page.getByText('模型回答：这段代码需要保护 API Key。')).toBeVisible();
   });
 
@@ -168,12 +169,14 @@ test.describe('mock mode', () => {
     expect(metadata).toContain('@updateURL');
 
     await page.route('https://example.test/**', (route) => route.fulfill({ body: '<!doctype html><html><body>ordinary page</body></html>' }));
-    await mountUserscript(page, 'https://example.test/docs');
+    await page.goto('https://example.test/docs');
+    await page.addScriptTag({ content: bundle });
     await expect(page.locator('#review-agent-glab-root')).toHaveCount(0);
 
     await routeGitLab(page);
     await page.goto('https://gitlab.test/acme/app/-/merge_requests/248/diffs');
-    await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible();
+    await page.addScriptTag({ content: bundle });
+        await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible();
   });
 });
 
@@ -183,16 +186,14 @@ test.describe('real GitLab mode', () => {
   test('injects userscript and reads real MR data', async ({ page }) => {
     // 不设置 gitlabToken —— 脚本通过浏览器 Cookie + CSRF 认证
     await mountUserscript(page, realMrUrl);
-
-    await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 15000 });
     await page.getByRole('tab', { name: 'Review' }).click();
     await expect(page.getByText(/已从 GitLab API 读取|当前页面没有可用/)).toBeVisible({ timeout: 15000 });
   });
 
   test('runs rule review on real MR diff', async ({ page }) => {
     await mountUserscript(page, realMrUrl);
-
-    await page.getByRole('tab', { name: 'Review' }).click();
+        await page.getByRole('tab', { name: 'Review' }).click();
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
     await expect(page.getByText(/Findings|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
   });

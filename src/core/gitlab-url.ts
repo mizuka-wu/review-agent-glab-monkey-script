@@ -89,10 +89,7 @@ export function projectApiIdentifier(page: Pick<PageContext, 'projectPath' | 'pr
 
 export function isGitLabDocument(documentRef: Document, locationRef: Location = window.location) {
   const parsed = parseGitLabUrl(locationRef.href, documentRef);
-  const hasGitLabChrome = Boolean(
-    documentRef.querySelector(
-      '[data-page^="projects:"], .navbar-gitlab, .gl-header, meta[name="gon"]',
-    ),
-  );
-  return parsed.projectPath.length > 0 && (parsed.route !== 'unknown' || hasGitLabChrome);
+  // Only mount on project pages with known routes (MR, Diff, File, Commit)
+  const isProjectPage = parsed.projectPath.length > 0 && parsed.route !== 'unknown';
+  return isProjectPage;
 }
