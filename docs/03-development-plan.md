@@ -40,7 +40,7 @@
 - [x] **批量发布**：勾选多个 Finding → 一次性预览 → 批量创建 Discussion。
 - [x] **Hunk Review**：按 diff hunk 粒度 Review。
 - [x] **Commit / Branch Review**：对 commit 或 branch diff 做 Review。
-- [ ] **评测集 + 基准脚本**：典型 MR fixture，量化定位成功率/精确率。
+- [x] **评测集 + 基准脚本**：8 个 fixture，detection rate / precision / false positive 量化，回归门禁。
 
 ### 低优先级（待定）
 
