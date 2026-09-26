@@ -20,7 +20,7 @@ export interface AgentMessage {
 
 export interface ModelRuntime {
   configured: boolean;
-  chat(messages: ChatMessage[], selection: CodeSelection | undefined, signal?: AbortSignal): Promise<string>;
+  chat(messages: ChatMessage[], selection: CodeSelection | undefined, signal?: AbortSignal, onToken?: (token: string) => void): Promise<string>;
   review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string): Promise<string>;
   testConnection(signal?: AbortSignal): Promise<boolean>;
   callWithTools(messages: AgentMessage[], tools: ToolDefinition[], system: string, options?: { signal?: AbortSignal }): Promise<ToolCallResponse>;

@@ -119,6 +119,7 @@ export class GeminiRuntime {
     messages: ChatMessage[],
     selection: CodeSelection | undefined,
     signal?: AbortSignal,
+    _onToken?: (token: string) => void,
   ) {
     const history = messages
       .filter((message) => message.role !== 'system' && !message.error)

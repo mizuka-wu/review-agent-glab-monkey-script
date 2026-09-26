@@ -101,9 +101,11 @@ export class OpenAIRuntime {
 
   async complete(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    options: { json?: boolean; signal?: AbortSignal } = {},
+    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void } = {},
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      const useStream = Boolean(options.onToken) && !options.json;
+
       const response = await fetch(this.buildUrl('/chat/completions'), {
         method: 'POST',
         headers: this.headers(),
@@ -111,10 +113,55 @@ export class OpenAIRuntime {
           model: this.settings.model,
           messages,
           temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+          stream: useStream,
           ...(options.json ? { response_format: { type: 'json_object' } } : {}),
         }),
         signal: options.signal,
       });
+
+      if (useStream && response.ok && response.body) {
+        // Parse SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let content = '';
+        let buffer = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') break;
+              try {
+                const chunk = JSON.parse(data) as ChatCompletionResponse;
+                const delta = (chunk.choices?.[0]?.message as Record<string, unknown> | undefined)?.content
+                  ?? (chunk.choices?.[0] as Record<string, unknown> | undefined)?.delta?.content
+                  ?? '';
+                if (delta) {
+                  content += delta;
+                  options.onToken?.(delta);
+                }
+              } catch {
+                // Skip malformed chunks
+              }
+            }
+          }
+        } catch (streamError) {
+          if ((streamError as Error).name === 'AbortError') throw streamError;
+          if (content) return content; // Return partial content
+          throw streamError;
+        }
+
+        if (!content) throw new Error('模型服务没有返回文本内容');
+        return content;
+      }
 
       const payload = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
       if (!response.ok || payload.error) {
@@ -125,6 +172,7 @@ export class OpenAIRuntime {
         }
         throw new Error(message);
       }
+
       const content = payload.choices?.[0]?.message?.content;
       if (!content) throw new Error('模型服务没有返回文本内容');
 
@@ -143,6 +191,7 @@ export class OpenAIRuntime {
     messages: ChatMessage[],
     selection: CodeSelection | undefined,
     signal?: AbortSignal,
+    onToken?: (token: string) => void,
   ) {
     const history = messages
       .filter((message) => message.role !== 'system' && !message.error)
@@ -165,7 +214,7 @@ export class OpenAIRuntime {
           : []),
         ...history,
       ],
-      { signal },
+      { signal, onToken },
     );
   }
 

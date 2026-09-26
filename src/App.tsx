@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
+import { Markdown } from './components/Markdown';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { createModelRuntime, type ModelRuntime, type AgentMessage } from './core/model-runtime';
@@ -231,8 +232,15 @@ export default function App({ page, adapter }: AppProps) {
             : ''),
         }]);
       } else {
-        const answer = await runtime.chat(history, attachment);
-        setMessages((current) => [...current, { id: `assistant-${Date.now()}`, role: 'assistant', content: answer }]);
+        // Stream tokens to UI progressively
+        const streamId = `stream-${Date.now()}`;
+        setMessages((current) => [...current, { id: streamId, role: 'assistant', content: '' }]);
+        let streamed = '';
+        const answer = await runtime.chat(history, attachment, undefined, (token) => {
+          streamed += token;
+          setMessages((current) => current.map((m) => m.id === streamId ? { ...m, content: streamed } : m));
+        });
+        setMessages((current) => current.map((m) => m.id === streamId ? { ...m, content: answer } : m));
       }
     } catch (error) {
       setMessages((current) => [...current, {
@@ -283,7 +291,27 @@ export default function App({ page, adapter }: AppProps) {
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
       });
       if (controller.signal.aborted) return;
-      setFindings(result.findings);
+      // Sync with existing GitLab discussions to mark already-published findings
+      let syncedFindings = result.findings;
+      if (mergeRequestRef) {
+        try {
+          const existingBodies = await adapter.getExistingCommentBodies(mergeRequestRef);
+          if (existingBodies.size > 0) {
+            syncedFindings = result.findings.map((finding) => {
+              const alreadyPublished = existingBodies.has(finding.comment.trim());
+              return alreadyPublished ? { ...finding, status: 'published' as const } : finding;
+            });
+            const syncedCount = syncedFindings.filter((f) => f.status === 'published').length;
+            if (syncedCount > 0) {
+              setToast(`${syncedCount} 个 Finding 匹配到已有 Discussion，已标记为已发布`);
+            }
+          }
+        } catch {
+          // Discussion sync is best-effort, don't block review results
+        }
+      }
+
+      setFindings(syncedFindings);
       setExpandedFinding(result.findings[0]?.id ?? '');
       setReviewStatus('completed');
       if (session) {
@@ -533,7 +561,7 @@ export default function App({ page, adapter }: AppProps) {
           {activeTab === 'chat' && <div className="ra-chat">
             <div className="ra-messages" aria-live="polite">
               {messages.length === 0 && <div className="ra-empty-card"><h3>询问真实代码</h3><p>在页面中选中 Diff 代码，或直接输入关于当前 MR 的问题。</p><div className="ra-suggestions">{suggestions.map((item) => <button type="button" className="ra-suggestion" key={item} onClick={() => setDraft(item)}>{item}</button>)}</div></div>}
-              {messages.map((message) => <div className={`ra-message ${message.role}${message.error ? ' error' : ''}`} key={message.id}><div className="ra-message-label">{message.role === 'user' ? '你' : 'Review Agent'}</div>{message.attachment && <div className="ra-attachment"><strong>{message.attachment.filePath}</strong><span>L{message.attachment.startLine}-{message.attachment.endLine}</span></div>}<div className="ra-message-body">{message.content}</div></div>)}
+              {messages.map((message) => <div className={`ra-message ${message.role}${message.error ? ' error' : ''}`} key={message.id}><div className="ra-message-label">{message.role === 'user' ? '你' : 'Review Agent'}</div>{message.attachment && <div className="ra-attachment"><strong>{message.attachment.filePath}</strong><span>L{message.attachment.startLine}-{message.attachment.endLine}</span></div>}<div className="ra-message-body">{message.role === 'assistant' && !message.error ? <Markdown content={message.content} /> : message.content}</div></div>)}
               {responding && <div className="ra-message"><div className="ra-message-label">Review Agent</div><div className="ra-message-body"><LoaderCircle size={14} /> 正在调用模型服务…{toolEvents.length > 0 && <div className="ra-tool-events">{toolEvents.map((event, idx) => <div key={idx} className={`ra-tool-event ${event.type}`}><span className="ra-tool-event-icon">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>{event.message}</div>)}</div>}</div></div>}
             </div>
             <form className="ra-composer" onSubmit={sendChat}>

@@ -280,15 +280,34 @@ export class GitLabAdapter {
   }
 
   async listDiscussions(ref: MergeRequestRef) {
-    const discussions: { id: string; notes?: { id: number; body: string }[] }[] = [];
+    const discussions: { id: string; notes?: { id: number; body: string; author?: { username?: string } }[] }[] = [];
     for (let page = 1; page <= 50; page += 1) {
-      const data = await this.request<{ id: string; notes?: { id: number; body: string }[] }[]>(
+      const data = await this.request<{ id: string; notes?: { id: number; body: string; author?: { username?: string } }[] }[]>(
         `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions?per_page=100&page=${page}`,
       );
       discussions.push(...data);
       if (data.length < 100) break;
     }
     return discussions;
+  }
+
+  /**
+   * Fetch existing discussion bodies for duplicate detection.
+   * Returns a set of normalized comment bodies.
+   */
+  async getExistingCommentBodies(ref: MergeRequestRef): Promise<Set<string>> {
+    try {
+      const discussions = await this.listDiscussions(ref);
+      const bodies = new Set<string>();
+      for (const discussion of discussions) {
+        for (const note of discussion.notes ?? []) {
+          bodies.add(note.body.trim());
+        }
+      }
+      return bodies;
+    } catch {
+      return new Set(); // Graceful fallback if discussions can't be read
+    }
   }
 
   async getFile(path: string, ref: string) {

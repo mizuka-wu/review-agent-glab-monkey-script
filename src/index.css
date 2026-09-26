@@ -704,6 +704,46 @@ select:focus-visible {
   font-size: 10px;
 }
 
+/* Markdown rendering */
+.ra-markdown { line-height: 1.6; font-size: 12px; }
+.ra-markdown .ra-md-p { margin: 0 0 6px; }
+.ra-markdown .ra-md-p:last-child { margin-bottom: 0; }
+.ra-markdown .ra-md-code {
+  padding: 1px 5px;
+  background: #e8edf3;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #c7254e;
+}
+.ra-markdown .ra-md-pre {
+  margin: 6px 0;
+  padding: 10px;
+  overflow-x: auto;
+  background: #1e2433;
+  border-radius: 5px;
+}
+.ra-markdown .ra-md-code-block {
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ra-markdown .ra-md-list {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.ra-markdown .ra-md-list li { margin: 2px 0; }
+.ra-markdown .ra-md-h {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ra-markdown .ra-md-h:first-child { margin-top: 0; }
+.ra-markdown a { color: #2f6fed; text-decoration: underline; }
+.ra-markdown strong { font-weight: 700; }
+.ra-markdown em { font-style: italic; }
+
 /* Agent Tool Events */
 .ra-tool-events {
   display: grid;
