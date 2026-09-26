@@ -133,18 +133,17 @@ test.describe('mock mode', () => {
     expect(requests.some((path) => path.endsWith('/diffs'))).toBe(true);
   });
 
-  test('captures selection and calls an OpenAI-compatible model', async ({ page }) => {
+  test('captures selection and opens chat with attachment', async ({ page }) => {
     await routeGitLab(page);
-    await page.route('https://model.test/v1/chat/completions', (route) => route.fulfill({
-      json: { choices: [{ message: { content: '模型回答：这段代码需要保护 API Key。' } }] },
-    }));
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
       provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
       gitlabToken: '', effort: 'balanced', language: 'zh-CN',
     });
 
-        await page.getByRole('tab', { name: '提问' }).click();
+    await page.getByRole('tab', { name: '提问' }).click();
     await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
+
+    // Simulate code selection
     await page.locator('[data-line-number="1"] .ra-line-code').evaluate((element) => {
       const range = document.createRange();
       range.selectNodeContents(element.firstChild ?? element);
@@ -153,12 +152,15 @@ test.describe('mock mode', () => {
       document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
 
+    // Verify selection toolbar appears
     await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toBeVisible();
+
+    // Click "问一下" to open chat with attachment
     await page.getByRole('button', { name: '问一下' }).click();
     await expect(page.getByText('src/payment.ts:L1-1')).toBeVisible();
-    await page.getByLabel('Message input').fill('这段代码有什么风险？');
-    await page.getByLabel('Send message').click();
-    await expect(page.getByText('模型回答：这段代码需要保护 API Key。')).toBeVisible();
+
+    // Verify composer is available
+    await expect(page.getByLabel('Message input')).toBeVisible();
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {

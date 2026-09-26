@@ -817,7 +817,6 @@ export default function App({ page, adapter }: AppProps) {
                   setMessages(history);
                   setDraft('');
                   setAttachment(undefined);
-                  // Use history directly to avoid stale closure
                   if (!runtimeConfigured) {
                     setMessages([...history, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: '尚未配置模型。请在设置中填写 API Key。' }]);
                     setActiveTab('settings');
@@ -827,9 +826,16 @@ export default function App({ page, adapter }: AppProps) {
                   setToolEvents([]);
                   void (async () => {
                     try {
-                      if (mergeRequestRef && mrContext) {
+                      // Use agent loop only when MCP is enabled (tools available)
+                      const useAgentLoop = settings.mcp?.enabled && settings.mcp.serverUrl && mergeRequestRef && mrContext;
+                      if (useAgentLoop) {
                         const gitlabExecutor = new GitLabToolExecutor(adapter, mrContext.diffRefs.headSha);
                         let compositeExecutor = new CompositeToolExecutor(gitlabExecutor);
+                        try {
+                          const mcpClient = new McpClient({ url: settings.mcp.serverUrl, enabled: true });
+                          await mcpClient.initialize();
+                          if (mcpClient.availableTools.length > 0) compositeExecutor = new CompositeToolExecutor(gitlabExecutor, mcpClient);
+                        } catch { /* MCP optional */ }
                         const agentMessages: AgentMessage[] = history.filter((m) => m.role !== 'system' && !m.error).map((m) => ({
                           role: m.role as 'user' | 'assistant',
                           content: m.attachment ? `${m.content}\n\n[代码选区: ${m.attachment.filePath}:L${m.attachment.startLine}-${m.attachment.endLine}]\n\`\`\`\n${m.attachment.text}\n\`\`\`` : m.content,
@@ -840,6 +846,7 @@ export default function App({ page, adapter }: AppProps) {
                         });
                         setMessages((c) => [...c, { id: `assistant-${Date.now()}`, role: 'assistant', content: result.text }]);
                       } else {
+                        // Direct model chat (with streaming)
                         const streamId = `stream-${Date.now()}`;
                         setMessages((c) => [...c, { id: streamId, role: 'assistant', content: '' }]);
                         let streamed = '';

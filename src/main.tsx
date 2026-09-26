@@ -8,7 +8,7 @@ import './index.css';
 
 async function mount() {
   const page = parseGitLabUrl(window.location.href, document);
-  const shouldMount = import.meta.env.DEV || isGitLabDocument(document);
+  const shouldMount = isGitLabDocument(document);
   if (!shouldMount || document.getElementById('review-agent-glab-root')) return;
 
   const root = document.createElement('div');

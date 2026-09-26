@@ -1,7 +1,6 @@
-import { useCallback, useMemo, Component, type ReactNode } from 'react';
+import { useCallback, useRef, Component, type ReactNode } from 'react';
 import {
   AssistantRuntimeProvider,
-  AuiProvider,
   fromThreadMessageLike,
   useExternalStoreRuntime,
   type ExternalStoreAdapter,
@@ -10,12 +9,21 @@ import {
 import { Thread } from './assistant-ui/elements/thread.aui';
 import type { ChatMessage } from '../core/types';
 
-function toAuiMessage(msg: ChatMessage): ThreadMessageLike {
-  return {
-    id: msg.id,
-    role: msg.role === 'user' ? 'user' : 'assistant',
-    content: msg.error ? `⚠ ${msg.content}` : msg.content,
-  };
+function toAuiMessages(messages: ChatMessage[]) {
+  return messages.map((m) => {
+    const msg = fromThreadMessageLike({
+      id: m.id,
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: m.error ? `⚠ ${m.content}` : m.content,
+    } as ThreadMessageLike);
+    return {
+      ...msg,
+      content: (msg.content ?? []).map((part: Record<string, unknown>) => ({
+        ...part,
+        status: part.status ?? { type: 'complete' },
+      })),
+    };
+  });
 }
 
 class ErrorBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { hasError: boolean }> {
@@ -30,7 +38,7 @@ interface ChatThreadProps {
   onSend: (text: string) => void;
 }
 
-function SimpleChatFallback({ messages, responding, onSend }: ChatThreadProps) {
+function SimpleChatFallback({ messages, onSend }: ChatThreadProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4">
@@ -40,7 +48,6 @@ function SimpleChatFallback({ messages, responding, onSend }: ChatThreadProps) {
             <div className={`p-2.5 rounded-lg text-xs whitespace-pre-wrap ${msg.role === 'user' ? 'bg-info/10' : 'bg-muted'}`}>{msg.content}</div>
           </div>
         ))}
-        {responding && <div className="text-xs text-muted-foreground">正在思考…</div>}
       </div>
       <form className="p-3 border-t border-border" onSubmit={(e) => {
         e.preventDefault();
@@ -53,52 +60,57 @@ function SimpleChatFallback({ messages, responding, onSend }: ChatThreadProps) {
   );
 }
 
-export function ChatThread(props: ChatThreadProps) {
-  const { messages, responding, onSend } = props;
+export function ChatThread({ messages, responding, onSend }: ChatThreadProps) {
+  // Use ref for messages to avoid recreating adapter
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // Stable onNew callback
+  const onNewRef = useRef(onSend);
+  onNewRef.current = onSend;
 
   const onNew = useCallback(async (msg: { content: unknown }) => {
-    // content can be string or array of {type: 'text', text: string}
     let text = '';
     if (typeof msg.content === 'string') {
       text = msg.content;
     } else if (Array.isArray(msg.content)) {
-      text = msg.content
-        .map((part: { type?: string; text?: string }) => part?.text ?? '')
-        .join('');
+      text = msg.content.map((part: { text?: string }) => part?.text ?? '').join('');
     }
-    if (text.trim()) onSend(text.trim());
-  }, [onSend]);
+    if (text.trim()) onNewRef.current(text.trim());
+  }, []);
 
-  const convertedMessages = useMemo(
-    () => messages.map((m) => {
-      const msg = fromThreadMessageLike(toAuiMessage(m));
-      // Ensure content parts have status field required by Thread component
-      return {
-        ...msg,
-        content: (msg.content ?? []).map((part: Record<string, unknown>) => ({
-          ...part,
-          status: part.status ?? { type: 'complete' },
-        })),
-      };
-    }),
-    [messages],
-  );
+  // Stable adapter with getter for messages
+  const adapterRef = useRef<ExternalStoreAdapter | null>(null);
+  if (!adapterRef.current) {
+    adapterRef.current = {
+      get messages() {
+        return toAuiMessages(messagesRef.current);
+      },
+      onNew,
+      setMessages: (msgs: unknown[]) => {
+        // Convert back to our format and update
+        const converted = msgs.map((m: Record<string, unknown>) => {
+          const content = Array.isArray(m.content)
+            ? m.content.map((p: { text?: string }) => p?.text ?? '').join('')
+            : typeof m.content === 'string' ? m.content : '';
+          return {
+            id: String(m.id ?? ''),
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content,
+          } as ChatMessage;
+        });
+        messagesRef.current = converted;
+      },
+    } as ExternalStoreAdapter;
+  }
 
-  const adapter: ExternalStoreAdapter = useMemo(() => ({
-    messages: convertedMessages,
-    onNew,
-    isDisabled: responding,
-  }), [convertedMessages, onNew, responding]);
-
-  const runtime = useExternalStoreRuntime(adapter);
+  const runtime = useExternalStoreRuntime(adapterRef.current);
 
   return (
-    <ErrorBoundary fallback={<SimpleChatFallback {...props} />}>
-      <AuiProvider>
-        <AssistantRuntimeProvider runtime={runtime}>
-          <Thread />
-        </AssistantRuntimeProvider>
-      </AuiProvider>
+    <ErrorBoundary fallback={<SimpleChatFallback messages={messages} responding={responding} onSend={onSend} />}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <Thread />
+      </AssistantRuntimeProvider>
     </ErrorBoundary>
   );
 }
