@@ -9,7 +9,8 @@ show_status() {
   status=$(docker compose -f "$COMPOSE_FILE" ps --format "{{.Status}}" 2>/dev/null | head -1)
   if [[ "$status" == *"Up"* ]]; then
     local http_code
-    http_code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/-/readiness" 2>/dev/null || echo "000")
+    http_code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/-/readiness" 2>/dev/null)
+    http_code="${http_code:-000}"
     if [ "$http_code" = "200" ]; then
       echo "  状态: ✅ 运行中 · 就绪"
     elif [ "$http_code" = "000" ]; then
@@ -24,13 +25,21 @@ show_status() {
 }
 
 do_start() {
+  # 已就绪则直接返回
+  local http_code
+  http_code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/-/readiness" 2>/dev/null)
+  if [ "$http_code" = "200" ]; then
+    echo "✅ GitLab 已在运行 → $URL (root / 5iveRage)"
+    return 0
+  fi
+
   docker compose -f "$COMPOSE_FILE" up -d
   echo "等待 GitLab 就绪 (首次启动可能需要 5-10 分钟)..."
   local elapsed=0
   local max_wait=900
   while [ $elapsed -lt $max_wait ]; do
-    local http_code
-    http_code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/-/readiness" 2>/dev/null || echo "000")
+    http_code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/-/readiness" 2>/dev/null)
+    http_code="${http_code:-000}"
     if [ "$http_code" = "200" ]; then
       echo ""
       echo "✅ GitLab 已就绪 → $URL (root / 5iveRage)"
