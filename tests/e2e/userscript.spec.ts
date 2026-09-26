@@ -14,7 +14,6 @@ const bundle = readFileSync(bundlePath, 'utf8');
 //   pnpm test:e2e
 
 const realGitlabUrl = process.env.GITLAB_URL || '';
-const realGitlabPat = process.env.GITLAB_PAT || '';
 const realMrUrl = process.env.GITLAB_MR_URL || '';
 const isRealGitlab = Boolean(realGitlabUrl && realMrUrl);
 
@@ -182,31 +181,19 @@ test.describe('real GitLab mode', () => {
   test.skip(!isRealGitlab, '跳过真实 GitLab 测试（未设置 GITLAB_URL + GITLAB_MR_URL）');
 
   test('injects userscript and reads real MR data', async ({ page }) => {
-    const settings: Record<string, unknown> = {
-      provider: 'openai', modelBaseUrl: '', model: '', apiKey: '',
-      gitlabToken: realGitlabPat, effort: 'balanced', language: 'zh-CN',
-    };
-    await mountUserscript(page, realMrUrl, settings);
+    // 不设置 gitlabToken —— 脚本通过浏览器 Cookie + CSRF 认证
+    await mountUserscript(page, realMrUrl);
 
-    // 侧栏应该注入
     await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 15000 });
-
-    // 应该能读取 MR 信息（标题或文件数）
     await page.getByRole('tab', { name: 'Review' }).click();
     await expect(page.getByText(/已从 GitLab API 读取|当前页面没有可用/)).toBeVisible({ timeout: 15000 });
   });
 
   test('runs rule review on real MR diff', async ({ page }) => {
-    const settings: Record<string, unknown> = {
-      provider: 'openai', modelBaseUrl: '', model: '', apiKey: '',
-      gitlabToken: realGitlabPat, effort: 'balanced', language: 'zh-CN',
-    };
-    await mountUserscript(page, realMrUrl, settings);
+    await mountUserscript(page, realMrUrl);
 
     await page.getByRole('tab', { name: 'Review' }).click();
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
-
-    // 规则 Review 不需要模型，应该能出结果（或显示无 Finding）
     await expect(page.getByText(/Findings|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
   });
 });

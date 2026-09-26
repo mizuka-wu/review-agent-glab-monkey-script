@@ -110,9 +110,10 @@ while true; do
     8) do_reset_password; read -p "回车继续..." ;;
     9) echo
        echo "GITLAB_URL=$URL \\"
-       echo "GITLAB_PAT=$PAT \\"
        echo "GITLAB_MR_URL=$URL/<项目>/-/merge_requests/<id>/diffs \\"
        echo "pnpm test:e2e"
+       echo ""
+       echo "（通过浏览器 Cookie 认证，无需 PAT）"
        read -p "回车继续..." ;;
     0) exit 0 ;;
   esac
