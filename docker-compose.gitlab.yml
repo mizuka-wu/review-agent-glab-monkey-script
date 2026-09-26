@@ -8,7 +8,7 @@ services:
     container_name: gitlab-test
     hostname: gitlab.test
     ports:
-      - "8929:8929"
+      - "127.0.0.1:8929:8929"
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://127.0.0.1:8929'
