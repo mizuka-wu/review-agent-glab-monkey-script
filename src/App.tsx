@@ -743,7 +743,7 @@ export default function App({ page, adapter }: AppProps) {
   };
 
   return (
-    <div ref={hostRef} className="ra-host">
+    <div ref={hostRef} className="relative z-[2147483000]">
       {!panelOpen && (
         <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
           className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg cursor-pointer border-0">
@@ -968,15 +968,15 @@ export default function App({ page, adapter }: AppProps) {
             </div>
           )}
 
-          {activeTab === 'settings' && <div className="ra-settings-view">
-            <h3 className="ra-section-title">模型配置</h3>
-            <p className="ra-section-copy">选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
-            <div className="ra-provider-tabs">
+          {activeTab === 'settings' && <div className="p-4">
+            <h3 className="text-sm font-semibold text-foreground m-0 mb-1">模型配置</h3>
+            <p className="text-xs text-muted-foreground m-0 mb-3">选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
+            <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] bg-muted rounded-md">
               {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
                 <button
                   key={key}
                   type="button"
-                  className={`ra-provider-tab${settings.provider === key ? ' active' : ''}`}
+                  className={`min-h-8 px-2 py-1 text-[11px] font-semibold rounded border-0 cursor-pointer transition-colors ${settings.provider === key ? 'bg-card text-primary shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground'}`}
                   onClick={() => {
                     const provider = key as RuntimeSettings['provider'];
                     setSettings({
@@ -989,26 +989,26 @@ export default function App({ page, adapter }: AppProps) {
                 >{preset.label}</button>
               ))}
             </div>
-            <div className="ra-settings-grid">
-              <div className="ra-field">
+            <div className="grid gap-3">
+              <div className="grid gap-1.5">
                 <label htmlFor="api-key">API Key <span style={{ color: '#a52a22', fontWeight: 400 }}>唯一必填</span></label>
                 <input id="api-key" type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} autoComplete="off" placeholder={providerPresets[settings.provider].placeholderKey} />
               </div>
-              <div className="ra-field">
+              <div className="grid gap-1.5">
                 <label htmlFor="model-url">Base URL</label>
                 <input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} />
-                <span className="ra-field-hint">自部署/企业网关才需要改</span>
+                <span className="text-[9px] text-muted-foreground opacity-70">自部署/企业网关才需要改</span>
               </div>
-              <div className="ra-field">
+              <div className="grid gap-1.5">
                 <label htmlFor="model-name">模型名称</label>
                 <input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} placeholder={providerPresets[settings.provider].defaultModel} />
-                <span className="ra-field-hint">留空使用默认模型</span>
+                <span className="text-[9px] text-muted-foreground opacity-70">留空使用默认模型</span>
               </div>
             </div>
 
-            <h3 className="ra-section-title" style={{ marginTop: 20 }}>输出设置</h3>
-            <div className="ra-settings-grid">
-              <div className="ra-field">
+            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>输出设置</h3>
+            <div className="grid gap-3">
+              <div className="grid gap-1.5">
                 <label htmlFor="effort">审查强度</label>
                 <select id="effort" value={settings.effort} onChange={(event) => setSettings({ ...settings, effort: event.target.value as RuntimeSettings['effort'] })}>
                   <option value="fast">快速（仅高置信度）</option>
@@ -1016,7 +1016,7 @@ export default function App({ page, adapter }: AppProps) {
                   <option value="thorough">全面（更多问题）</option>
                 </select>
               </div>
-              <div className="ra-field">
+              <div className="grid gap-1.5">
                 <label htmlFor="language">输出语言</label>
                 <select id="language" value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as RuntimeSettings['language'] })}>
                   <option value="zh-CN">简体中文</option>
@@ -1025,15 +1025,15 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
 
-            <details className="ra-advanced-section">
+            <details className="mt-4 border border-border rounded-md overflow-hidden">
               <summary>高级设置（一般不需要改）</summary>
-              <div className="ra-settings-grid" style={{ marginTop: 10 }}>
-                <div className="ra-field">
+              <div className="grid gap-3" style={{ marginTop: 10 }}>
+                <div className="grid gap-1.5">
                   <label htmlFor="gitlab-token">GitLab PAT</label>
                   <input id="gitlab-token" type="password" value={settings.gitlabToken} onChange={(event) => setSettings({ ...settings, gitlabToken: event.target.value })} autoComplete="off" placeholder="留空使用 Cookie 认证" />
-                  <span className="ra-field-hint">留空即可，脚本自动使用页面 Cookie + CSRF</span>
+                  <span className="text-[9px] text-muted-foreground opacity-70">留空即可，脚本自动使用页面 Cookie + CSRF</span>
                 </div>
-                <div className="ra-field">
+                <div className="grid gap-1.5">
                   <label htmlFor="auth-mode">API 认证方式</label>
                   <select id="auth-mode" value={settings.auth?.mode ?? 'bearer'} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, mode: e.target.value as RuntimeSettings['auth']['mode'] } })}>
                     <option value="bearer">Bearer Token（默认）</option>
@@ -1041,16 +1041,16 @@ export default function App({ page, adapter }: AppProps) {
                     <option value="query-param">Query Parameter</option>
                     <option value="custom">自定义 Header</option>
                   </select>
-                  <span className="ra-field-hint">企业网关才需要改</span>
+                  <span className="text-[9px] text-muted-foreground opacity-70">企业网关才需要改</span>
                 </div>
                 {(settings.auth?.mode === 'api-key-header' || settings.auth?.mode === 'custom') && (
-                  <div className="ra-field">
+                  <div className="grid gap-1.5">
                     <label htmlFor="auth-header-name">Header 名称</label>
                     <input id="auth-header-name" value={settings.auth?.apiKeyHeader ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyHeader: e.target.value } })} placeholder="api-key" />
                   </div>
                 )}
                 {settings.auth?.mode === 'query-param' && (
-                  <div className="ra-field">
+                  <div className="grid gap-1.5">
                     <label htmlFor="auth-param-name">Query 参数名</label>
                     <input id="auth-param-name" value={settings.auth?.apiKeyQueryParam ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyQueryParam: e.target.value } })} placeholder="key" />
                   </div>
@@ -1058,110 +1058,110 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </details>
 
-            <div className="ra-modal-actions settings-actions">
-              <button type="button" className="ra-btn danger" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
-              <button type="button" className="ra-btn" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
-              <button type="button" className="ra-btn primary" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
+            <div className="flex justify-end gap-2 p-3 bg-muted border-t border-border">
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md text-destructive border border-destructive bg-transparent cursor-pointer" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
             </div>
-            <div className="ra-connection-list"><div className="ra-connection"><div className="ra-connection-title"><strong>GitLab API</strong><span className={`ra-badge ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
+            <div className="grid gap-2"><div className="grid gap-2 p-3 rounded-lg bg-muted border border-border"><div className="flex items-center justify-between gap-2.5"><strong>GitLab API</strong><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
 
-            <h3 className="ra-section-title" style={{ marginTop: 20 }}>Token 用量统计</h3>
+            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>Token 用量统计</h3>
             {usageSummary ? (
-              <div className="ra-capability-box">
-                <div className="ra-capability-row"><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
-                <div className="ra-capability-row"><span>输入 Tokens</span><strong>{formatTokenCount(usageSummary.totalInputTokens)}</strong></div>
-                <div className="ra-capability-row"><span>输出 Tokens</span><strong>{formatTokenCount(usageSummary.totalOutputTokens)}</strong></div>
-                <div className="ra-capability-row"><span>估算费用</span><strong>{formatCost(usageSummary.totalEstimatedCost)}</strong></div>
+              <div className="p-3 rounded-lg bg-muted border border-border mt-3">
+                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
+                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>输入 Tokens</span><strong>{formatTokenCount(usageSummary.totalInputTokens)}</strong></div>
+                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>输出 Tokens</span><strong>{formatTokenCount(usageSummary.totalOutputTokens)}</strong></div>
+                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>估算费用</span><strong>{formatCost(usageSummary.totalEstimatedCost)}</strong></div>
                 {Object.entries(usageSummary.byModel).map(([key, data]) => (
-                  <div key={key} className="ra-capability-row" style={{ fontSize: 9, opacity: 0.8 }}>
+                  <div key={key} className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]" style={{ fontSize: 9, opacity: 0.8 }}>
                     <span>{key}（{data.count} 次）</span>
                     <span>{formatTokenCount(data.inputTokens + data.outputTokens)} tok · {formatCost(data.estimatedCost)}</span>
                   </div>
                 ))}
-                <button type="button" className="ra-btn" style={{ marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" style={{ marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
               </div>
             ) : (
-              <p className="ra-section-copy">暂无用量记录。模型调用后会自动统计。</p>
+              <p className="text-xs text-muted-foreground m-0 mb-3">暂无用量记录。模型调用后会自动统计。</p>
             )}
 
-            <h3 className="ra-section-title" style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
-            <p className="ra-section-copy">配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
+            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
+            <p className="text-xs text-muted-foreground m-0 mb-3">配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
 
-            <div className="ra-rule-pack-list">
+            <div className="grid gap-2 mb-3">
               {rulePacks.map((pack) => (
-                <div key={pack.id} className={`ra-rule-pack-item${pack.enabled ? '' : ' disabled'}`}>
-                  <div className="ra-rule-pack-header">
-                    <div className="ra-rule-pack-info">
+                <div key={pack.id} className={`rounded-md border border-border bg-card overflow-hidden${pack.enabled ? '' : ' opacity-60'}`}>
+                  <div className="flex items-center justify-between gap-2.5 p-2.5">
+                    <div className="flex items-center gap-1.5 min-w-0 text-xs">
                       <strong>{pack.name}</strong>
-                      <span className="ra-badge neutral">v{pack.version}</span>
-                      <span className="ra-badge neutral">{pack.rules.length} 条规则</span>
-                      {pack.builtIn && <span className="ra-badge info">内置</span>}
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">v{pack.version}</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">{pack.rules.length} 条规则</span>
+                      {pack.builtIn && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/15 text-info">内置</span>}
                     </div>
-                    <div className="ra-rule-pack-actions">
-                      <button type="button" className="ra-icon-btn" title={pack.enabled ? '禁用' : '启用'} onClick={() => void toggleRulePack(pack.id)}>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title={pack.enabled ? '禁用' : '启用'} onClick={() => void toggleRulePack(pack.id)}>
                         {pack.enabled ? '✓' : '✗'}
                       </button>
-                      <button type="button" className="ra-icon-btn" title="编辑" onClick={() => setEditingPackId(editingPackId === pack.id ? null : pack.id)}>
+                      <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="编辑" onClick={() => setEditingPackId(editingPackId === pack.id ? null : pack.id)}>
                         <FileText size={13} />
                       </button>
                       {!pack.builtIn && <>
-                        <button type="button" className="ra-icon-btn" title="导出" onClick={() => handleExportPack(pack)}>
+                        <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="导出" onClick={() => handleExportPack(pack)}>
                           <Download size={13} />
                         </button>
-                        <button type="button" className="ra-icon-btn" title="删除" onClick={() => void deleteRulePack(pack.id)}>
+                        <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="删除" onClick={() => void deleteRulePack(pack.id)}>
                           <Trash2 size={13} />
                         </button>
                       </>}
                     </div>
                   </div>
-                  {pack.description && <p className="ra-rule-pack-desc">{pack.description}</p>}
+                  {pack.description && <p className="text-muted-foreground text-[10px] leading-relaxed">{pack.description}</p>}
 
                   {editingPackId === pack.id && (
-                    <div className="ra-rule-pack-detail">
+                    <div className="p-2.5 border-t border-border bg-muted">
                       {!pack.builtIn && (
-                        <div className="ra-settings-grid" style={{ marginBottom: 8 }}>
-                          <div className="ra-field">
+                        <div className="grid gap-3" style={{ marginBottom: 8 }}>
+                          <div className="grid gap-1.5">
                             <label>名称</label>
                             <input value={pack.name} onChange={(e) => void updatePack({ ...pack, name: e.target.value })} />
                           </div>
-                          <div className="ra-field">
+                          <div className="grid gap-1.5">
                             <label>版本</label>
                             <input value={pack.version} onChange={(e) => void updatePack({ ...pack, version: e.target.value })} />
                           </div>
-                          <div className="ra-field" style={{ gridColumn: '1 / -1' }}>
+                          <div className="grid gap-1.5" style={{ gridColumn: '1 / -1' }}>
                             <label>描述</label>
                             <input value={pack.description ?? ''} onChange={(e) => void updatePack({ ...pack, description: e.target.value })} placeholder="可选描述" />
                           </div>
                         </div>
                       )}
                       {pack.rules.map((rule) => (
-                        <div key={rule.id} className={`ra-rule-item${rule.enabled ? '' : ' disabled'}`}>
-                          <div className="ra-rule-header">
-                            <label className="ra-rule-toggle">
+                        <div key={rule.id} className={`p-2 rounded-md border border-border bg-card mb-1.5${rule.enabled ? '' : ' opacity-55'}`}>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1.5 min-w-0 cursor-pointer text-[11px]">
                               <input type="checkbox" checked={rule.enabled} onChange={() => void toggleRule(pack.id, rule.id)} />
-                              <span className="ra-rule-title">{rule.title}</span>
+                              <span className="truncate font-semibold text-foreground">{rule.title}</span>
                             </label>
-                            <div className="ra-rule-badges">
-                              <span className={`ra-badge ${rule.severity === 'high' || rule.severity === 'critical' ? 'error' : rule.severity === 'medium' ? 'warning' : 'neutral'}`}>{rule.severity}</span>
-                              <span className="ra-badge neutral">{rule.category}</span>
+                            <div className="flex gap-1 ml-auto shrink-0">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${rule.severity === 'high' || rule.severity === 'critical' ? 'error' : rule.severity === 'medium' ? 'warning' : 'neutral'}`}>{rule.severity}</span>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">{rule.category}</span>
                             </div>
                             {!pack.builtIn && (
-                              <button type="button" className="ra-icon-btn" title="删除规则" onClick={() => void removeRuleFromPack(pack.id, rule.id)}>
+                              <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="删除规则" onClick={() => void removeRuleFromPack(pack.id, rule.id)}>
                                 <X size={12} />
                               </button>
                             )}
                           </div>
                           {rule.matchPatterns.length > 0 && (
-                            <div className="ra-rule-patterns">
+                            <div className="flex flex-wrap gap-1 mt-1.5">
                               {rule.matchPatterns.map((pattern, idx) => (
-                                <code key={idx} className="ra-rule-pattern">{pattern.pattern}</code>
+                                <code key={idx} className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-muted text-foreground break-all">{pattern.pattern}</code>
                               ))}
                             </div>
                           )}
                         </div>
                       ))}
                       {!pack.builtIn && (
-                        <button type="button" className="ra-btn" style={{ marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
+                        <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" style={{ marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
                           <Plus size={13} /> 添加规则
                         </button>
                       )}
@@ -1171,36 +1171,36 @@ export default function App({ page, adapter }: AppProps) {
               ))}
             </div>
 
-            <div className="ra-rule-pack-footer">
-              <button type="button" className="ra-btn" onClick={() => void createNewPack()}>
+            <div className="grid gap-2.5 pt-2.5 border-t border-border">
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => void createNewPack()}>
                 <Plus size={13} /> 新建规则包
               </button>
-              <div className="ra-import-section">
+              <div className="grid gap-1.5">
                 <textarea
-                  className="ra-import-textarea"
+                  className="w-full min-h-[60px] p-2 text-[10px] font-mono rounded-md border border-border bg-card text-foreground resize-y"
                   value={importText}
                   onChange={(e) => { setImportText(e.target.value); setImportError(''); }}
                   placeholder='粘贴规则包 JSON…'
                   rows={3}
                 />
-                {importError && <p className="ra-import-error">{importError}</p>}
-                <button type="button" className="ra-btn" disabled={!importText.trim()} onClick={() => void handleImportPack()}>
+                {importError && <p className="text-destructive text-[10px] m-0">{importError}</p>}
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" disabled={!importText.trim()} onClick={() => void handleImportPack()}>
                   <Upload size={13} /> 导入规则包
                 </button>
               </div>
             </div>
 
-            <h3 className="ra-section-title" style={{ marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
-            <p className="ra-section-copy">连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
-            <div className="ra-settings-grid">
-              <div className="ra-field">
+            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
+            <p className="text-xs text-muted-foreground m-0 mb-3">连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
+            <div className="grid gap-3">
+              <div className="grid gap-1.5">
                 <label htmlFor="mcp-enabled">启用 MCP</label>
                 <select id="mcp-enabled" value={settings.mcp?.enabled ? 'on' : 'off'} onChange={(e) => setSettings({ ...settings, mcp: { ...settings.mcp, enabled: e.target.value === 'on' } })}>
                   <option value="off">关闭</option>
                   <option value="on">开启</option>
                 </select>
               </div>
-              <div className="ra-field">
+              <div className="grid gap-1.5">
                 <label htmlFor="mcp-url">MCP Server URL</label>
                 <input
                   id="mcp-url"
@@ -1211,49 +1211,49 @@ export default function App({ page, adapter }: AppProps) {
                 />
               </div>
             </div>
-            <div className="ra-connection-list" style={{ marginTop: 10 }}>
-              <div className="ra-connection">
-                <div className="ra-connection-title">
+            <div className="grid gap-2" style={{ marginTop: 10 }}>
+              <div className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
+                <div className="flex items-center justify-between gap-2.5">
                   <strong>MCP 传输类型</strong>
-                  <span className="ra-badge info">Streamable HTTP</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/15 text-info">Streamable HTTP</span>
                 </div>
                 <p>浏览器油猴脚本仅支持 HTTP 传输（POST JSON-RPC）。不支持 stdio 本地进程。URL 以 /sse 结尾时自动使用 SSE 模式。</p>
               </div>
             </div>
 
-            <h3 className="ra-section-title" style={{ marginTop: 20 }}>兼容性诊断</h3>
-            {capabilities && <div className="ra-connection-list">
-              <div className="ra-connection">
-                <div className="ra-connection-title">
+            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>兼容性诊断</h3>
+            {capabilities && <div className="grid gap-2">
+              <div className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
+                <div className="flex items-center justify-between gap-2.5">
                   <strong>GitLab 实例状态</strong>
-                  <span className={`ra-badge ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.gitlabVersion ?? '未知版本'}</span>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.gitlabVersion ?? '未知版本'}</span>
                 </div>
-                <div className="ra-capability-box">
-                  <div className="ra-capability-row"><span>认证</span><span className={`ra-badge ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.authMode}</span></div>
-                  <div className="ra-capability-row"><span>API 读取</span><span className={`ra-badge ${capabilities.canReadMergeRequests ? 'success' : 'error'}`}>{capabilities.canReadMergeRequests ? '可用' : '不可用'}</span></div>
-                  <div className="ra-capability-row"><span>代码搜索</span><span className={`ra-badge ${capabilities.canSearchCode ? 'success' : 'neutral'}`}>{capabilities.canSearchCode ? '可用' : '不可用'}</span></div>
-                  <div className="ra-capability-row"><span>评论发布</span><span className={`ra-badge ${capabilities.canCreateDiscussions ? 'success' : 'error'}`}>{capabilities.canCreateDiscussions ? '可用' : '不可用'}</span></div>
-                  <div className="ra-capability-row"><span>CSRF Token</span><span className={`ra-badge ${capabilities.csrfAvailable ? 'success' : 'warning'}`}>{capabilities.csrfAvailable ? '存在' : '缺失'}</span></div>
+                <div className="p-3 rounded-lg bg-muted border border-border mt-3">
+                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>认证</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.authMode}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>API 读取</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canReadMergeRequests ? 'success' : 'error'}`}>{capabilities.canReadMergeRequests ? '可用' : '不可用'}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>代码搜索</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canSearchCode ? 'success' : 'neutral'}`}>{capabilities.canSearchCode ? '可用' : '不可用'}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>评论发布</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canCreateDiscussions ? 'success' : 'error'}`}>{capabilities.canCreateDiscussions ? '可用' : '不可用'}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>CSRF Token</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.csrfAvailable ? 'success' : 'warning'}`}>{capabilities.csrfAvailable ? '存在' : '缺失'}</span></div>
                 </div>
               </div>
             </div>}
             {capabilities?.warnings && capabilities.warnings.length > 0 && (
-              <div className="ra-alert" role="alert" style={{ margin: '8px 0 0' }}>
+              <div className="flex items-center justify-between gap-2.5 m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert" style={{ margin: '8px 0 0' }}>
                 {capabilities.warnings.join(' ')}
               </div>
             )}
             {diagnostics.length > 0 && (
-              <div className="ra-capability-box" style={{ marginTop: 8 }}>
+              <div className="p-3 rounded-lg bg-muted border border-border mt-3" style={{ marginTop: 8 }}>
                 {diagnostics.map((diag, idx) => (
-                  <div key={idx} className="ra-tool-event" style={{ fontSize: 9, opacity: 0.85 }}>
-                    <span className="ra-tool-event-icon">{diag.level === 'error' ? '✗' : diag.level === 'warn' ? '⚠' : '·'}</span>
+                  <div key={idx} className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[9px] opacity-85">
+                    <span className="w-3.5 text-center font-bold shrink-0">{diag.level === 'error' ? '✗' : diag.level === 'warn' ? '⚠' : '·'}</span>
                     <span>[{diag.source}] {diag.message}</span>
                   </div>
                 ))}
               </div>
             )}
-            <div className="ra-empty-actions" style={{ marginTop: 8 }}>
-              <button type="button" className="ra-btn" onClick={() => {
+            <div className="flex flex-wrap gap-2 mt-2.5" style={{ marginTop: 8 }}>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => {
                 const config = exportSiteConfig(page, capabilities ?? {
                   authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false,
                   canSearchCode: false, canReadRepository: true, canPaginateDiffs: true,
@@ -1265,13 +1265,13 @@ export default function App({ page, adapter }: AppProps) {
             </div>
 
             {sessionHistory.length > 0 && <>
-              <h3 className="ra-section-title" style={{ marginTop: 20 }}>Review 会话历史</h3>
-              <div className="ra-connection-list">
+              <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>Review 会话历史</h3>
+              <div className="grid gap-2">
                 {sessionHistory.map((session) => (
-                  <div key={session.id} className="ra-connection">
-                    <div className="ra-connection-title">
+                  <div key={session.id} className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
+                    <div className="flex items-center justify-between gap-2.5">
                       <strong>{session.projectPath} !{session.mergeRequestIid}</strong>
-                      <span className={`ra-badge ${session.status === 'completed' ? 'success' : session.status === 'failed' ? 'error' : session.status === 'cancelled' ? 'warning' : 'info'}`}>{session.status}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${session.status === 'completed' ? 'success' : session.status === 'failed' ? 'error' : session.status === 'cancelled' ? 'warning' : 'info'}`}>{session.status}</span>
                     </div>
                     <p style={{ fontSize: 9 }}>{session.findings.length} Findings · {session.source} · {new Date(session.updatedAt).toLocaleString()}</p>
                   </div>
@@ -1284,44 +1284,44 @@ export default function App({ page, adapter }: AppProps) {
 
       {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('chat'); setPanelOpen(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
-      {publishFinding && <div className="ra-modal-backdrop" role="presentation"><section className="ra-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="ra-modal-header"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="ra-icon-btn on-light" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="ra-modal-body"><div className="ra-publish-target"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="ra-publish-target"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="ra-field"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="ra-modal-actions"><button type="button" className="ra-btn" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="ra-btn primary" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
+      {publishFinding && <div className="fixed z-[200] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
       {showBatchConfirm && selectedFindings.size > 0 && (
-        <div className="ra-modal-backdrop" role="presentation">
-          <section className="ra-modal" role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
-            <div className="ra-modal-header">
+        <div className="fixed z-[200] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation">
+          <section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
+            <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border">
               <div>
                 <h2 id="batch-publish-title">批量发布到 GitLab</h2>
                 <p>将选中的 {selectedFindings.size} 个 Finding 逐条创建行级 Discussion。</p>
               </div>
-              <button type="button" className="ra-icon-btn on-light" onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
+              <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
             </div>
-            <div className="ra-modal-body">
-              <div className="ra-publish-target">
+            <div className="grid gap-3 p-4">
+              <div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground">
                 <span>{page.projectPath} · MR !{page.mergeRequestIid}</span>
                 <span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span>
               </div>
-              <div className="ra-batch-preview">
+              <div className="grid gap-1.5">
                 {findings.filter((f) => selectedFindings.has(f.id)).slice(0, 10).map((f) => (
-                  <div key={f.id} className="ra-batch-preview-item">
-                    <span className={`ra-badge ${f.severity === 'high' || f.severity === 'critical' ? 'error' : f.severity === 'medium' ? 'warning' : 'neutral'}`}>{f.severity}</span>
-                    <span className="ra-batch-preview-title">{f.title}</span>
-                    <span className="ra-batch-preview-path">{f.path}:{f.line}</span>
+                  <div key={f.id} className="flex items-center gap-2 p-1.5 rounded bg-muted border border-border text-[10px]">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${f.severity === 'high' || f.severity === 'critical' ? 'error' : f.severity === 'medium' ? 'warning' : 'neutral'}`}>{f.severity}</span>
+                    <span className="flex-1 min-w-0 truncate">{f.title}</span>
+                    <span className="text-muted-foreground font-mono text-[9px]">{f.path}:{f.line}</span>
                   </div>
                 ))}
                 {selectedFindings.size > 10 && <p style={{ fontSize: 10, color: '#6b778b' }}>…还有 {selectedFindings.size - 10} 个</p>}
               </div>
             </div>
-            <div className="ra-modal-actions">
-              <button type="button" className="ra-btn" onClick={() => setShowBatchConfirm(false)}>取消</button>
-              <button type="button" className="ra-btn primary" disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
+            <div className="flex justify-end gap-2 p-3 bg-muted border-t border-border">
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setShowBatchConfirm(false)}>取消</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
                 <MessageSquare size={14} />{batchPublishing ? '发布中…' : `确认批量发布 ${selectedFindings.size} 条`}
               </button>
             </div>
           </section>
         </div>
       )}
-      {toast && <div className="ra-toast" role="status">{toast}</div>}
+      {toast && <div className="fixed z-[300] right-[18px] bottom-[18px] flex max-w-[360px] items-center gap-2 p-3 rounded-lg text-xs bg-panel-header text-panel-header-foreground shadow-xl" role="status">{toast}</div>}
     </div>
   );
 }
