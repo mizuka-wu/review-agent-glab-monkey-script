@@ -13,6 +13,9 @@ dist-ssr
 *.local
 playwright-report
 test-results
+.gitlab-test-data/
+.gitlab-data/
+.gitlab-logs/
 
 # Editor directories and files
 .vscode/*
