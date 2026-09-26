@@ -1,98 +1,108 @@
 #!/bin/bash
 # GitLab 测试容器管理
-# 用法: ./scripts/gitlab.sh <命令>
 
 COMPOSE_FILE="docker-compose.gitlab.yml"
 URL="http://localhost:8929"
 
-case "${1:-help}" in
-  start|s)
-    docker compose -f "$COMPOSE_FILE" up -d
-    echo "等待 GitLab 就绪 (首次启动需 2-5 分钟)..."
-    for i in $(seq 1 60); do
-      if curl -sf "$URL/-/readiness" > /dev/null 2>&1; then
-        echo "✅ GitLab 已就绪 → $URL (root / 5iveRage)"
-        exit 0
-      fi
-      sleep 5
-    done
-    echo "⚠️  启动超时，查看日志: $0 logs"
-    exit 1
-    ;;
-  stop)
-    docker compose -f "$COMPOSE_FILE" down && echo "✅ 已停止"
-    ;;
-  restart)
-    docker compose -f "$COMPOSE_FILE" restart && echo "✅ 已重启"
-    ;;
-  ps|status)
-    docker compose -f "$COMPOSE_FILE" ps
-    ;;
-  logs)
-    docker compose -f "$COMPOSE_FILE" logs -f "${@:2}"
-    ;;
-  reset)
-    echo "⚠️  将删除所有数据卷（项目、MR、用户全部清空）"
-    read -p "确认？(y/N) " -n 1 -r; echo
-    [[ $REPLY =~ ^[Yy]$ ]] && docker compose -f "$COMPOSE_FILE" down -v && echo "✅ 已重置"
-    ;;
-  root-password)
-    # 重置 root 密码
-    NEW_PASS="${2:-5iveRage}"
-    docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rake "gitlab:password:reset[root]" <<< "$NEW_PASS
-$NEW_PASS" 2>&1 | tail -3
-    ;;
-  pat)
-    # 生成 root PAT (需要 gitlab-rails)
-    TOKEN_NAME="${2:-e2e-token}"
-    docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rails runner "
-      token = User.find_by_username('root').personal_access_tokens.create(scopes: ['api'], name: '$TOKEN_NAME', expires_at: 30.days.from_now)
-      token.set_token('glpat-e2e-test-token-1234567890')
-      token.save!
-      puts 'glpat-e2e-test-token-1234567890'
-    " 2>&1 | tail -1
-    ;;
-  create-project)
-    # 创建测试项目
-    NAME="${2:-test-project}"
-    docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rails runner "
-      token = 'glpat-e2e-test-token-1234567890'
-      user = User.find_by_username('root')
-      project = Projects::CreateService.new(user, name: '$NAME', path: '$NAME', visibility_level: 20, initialize_with_readme: true).execute
-      puts project.full_path
-    " 2>&1 | tail -1
-    ;;
-  health)
-    curl -sf "$URL/-/readiness" && echo " ✅ healthy" || echo "❌ unhealthy"
-    ;;
-  url)
-    echo "$URL"
-    ;;
-  help|*)
-    cat <<EOF
-GitLab 测试容器管理
+show_status() {
+  local status
+  status=$(docker compose -f "$COMPOSE_FILE" ps --format "{{.Status}}" 2>/dev/null | head -1)
+  if [[ "$status" == *"Up"* ]]; then
+    echo "  状态: ✅ 运行中"
+    if curl -sf "$URL/-/readiness" > /dev/null 2>&1; then
+      echo "  健康: ✅ 就绪"
+    else
+      echo "  健康: ⏳ 启动中..."
+    fi
+  else
+    echo "  状态: ⬛ 未运行"
+  fi
+  echo "  地址: $URL"
+}
 
-用法: $0 <命令>
+do_start() {
+  docker compose -f "$COMPOSE_FILE" up -d
+  echo "等待 GitLab 就绪 (首次启动需 2-5 分钟)..."
+  for i in $(seq 1 60); do
+    if curl -sf "$URL/-/readiness" > /dev/null 2>&1; then
+      echo "✅ GitLab 已就绪 → $URL (root / 5iveRage)"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "⚠️  启动超时，查看日志"
+  return 1
+}
 
-容器管理:
-  start, s       启动并等待就绪
-  stop           停止容器
-  restart        重启容器
-  ps, status     查看状态
-  logs [args]    查看日志 (可加 -f 实时)
-  reset          删除所有数据重置
-  health         健康检查
+do_pat() {
+  echo "生成 root PAT..."
+  docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rails runner "
+    token = User.find_by_username('root').personal_access_tokens.create(scopes: ['api'], name: 'e2e', expires_at: 30.days.from_now)
+    token.set_token('glpat-e2e-test-token-1234567890')
+    token.save!
+    puts 'glpat-e2e-test-token-1234567890'
+  " 2>&1 | tail -1
+}
 
-测试辅助:
-  root-password [密码]    重置 root 密码 (默认 5iveRage)
-  pat [名称]              生成 root PAT (固定: glpat-e2e-test-token-1234567890)
-  create-project [名称]   创建测试项目
-  url                     打印访问地址
+do_create_project() {
+  read -p "项目名称 (默认 test-project): " name
+  name="${name:-test-project}"
+  echo "创建项目 $name ..."
+  docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rails runner "
+    user = User.find_by_username('root')
+    project = Projects::CreateService.new(user, name: '$name', path: '$name', visibility_level: 20, initialize_with_readme: true).execute
+    puts project.full_path
+  " 2>&1 | tail -1
+}
 
-E2E 测试:
-  GITLAB_URL=\$($0 url) GITLAB_PAT=glpat-e2e-test-token-1234567890 \\
-  GITLAB_MR_URL=\$($0 url)/<project>/-/merge_requests/<id>/diffs \\
-  pnpm test:e2e
-EOF
-    ;;
-esac
+do_root_password() {
+  read -p "新密码 (默认 5iveRage): " pass
+  pass="${pass:-5iveRage}"
+  docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rake "gitlab:password:reset[root]" <<< "$pass
+$pass" 2>&1 | tail -3
+}
+
+# 主菜单
+while true; do
+  clear
+  echo "╔══════════════════════════════════╗"
+  echo "║     GitLab 测试容器管理           ║"
+  echo "╚══════════════════════════════════╝"
+  echo
+  show_status
+  echo
+  echo "  1) 启动"
+  echo "  2) 停止"
+  echo "  3) 重启"
+  echo "  4) 查看日志"
+  echo "  5) 重置数据 (清空全部)"
+  echo "  ─────────────────────────"
+  echo "  6) 生成 PAT"
+  echo "  7) 创建测试项目"
+  echo "  8) 重置 root 密码"
+  echo "  ─────────────────────────"
+  echo "  9) 显示 E2E 测试命令"
+  echo "  0) 退出"
+  echo
+  read -p "选择 [0-9]: " choice
+
+  case $choice in
+    1) do_start; read -p "按回车继续..." ;;
+    2) docker compose -f "$COMPOSE_FILE" down && echo "✅ 已停止"; read -p "按回车继续..." ;;
+    3) docker compose -f "$COMPOSE_FILE" restart && echo "✅ 已重启"; read -p "按回车继续..." ;;
+    4) docker compose -f "$COMPOSE_FILE" logs -f; ;;
+    5) read -p "确认删除所有数据？(y/N) " -n 1 -r; echo
+       [[ $REPLY =~ ^[Yy]$ ]] && docker compose -f "$COMPOSE_FILE" down -v && echo "✅ 已重置"
+       read -p "按回车继续..." ;;
+    6) do_pat; read -p "按回车继续..." ;;
+    7) do_create_project; read -p "按回车继续..." ;;
+    8) do_root_password; read -p "按回车继续..." ;;
+    9) echo
+       echo "GITLAB_URL=$URL \\"
+       echo "GITLAB_PAT=glpat-e2e-test-token-1234567890 \\"
+       echo "GITLAB_MR_URL=$URL/<project>/-/merge_requests/<id>/diffs \\"
+       echo "pnpm test:e2e"
+       read -p "按回车继续..." ;;
+    0) exit 0 ;;
+  esac
+done
