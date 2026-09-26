@@ -1,6 +1,6 @@
-# GitLab CE 测试容器配置
-# 启动: bash scripts/gitlab.sh start
-# 访问: http://localhost:8929  (root / 5iveRage)
+# GitLab CE 测试容器
+# 启动: ./scripts/gitlab.sh start
+# 访问: http://localhost:8929 (root / 5iveRage)
 
 services:
   gitlab:
@@ -13,20 +13,15 @@ services:
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://localhost:8929'
-        gitlab_rails['configured'] = true
-        gitlab_rails['background_poll_interval'] = 1
-        action_mailer['smtp_settings'] = { enable_starttls_auto: false }
-        prometheus_metrics['enabled'] = false
     volumes:
       - gitlab_data:/var/opt/gitlab
       - gitlab_logs:/var/log/gitlab
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8929/"]
-      interval: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8929/-/readiness"]
+      interval: 15s
       timeout: 5s
-      retries: 30
-      start_period: 60s
-    restart: unless-stopped
+      retries: 40
+      start_period: 120s
 
 volumes:
   gitlab_data:
