@@ -26,7 +26,7 @@ do_start() {
       echo ""
       echo "✅ GitLab 已就绪"
       echo "   地址: $URL"
-      echo "   账号: root / $PASS"
+      echo "   账号: root  （密码选 8 获取）"
       return 0
     fi
     printf "\r  ⏳ %ds (HTTP %s)" $((i*5)) "$code"
@@ -64,6 +64,25 @@ do_reset_password() {
 $PASS" 2>&1 | tail -3
 }
 
+do_get_password() {
+  echo "获取 root 密码..."
+  # 优先读初始密码文件
+  local pass
+  pass=$(docker compose -f "$COMPOSE_FILE" exec -T gitlab cat /etc/gitlab/initial_root_password 2>/dev/null | tr -d '\r\n')
+  if [ -n "$pass" ]; then
+    echo "root 密码: $pass"
+    return 0
+  fi
+  # 回退：从日志中提取
+  pass=$(docker compose -f "$COMPOSE_FILE" logs 2>&1 | grep -oP 'Password: \K\S+' | tail -1)
+  if [ -n "$pass" ]; then
+    echo "root 密码: $pass"
+    return 0
+  fi
+  echo "未找到密码，尝试重置..."
+  do_reset_password
+}
+
 while true; do
   clear
   echo "╔══════════════════════════════════════╗"
@@ -79,7 +98,7 @@ while true; do
     echo "  状态: ⏳ 启动中 (HTTP $code)"
   fi
   echo "  地址: $URL"
-  echo "  账号: root / $PASS"
+  echo "  账号: root  （密码选 8 获取）"
   echo "  PAT:  $PAT"
   echo
   echo "  1) 启动 / 等待就绪"
@@ -90,9 +109,10 @@ while true; do
   echo "  ─────────────────────"
   echo "  6) 生成 PAT"
   echo "  7) 创建项目"
-  echo "  8) 重置 root 密码"
+  echo "  8) 获取 root 密码"
+  echo "  9) 重置 root 密码"
   echo "  ─────────────────────"
-  echo "  9) 显示 E2E 命令"
+  echo "  10) 显示 E2E 命令"
   echo "  0) 退出"
   echo
   read -p "选择 [0-9]: " c
@@ -107,8 +127,9 @@ while true; do
     6) do_pat; read -p "回车继续..." ;;
     7) read -p "项目名 (默认 test-project): " n
        do_project "${n:-test-project}"; read -p "回车继续..." ;;
-    8) do_reset_password; read -p "回车继续..." ;;
-    9) echo
+    8) do_get_password; read -p "回车继续..." ;;
+    9) do_reset_password; read -p "回车继续..." ;;
+    10) echo
        echo "GITLAB_URL=$URL \\"
        echo "GITLAB_MR_URL=$URL/<项目>/-/merge_requests/<id>/diffs \\"
        echo "pnpm test:e2e"
