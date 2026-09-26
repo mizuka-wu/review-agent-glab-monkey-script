@@ -38,11 +38,11 @@ jobs:
       - name: Prepare release bundle
         run: |
           mkdir -p release
-          cp dist/*.user.js release/
+          cp dist/*.user.js dist/*.meta.js release/
           cp README.md release/README.md
           cp LICENSE release/LICENSE
           cp docs/*.md release/
-          (cd release && sha256sum *.user.js *.md LICENSE > SHA256SUMS)
+          (cd release && sha256sum *.user.js *.meta.js *.md LICENSE > SHA256SUMS)
 
       - name: Publish GitHub release
         env:

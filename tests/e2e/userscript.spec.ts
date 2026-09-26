@@ -147,6 +147,10 @@ test('userscript metadata is bundled and the entry is scoped to GitLab pages', a
   expect(metadata).toContain('@grant        GM.getValue');
   expect(metadata).toContain('@grant        GM.xmlHttpRequest');
   expect(metadata).toContain('@run-at       document-idle');
+  expect(metadata).toContain('@downloadURL');
+  expect(metadata).toContain('@updateURL');
+  expect(metadata).toContain('@homepage');
+  expect(metadata).toContain('@supportURL');
 
   await page.route('https://example.test/**', (route) => route.fulfill({ body: '<!doctype html><html><body>ordinary page</body></html>' }));
   await page.addInitScript({ content: bundle });

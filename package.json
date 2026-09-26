@@ -11,7 +11,7 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test": "pnpm test:unit && pnpm test:e2e",
-    "build": "pnpm typecheck && vite build",
+    "build": "pnpm typecheck && vite build && node -e \"const fs=require('fs');const src=fs.readFileSync('dist/review-agent-glab-monkey-script.user.js','utf8');const meta=src.match(/\\/\\/ ==UserScript==[\\s\\S]*?\\/\\/ ==\\/UserScript==/);if(meta)fs.writeFileSync('dist/review-agent-glab-monkey-script.meta.js',meta[0]+'\\n');\"",
     "check": "pnpm typecheck && pnpm test",
     "preview": "vite preview"
   },

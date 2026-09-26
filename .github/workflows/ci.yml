@@ -54,6 +54,7 @@ jobs:
           name: review-agent-glab-monkey-script
           path: |
             dist/*.user.js
+            dist/*.meta.js
             dist/*.json
           if-no-files-found: warn
           retention-days: 14
