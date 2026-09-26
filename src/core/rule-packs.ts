@@ -175,7 +175,7 @@ export async function saveRulePacks(packs: RulePack[], storage = defaultStorage(
     // Only persist enabled flags for built-in pack
     return {
       ...pack,
-      rules: pack.rules.map((rule) => ({ id: rule.id, enabled: rule.enabled }) as RuleDef),
+      rules: pack.rules.map((rule) => ({ id: rule.id, enabled: rule.enabled })),
     };
   });
   await storage.setValue(STORAGE_KEY, toSave);

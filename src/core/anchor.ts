@@ -16,8 +16,7 @@ interface AnchorMatch {
 function normalizeCode(value: string) {
   return value
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+    .map((line) => line.trim());
 }
 
 function diffMatches(file: FileDiff, target: string[], side: 'old' | 'new'): AnchorMatch[] {

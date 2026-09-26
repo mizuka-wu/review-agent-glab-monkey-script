@@ -136,11 +136,12 @@ export class OpenAIRuntime {
         const decoder = new TextDecoder();
         let content = '';
         let buffer = '';
+        let done = false;
 
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          while (!done) {
+            const { done: streamDone, value } = await reader.read();
+            if (streamDone) break;
             buffer += decoder.decode(value, { stream: true });
 
             const lines = buffer.split('\n');
@@ -149,7 +150,7 @@ export class OpenAIRuntime {
             for (const line of lines) {
               if (!line.startsWith('data: ')) continue;
               const data = line.slice(6).trim();
-              if (data === '[DONE]') break;
+              if (data === '[DONE]') { done = true; break; }
               try {
                 const chunk = JSON.parse(data) as ChatCompletionResponse;
                 const delta = (chunk.choices?.[0]?.message as Record<string, unknown> | undefined)?.content
@@ -164,6 +165,8 @@ export class OpenAIRuntime {
               }
             }
           }
+          // Flush remaining decoder buffer
+          buffer += decoder.decode();
         } catch (streamError) {
           if ((streamError as Error).name === 'AbortError') throw streamError;
           if (content) return content; // Return partial content
