@@ -27,7 +27,6 @@ import {
   loadRulePacks,
   removeRulePack,
   saveRulePacks,
-  validateRulePack,
   type RuleDef,
   type RulePack,
 } from './core/rule-packs';

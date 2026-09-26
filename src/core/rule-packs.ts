@@ -147,13 +147,38 @@ function defaultStorage(): StorageBackend {
 
 export async function loadRulePacks(storage = defaultStorage()): Promise<RulePack[]> {
   const raw = await storage.getValue(STORAGE_KEY, []);
-  const userPacks = Array.isArray(raw) ? (raw as RulePack[]) : [];
-  return [BUILT_IN_PACK, ...userPacks.filter((pack) => pack.id !== BUILT_IN_PACK.id)];
+  const savedPacks = Array.isArray(raw) ? (raw as RulePack[]) : [];
+  const userPacks = savedPacks.filter((pack) => pack.id !== BUILT_IN_PACK.id);
+
+  // Merge saved built-in overrides (enabled flags) into BUILT_IN_PACK
+  const savedBuiltin = savedPacks.find((pack) => pack.id === BUILT_IN_PACK.id);
+  let builtin = BUILT_IN_PACK;
+  if (savedBuiltin) {
+    builtin = {
+      ...BUILT_IN_PACK,
+      enabled: savedBuiltin.enabled,
+      rules: BUILT_IN_PACK.rules.map((rule) => {
+        const savedRule = savedBuiltin.rules?.find((r) => r.id === rule.id);
+        return savedRule ? { ...rule, enabled: savedRule.enabled } : rule;
+      }),
+    };
+  }
+
+  return [builtin, ...userPacks];
 }
 
 export async function saveRulePacks(packs: RulePack[], storage = defaultStorage()): Promise<void> {
-  const userPacks = packs.filter((pack) => !pack.builtIn);
-  await storage.setValue(STORAGE_KEY, userPacks);
+  // Save all packs including built-in (to persist enable/disable toggles)
+  // On load, built-in rules are restored from BUILT_IN_PACK with overrides applied
+  const toSave = packs.map((pack) => {
+    if (!pack.builtIn) return pack;
+    // Only persist enabled flags for built-in pack
+    return {
+      ...pack,
+      rules: pack.rules.map((rule) => ({ id: rule.id, enabled: rule.enabled }) as RuleDef),
+    };
+  });
+  await storage.setValue(STORAGE_KEY, toSave);
 }
 
 export async function addRulePack(pack: RulePack, storage = defaultStorage()): Promise<RulePack[]> {
