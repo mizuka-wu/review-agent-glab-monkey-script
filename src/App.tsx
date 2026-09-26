@@ -298,7 +298,7 @@ export default function App({ page, adapter }: AppProps) {
     try {
       if (mergeRequestRef && mrContext) {
         // Use agent loop with GitLab + MCP tools when on an MR page
-        const gitlabExecutor = new GitLabToolExecutor(adapter, mergeRequestRef, mrContext.diffRefs.headSha);
+        const gitlabExecutor = new GitLabToolExecutor(adapter, mrContext.diffRefs.headSha);
         let compositeExecutor = new CompositeToolExecutor(gitlabExecutor);
 
         // Initialize MCP client if enabled

@@ -30,7 +30,7 @@ const severityOrder: Record<Finding['severity'], number> = {
 function dedupe(findings: Finding[]) {
   const seen = new Set<string>();
   return findings.filter((finding) => {
-    const key = `${finding.path}:${finding.line}:${finding.category}:${finding.title.toLowerCase()}`;
+    const key = `${finding.path}:${finding.line}:${finding.category}:${finding.title.toLowerCase()}:${finding.existingCode.slice(0, 50)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

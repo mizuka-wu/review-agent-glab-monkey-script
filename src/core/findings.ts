@@ -145,7 +145,13 @@ export function parseModelFindings(content: string, files: FileDiff[]) {
   const json =
     firstArray >= 0 && lastArray > firstArray
       ? withoutFence.slice(firstArray, lastArray + 1)
-      : withoutFence.slice(firstObject, lastObject + 1);
+      : firstObject >= 0 && lastObject > firstObject
+        ? withoutFence.slice(firstObject, lastObject + 1)
+        : withoutFence;
+
+  if (!json.trim()) {
+    throw new Error('模型返回内容中未找到 JSON Finding 数据');
+  }
 
   try {
     return normalizeFindings(JSON.parse(json), files);

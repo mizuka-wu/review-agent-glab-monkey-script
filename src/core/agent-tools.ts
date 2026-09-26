@@ -1,5 +1,4 @@
 import type { GitLabAdapter } from './gitlab-adapter';
-import type { MergeRequestRef } from './types';
 
 // --- Tool schema types ---
 
@@ -85,7 +84,6 @@ export const GITLAB_TOOLS: ToolDefinition[] = [
 export class GitLabToolExecutor {
   constructor(
     private readonly adapter: GitLabAdapter,
-    private readonly mrRef: MergeRequestRef,
     private readonly headSha: string,
   ) {}
 

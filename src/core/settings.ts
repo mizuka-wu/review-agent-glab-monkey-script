@@ -110,7 +110,13 @@ export async function loadSettings(): Promise<RuntimeSettings> {
     const stored = gmStorage()
       ? await gmStorage()?.getValue(STORAGE_KEY, {})
       : JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
-    return deobfuscateSettings({ ...defaultSettings, ...(stored as Partial<RuntimeSettings>) });
+    const partial = stored as Partial<RuntimeSettings>;
+    return deobfuscateSettings({
+      ...defaultSettings,
+      ...partial,
+      mcp: { ...defaultSettings.mcp, ...(partial.mcp ?? {}) },
+      auth: { ...defaultSettings.auth, ...(partial.auth ?? {}) },
+    });
   } catch {
     return defaultSettings;
   }

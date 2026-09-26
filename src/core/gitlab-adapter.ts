@@ -223,11 +223,15 @@ export class GitLabAdapter {
           this.request<unknown[]>(
             `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=${p}`,
             { signal: options.signal },
-          ).catch(() => []),
+          ).catch(() => null),
         ),
       );
 
       for (const result of batchResults) {
+        if (result === null) {
+          // Page failed but don't stop — try next batch
+          continue;
+        }
         if (result.length === 0) {
           hasMore = false;
           break;

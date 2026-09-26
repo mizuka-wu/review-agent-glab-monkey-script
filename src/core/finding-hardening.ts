@@ -42,10 +42,10 @@ export function checkEvidenceSufficiency(finding: Finding, files: FileDiff[]): E
     score -= 0.15;
   }
 
-  // 4. For bugs and security, require more evidence
-  if ((finding.category === 'bug' || finding.category === 'security') && finding.evidence.length < 1) {
+  // 4. For bugs and security, require more evidence (only if not already penalized for missing evidence)
+  if ((finding.category === 'bug' || finding.category === 'security') && finding.evidence.length < 1 && score >= 0.7) {
     issues.push(`${finding.category} 类问题需要至少一条证据`);
-    score -= 0.25;
+    score -= 0.15;
   }
 
   // 5. Check if the finding's file is in the diff

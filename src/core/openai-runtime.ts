@@ -171,6 +171,7 @@ export class OpenAIRuntime {
         }
 
         if (!content) throw new Error('模型服务没有返回文本内容');
+        // Stream responses don't include usage in chunks; skip recording
         return content;
       }
 
@@ -259,7 +260,7 @@ export class OpenAIRuntime {
   }
 
   async testConnection(signal?: AbortSignal) {
-    const response = await fetch(endpoint(this.settings.modelBaseUrl, '/models'), {
+    const response = await fetch(this.buildUrl('/models'), {
       headers: this.headers(),
       signal,
     });
@@ -287,7 +288,7 @@ export class OpenAIRuntime {
       ...messages,
     ];
 
-    const response = await fetch(endpoint(this.settings.modelBaseUrl, '/chat/completions'), {
+    const response = await fetch(this.buildUrl('/chat/completions'), {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
