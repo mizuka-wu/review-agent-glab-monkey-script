@@ -795,7 +795,8 @@ export default function App({ page, adapter }: AppProps) {
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">
-            <h3 className="ra-section-title">模型提供商</h3>
+            <h3 className="ra-section-title">模型配置</h3>
+            <p className="ra-section-copy">选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
             <div className="ra-provider-tabs">
               {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
                 <button
@@ -815,39 +816,79 @@ export default function App({ page, adapter }: AppProps) {
               ))}
             </div>
             <div className="ra-settings-grid">
-              <div className="ra-field"><label htmlFor="model-url">Base URL</label><input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} /></div>
-              <div className="ra-field"><label htmlFor="model-name">模型</label><input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} placeholder={providerPresets[settings.provider].defaultModel} /></div>
-              <div className="ra-field"><label htmlFor="api-key">API Key</label><input id="api-key" type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} autoComplete="off" placeholder={providerPresets[settings.provider].placeholderKey} /></div>
-              <div className="ra-field"><label htmlFor="gitlab-token">GitLab PAT（可选）</label><input id="gitlab-token" type="password" value={settings.gitlabToken} onChange={(event) => setSettings({ ...settings, gitlabToken: event.target.value })} autoComplete="off" /></div>
-              <div className="ra-field"><label htmlFor="effort">审查强度</label><select id="effort" value={settings.effort} onChange={(event) => setSettings({ ...settings, effort: event.target.value as RuntimeSettings['effort'] })}><option value="fast">fast</option><option value="balanced">balanced</option><option value="thorough">thorough</option></select></div>
-              <div className="ra-field"><label htmlFor="language">输出语言</label><select id="language" value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as RuntimeSettings['language'] })}><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></div>
+              <div className="ra-field">
+                <label htmlFor="api-key">API Key <span style={{ color: '#a52a22', fontWeight: 400 }}>唯一必填</span></label>
+                <input id="api-key" type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} autoComplete="off" placeholder={providerPresets[settings.provider].placeholderKey} />
+              </div>
+              <div className="ra-field">
+                <label htmlFor="model-url">Base URL</label>
+                <input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} />
+                <span className="ra-field-hint">自部署/企业网关才需要改</span>
+              </div>
+              <div className="ra-field">
+                <label htmlFor="model-name">模型名称</label>
+                <input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} placeholder={providerPresets[settings.provider].defaultModel} />
+                <span className="ra-field-hint">留空使用默认模型</span>
+              </div>
             </div>
 
-            <h4 style={{ margin: '12px 0 6px', fontSize: 11, color: '#4d5b70' }}>认证模式</h4>
+            <h3 className="ra-section-title" style={{ marginTop: 20 }}>输出设置</h3>
             <div className="ra-settings-grid">
               <div className="ra-field">
-                <label htmlFor="auth-mode">Auth Mode</label>
-                <select id="auth-mode" value={settings.auth?.mode ?? 'bearer'} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, mode: e.target.value as RuntimeSettings['auth']['mode'] } })}>
-                  <option value="bearer">Bearer Token</option>
-                  <option value="api-key-header">API Key Header</option>
-                  <option value="query-param">Query Parameter</option>
-                  <option value="custom">自定义 Header</option>
+                <label htmlFor="effort">审查强度</label>
+                <select id="effort" value={settings.effort} onChange={(event) => setSettings({ ...settings, effort: event.target.value as RuntimeSettings['effort'] })}>
+                  <option value="fast">快速（仅高置信度）</option>
+                  <option value="balanced">均衡（推荐）</option>
+                  <option value="thorough">全面（更多问题）</option>
                 </select>
               </div>
-              {(settings.auth?.mode === 'api-key-header' || settings.auth?.mode === 'custom') && (
-                <div className="ra-field">
-                  <label htmlFor="auth-header-name">Header 名称</label>
-                  <input id="auth-header-name" value={settings.auth?.apiKeyHeader ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyHeader: e.target.value } })} placeholder="api-key" />
-                </div>
-              )}
-              {settings.auth?.mode === 'query-param' && (
-                <div className="ra-field">
-                  <label htmlFor="auth-param-name">Query 参数名</label>
-                  <input id="auth-param-name" value={settings.auth?.apiKeyQueryParam ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyQueryParam: e.target.value } })} placeholder="key" />
-                </div>
-              )}
+              <div className="ra-field">
+                <label htmlFor="language">输出语言</label>
+                <select id="language" value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as RuntimeSettings['language'] })}>
+                  <option value="zh-CN">简体中文</option>
+                  <option value="en-US">English</option>
+                </select>
+              </div>
             </div>
-            <div className="ra-modal-actions settings-actions"><button type="button" className="ra-btn danger" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button><button type="button" className="ra-btn" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button><button type="button" className="ra-btn primary" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button></div>
+
+            <details className="ra-advanced-section">
+              <summary>高级设置（一般不需要改）</summary>
+              <div className="ra-settings-grid" style={{ marginTop: 10 }}>
+                <div className="ra-field">
+                  <label htmlFor="gitlab-token">GitLab PAT</label>
+                  <input id="gitlab-token" type="password" value={settings.gitlabToken} onChange={(event) => setSettings({ ...settings, gitlabToken: event.target.value })} autoComplete="off" placeholder="留空使用 Cookie 认证" />
+                  <span className="ra-field-hint">留空即可，脚本自动使用页面 Cookie + CSRF</span>
+                </div>
+                <div className="ra-field">
+                  <label htmlFor="auth-mode">API 认证方式</label>
+                  <select id="auth-mode" value={settings.auth?.mode ?? 'bearer'} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, mode: e.target.value as RuntimeSettings['auth']['mode'] } })}>
+                    <option value="bearer">Bearer Token（默认）</option>
+                    <option value="api-key-header">API Key Header</option>
+                    <option value="query-param">Query Parameter</option>
+                    <option value="custom">自定义 Header</option>
+                  </select>
+                  <span className="ra-field-hint">企业网关才需要改</span>
+                </div>
+                {(settings.auth?.mode === 'api-key-header' || settings.auth?.mode === 'custom') && (
+                  <div className="ra-field">
+                    <label htmlFor="auth-header-name">Header 名称</label>
+                    <input id="auth-header-name" value={settings.auth?.apiKeyHeader ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyHeader: e.target.value } })} placeholder="api-key" />
+                  </div>
+                )}
+                {settings.auth?.mode === 'query-param' && (
+                  <div className="ra-field">
+                    <label htmlFor="auth-param-name">Query 参数名</label>
+                    <input id="auth-param-name" value={settings.auth?.apiKeyQueryParam ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyQueryParam: e.target.value } })} placeholder="key" />
+                  </div>
+                )}
+              </div>
+            </details>
+
+            <div className="ra-modal-actions settings-actions">
+              <button type="button" className="ra-btn danger" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
+              <button type="button" className="ra-btn" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
+              <button type="button" className="ra-btn primary" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
+            </div>
             <div className="ra-connection-list"><div className="ra-connection"><div className="ra-connection-title"><strong>GitLab API</strong><span className={`ra-badge ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
 
             <h3 className="ra-section-title" style={{ marginTop: 20 }}>Token 用量统计</h3>

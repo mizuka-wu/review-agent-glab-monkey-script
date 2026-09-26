@@ -667,6 +667,25 @@ select:focus-visible {
   font-size: 11px;
 }
 .ra-field textarea { min-height: 150px; resize: vertical; line-height: 1.55; }
+.ra-field-hint { color: #8a95a5; font-size: 9px; margin-top: -2px; }
+.ra-advanced-section {
+  margin-top: 16px;
+  border: 1px solid #e3e8ef;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ra-advanced-section summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5a687c;
+  background: #f7f9fc;
+  user-select: none;
+}
+.ra-advanced-section summary:hover { background: #eef2f7; }
+.ra-advanced-section[open] summary { border-bottom: 1px solid #e3e8ef; }
+.ra-advanced-section > div { padding: 0 12px 12px; }
 .ra-modal-actions {
   display: flex;
   justify-content: flex-end;
