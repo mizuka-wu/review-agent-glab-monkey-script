@@ -14,7 +14,7 @@ function escapeHtml(text: string): string {
 function inlineMarkdown(text: string): string {
   return text
     // Inline code first
-    .replace(/`([^`]+)`/g, '<code class="ra-md-code">$1</code>')
+    .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted text-destructive font-mono text-[11px]">$1</code>')
     // Bold
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     // Italic
@@ -43,7 +43,7 @@ function renderMarkdown(source: string): string {
     if (line.trimStart().startsWith('```')) {
       if (inCodeBlock) {
         output.push(
-          `<pre class="ra-md-pre"><code class="ra-md-code-block${codeBlockLang ? ` language-${escapeHtml(codeBlockLang)}` : ''}">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
+          `<pre class="m-0 mb-1.5re"><code class="px-1.5 py-0.5 rounded bg-muted text-destructive font-mono text-[11px]-block${codeBlockLang ? ` language-${escapeHtml(codeBlockLang)}` : ''}">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
         );
         codeBlockContent = [];
         codeBlockLang = '';
@@ -66,7 +66,7 @@ function renderMarkdown(source: string): string {
     if (headerMatch) {
       closeList();
       const level = headerMatch[1].length;
-      output.push(`<h${level} class="ra-md-h">${inlineMarkdown(escapeHtml(headerMatch[2]))}</h${level}>`);
+      output.push(`<h${level} class="my-2 text-sm font-bold first:mt-0">${inlineMarkdown(escapeHtml(headerMatch[2]))}</h${level}>`);
       continue;
     }
 
@@ -74,7 +74,7 @@ function renderMarkdown(source: string): string {
     const listMatch = line.match(/^[-*+]\s+(.+)/);
     if (listMatch) {
       if (!inList) {
-        output.push('<ul class="ra-md-list">');
+        output.push('<ul class="my-1 pl-4">');
         inList = true;
       }
       output.push(`<li>${inlineMarkdown(escapeHtml(listMatch[1]))}</li>`);
@@ -85,7 +85,7 @@ function renderMarkdown(source: string): string {
     const olMatch = line.match(/^\d+\.\s+(.+)/);
     if (olMatch) {
       if (!inList) {
-        output.push('<ul class="ra-md-list">');
+        output.push('<ul class="my-1 pl-4">');
         inList = true;
       }
       output.push(`<li>${inlineMarkdown(escapeHtml(olMatch[1]))}</li>`);
@@ -100,7 +100,7 @@ function renderMarkdown(source: string): string {
 
     // Regular paragraph
     closeList();
-    output.push(`<p class="ra-md-p">${inlineMarkdown(escapeHtml(line))}</p>`);
+    output.push(`<p class="m-0 mb-1.5">${inlineMarkdown(escapeHtml(line))}</p>`);
   }
 
   closeList();
@@ -108,7 +108,7 @@ function renderMarkdown(source: string): string {
   // Unclosed code block
   if (inCodeBlock && codeBlockContent.length > 0) {
     output.push(
-      `<pre class="ra-md-pre"><code class="ra-md-code-block">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
+      `<pre class="m-0 mb-1.5re"><code class="px-1.5 py-0.5 rounded bg-muted text-destructive font-mono text-[11px]-block">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
     );
   }
 
@@ -123,7 +123,7 @@ interface MarkdownProps {
 export const Markdown = memo(function Markdown({ content, className }: MarkdownProps) {
   return (
     <div
-      className={`ra-markdown${className ? ` ${className}` : ''}`}
+      className={`leading-relaxed text-xs${className ? ` ${className}` : ''}`}
       dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
     />
   );
