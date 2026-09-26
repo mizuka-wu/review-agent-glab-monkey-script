@@ -1,6 +1,7 @@
 #!/bin/bash
 # GitLab 测试容器管理
-# 用法: ./scripts/gitlab.sh
+# 用法：./scripts/gitlab.sh
+# 默认 root 账号密码：5iveRage
 
 COMPOSE_FILE="docker-compose.gitlab.yml"
 URL="http://127.0.0.1:8929"
@@ -16,6 +17,7 @@ do_start() {
   code=$(get_status)
   if [ "$code" = "200" ]; then
     echo "✅ GitLab 已在运行 → $URL"
+    echo "   默认 root 密码：$PASS"
     return 0
   fi
   docker compose -f "$COMPOSE_FILE" up -d 2>&1 | tail -3
@@ -25,15 +27,16 @@ do_start() {
     if [ "$code" = "200" ]; then
       echo ""
       echo "✅ GitLab 已就绪"
-      echo "   地址: $URL"
-      echo "   账号: root  （密码选 8 获取）"
+      echo "   地址：$URL"
+      echo "   账号：root"
+      echo "   默认密码：$PASS"
       return 0
     fi
     printf "\r  ⏳ %ds (HTTP %s)" $((i*5)) "$code"
     sleep 5
   done
   echo ""
-  echo "❌ 超时，查看日志: $0 → 4) 查看日志"
+  echo "❌ 超时，查看日志：$0 → 4) 查看日志"
   return 1
 }
 
@@ -62,6 +65,8 @@ do_project() {
 do_reset_password() {
   docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rake "gitlab:password:reset[root]" <<< "$PASS
 $PASS" 2>&1 | tail -3
+  echo ""
+  echo "✅ 密码已重置为：$PASS"
 }
 
 do_get_password() {
@@ -70,15 +75,15 @@ do_get_password() {
   local pass
   pass=$(docker compose -f "$COMPOSE_FILE" exec -T gitlab cat /etc/gitlab/initial_root_password 2>/dev/null | sed -n 's/.*Password: *\([^ ]*\).*/\1/p' | tr -d '\r\n')
   if [ -n "$pass" ]; then
-    echo "root 密码: $pass"
-    echo "（如果无效，请用选项 9 重置）"
+    echo "root 密码：$pass"
+    echo "（如果无效，请用选项 9 重置为默认密码：$PASS）"
     return 0
   fi
   # 文件不存在或已过期，直接重置
   echo "初始密码不可用，正在重置为 $PASS ..."
   docker compose -f "$COMPOSE_FILE" exec -T gitlab gitlab-rake "gitlab:password:reset[root]" <<< "$PASS
 $PASS" 2>&1 | tail -2
-  echo "root 密码: $PASS"
+  echo "✅ root 密码已重置为：$PASS"
 }
 
 while true; do
