@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot, Check, Download, ExternalLink, FileText, LoaderCircle, MessageSquare, Package,
-  Play, Plus, RefreshCw, Save, Send, Settings, Sparkles, Square, Trash2, Upload, X,
+  Play, Plus, RefreshCw, Send, Settings, Sparkles, Square, Trash2, Upload, X,
 } from 'lucide-react';
+import { Button } from './components/ui/button';
 import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { Markdown } from './components/Markdown';
@@ -743,105 +744,229 @@ export default function App({ page, adapter }: AppProps) {
 
   return (
     <div ref={hostRef} className="ra-host">
-      {!panelOpen && <button type="button" className="ra-host-toggle" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"><Bot size={20} /></button>}
-      <aside ref={panelRef} className={`ra-agent-panel ra-floating${panelOpen ? '' : ' closed'}`} aria-label="Review Agent">
-        <div className="ra-panel-header" onMouseDown={handleDragStart}>
-          <div className="ra-panel-title">
-            <div>
-              <h2><Bot size={17} /> Review Agent</h2>
-              <p>{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
-            </div>
-            <button type="button" className="ra-icon-btn" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"><X size={16} /></button>
+      {!panelOpen && (
+        <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
+          className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg cursor-pointer border-0">
+          <Bot size={20} />
+        </button>
+      )}
+      <aside ref={panelRef} aria-label="Review Agent"
+        className={`fixed z-[2147483000] top-[72px] right-4 bottom-4 w-[min(430px,calc(100vw-32px))] rounded-lg border border-border bg-card shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`}
+        style={{ resize: 'horizontal', minWidth: 320 }}>
+        {/* Header */}
+        <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 bg-panel-header text-panel-header-foreground cursor-grab active:cursor-grabbing select-none">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-semibold m-0"><Bot size={17} /> Review Agent</h2>
+            <p className="text-xs opacity-70 mt-1 truncate">{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
           </div>
+          <button type="button" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"
+            className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 bg-transparent cursor-pointer">
+            <X size={16} />
+          </button>
         </div>
 
-        <div className="ra-panel-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={activeTab === 'chat'} className={`ra-panel-tab${activeTab === 'chat' ? ' active' : ''}`} onClick={() => setActiveTab('chat')}><MessageSquare size={14} />提问</button>
-          <button type="button" role="tab" aria-selected={activeTab === 'review'} className={`ra-panel-tab${activeTab === 'review' ? ' active' : ''}`} onClick={() => setActiveTab('review')}><Sparkles size={14} />Review{findings.length > 0 && <span className="ra-count error">{findings.length}</span>}</button>
-          <button type="button" role="tab" aria-selected={activeTab === 'settings'} className={`ra-panel-tab${activeTab === 'settings' ? ' active' : ''}`} onClick={() => setActiveTab('settings')}><Settings size={14} />设置</button>
+        {/* Tabs */}
+        <div role="tablist" className="grid grid-cols-3 bg-panel-header border-t border-white/10">
+          {([
+            { id: 'chat' as const, label: '提问', icon: MessageSquare },
+            { id: 'review' as const, label: 'Review', icon: Sparkles, badge: findings.length },
+            { id: 'settings' as const, label: '设置', icon: Settings },
+          ]).map(({ id, label, icon: Icon, badge }) => (
+            <button key={id} type="button" role="tab" aria-selected={activeTab === id}
+              onClick={() => setActiveTab(id)}
+              className={`flex items-center justify-center gap-1.5 min-h-[42px] text-xs border-0 border-b-2 cursor-pointer transition-colors ${
+                activeTab === id
+                  ? 'text-white border-blue-400 bg-white/5 font-semibold'
+                  : 'text-white/60 border-transparent hover:text-white/80'
+              } bg-transparent`}>
+              <Icon size={14} />{label}
+              {badge ? <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{badge}</span> : null}
+            </button>
+          ))}
         </div>
 
-        <div className="ra-panel-body">
-          {loadError && <div className="ra-alert error" role="alert">{loadError}<button type="button" className="ra-btn" onClick={() => location.reload()}><RefreshCw size={13} />重试</button></div>}
-          {!isOnline && <div className="ra-alert" role="alert" style={{ color: '#8c2d26', background: '#fde8e5', border: '1px solid #efb9b3' }}>网络已断开，部分功能可能不可用。</div>}
-          {activeTab === 'chat' && <div className="ra-chat">
-            <div className="ra-messages" aria-live="polite">
-              {messages.length === 0 && <div className="ra-empty-card"><h3>询问真实代码</h3><p>在页面中选中 Diff 代码，或直接输入关于当前 MR 的问题。</p><div className="ra-suggestions">{suggestions.map((item) => <button type="button" className="ra-suggestion" key={item} onClick={() => setDraft(item)}>{item}</button>)}</div></div>}
-              {messages.map((message) => <div className={`ra-message ${message.role}${message.error ? ' error' : ''}`} key={message.id}><div className="ra-message-label">{message.role === 'user' ? '你' : 'Review Agent'}</div>{message.attachment && <div className="ra-attachment"><strong>{message.attachment.filePath}</strong><span>L{message.attachment.startLine}-{message.attachment.endLine}</span></div>}<div className="ra-message-body">{message.role === 'assistant' && !message.error ? <Markdown content={message.content} /> : message.content}</div></div>)}
-              {responding && <div className="ra-message"><div className="ra-message-label">Review Agent</div><div className="ra-message-body"><LoaderCircle size={14} /> 正在调用模型服务…{toolEvents.length > 0 && <div className="ra-tool-events">{toolEvents.map((event, idx) => <div key={idx} className={`ra-tool-event ${event.type}`}><span className="ra-tool-event-icon">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>{event.message}</div>)}</div>}</div></div>}
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto bg-card">
+          {loadError && (
+            <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert">
+              {loadError}
+              <Button variant="outline" size="xs" onClick={() => location.reload()}><RefreshCw size={13} />重试</Button>
             </div>
-            <form className="ra-composer" onSubmit={sendChat}>
-              {attachment && <div className="ra-context-chip"><span>{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span><button type="button" className="ra-icon-btn on-light" onClick={() => setAttachment(undefined)} aria-label="移除代码附件"><X size={13} /></button></div>}
-              <div className="ra-composer-box"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="询问当前 MR 或选中代码…" aria-label="提问内容" /><div className="ra-composer-actions"><span className="ra-badge neutral">{runtimeConfigured ? settings.model : '规则模式'}</span><button type="submit" className="ra-btn primary" disabled={!draft.trim() || responding}><Send size={14} />发送</button></div></div>
-            </form>
-          </div>}
-
-          {activeTab === 'review' && <div className="ra-review-view">
-            <h3 className="ra-section-title">Review 范围</h3>
-            <p className="ra-section-copy">{diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}</p>
-            {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
-              <div className="ra-empty-card">
-                <h3>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
-                <p>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
-                <div className="ra-empty-actions">
-                  <button type="button" className="ra-btn primary" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</button>
-                  {savedSession && <button type="button" className="ra-btn" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</button>}
-                </div>
-                {savedSession && <p className="ra-session-meta">上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
+          )}
+          {!isOnline && (
+            <div className="m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert">
+              网络已断开，部分功能可能不可用。
+            </div>
+          )}
+          {activeTab === 'chat' && (
+            <div className="flex flex-col h-full">
+              <div className="flex-1 overflow-y-auto p-4" aria-live="polite">
+                {messages.length === 0 && (
+                  <div className="p-3 rounded-lg bg-muted border border-border">
+                    <h3 className="text-sm font-semibold m-0 mb-1">询问真实代码</h3>
+                    <p className="text-xs text-muted-foreground m-0">在页面中选中 Diff 代码，或直接输入关于当前 MR 的问题。</p>
+                    <div className="grid gap-1.5 mt-3">
+                      {suggestions.map((item) => (
+                        <button key={item} type="button" onClick={() => setDraft(item)}
+                          className="p-2 text-left text-xs rounded-md bg-card border border-border hover:bg-accent cursor-pointer">
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {messages.map((message) => (
+                  <div key={message.id} className="mb-3.5">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">{message.role === 'user' ? '你' : 'Review Agent'}</div>
+                    {message.attachment && (
+                      <div className="grid gap-1 mb-1.5 p-2 rounded bg-info/10 border-l-[3px] border-info text-info text-[10px]">
+                        <strong>{message.attachment.filePath}</strong>
+                        <span>L{message.attachment.startLine}-{message.attachment.endLine}</span>
+                      </div>
+                    )}
+                    <div className={`p-2.5 rounded-lg text-xs leading-relaxed ${
+                      message.error
+                        ? 'bg-destructive/10 text-destructive border border-destructive/20'
+                        : message.role === 'user'
+                          ? 'bg-info/10 border border-info/20'
+                          : 'bg-muted border border-border'
+                    }`}>
+                      {message.role === 'assistant' && !message.error ? <Markdown content={message.content} /> : message.content}
+                    </div>
+                  </div>
+                ))}
+                {responding && (
+                  <div className="mb-3.5">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Review Agent</div>
+                    <div className="p-2.5 rounded-lg bg-muted border border-border text-xs">
+                      <LoaderCircle size={14} className="inline animate-spin" /> 正在调用模型服务…
+                      {toolEvents.length > 0 && (
+                        <div className="grid gap-1 mt-2 pt-2 border-t border-border">
+                          {toolEvents.map((event, idx) => (
+                            <div key={idx} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] ${
+                              event.type === 'tool_call' ? 'bg-info/10 text-info' :
+                              event.type === 'tool_result' ? 'bg-success/10 text-success' :
+                              event.type === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground'
+                            }`}>
+                              <span className="w-3.5 text-center font-bold">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>
+                              {event.message}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-            {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && <div className="ra-progress-card"><div className="ra-progress-head"><strong>{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong><span className="ra-badge info">进行中</span></div><div className="ra-progress-track"><div className="ra-progress-fill" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} /></div><button type="button" className="ra-btn danger" onClick={cancelReview}><Square size={13} />取消</button></div>}
-            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div>
+              <form className="p-3 pt-0 bg-card border-t border-border" onSubmit={sendChat}>
+                {attachment && (
+                  <div className="flex items-center justify-between gap-2 mb-2 p-1.5 rounded bg-info/10 border border-info/20 text-[10px] text-info">
+                    <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
+                    <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
+                  </div>
+                )}
+                <div className="rounded-lg border border-border overflow-hidden bg-card">
+                  <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="询问当前 MR 或选中代码…" aria-label="提问内容"
+                    className="w-full min-h-[82px] p-2.5 text-xs leading-relaxed bg-transparent border-0 outline-none resize-y text-foreground" />
+                  <div className="flex items-center justify-between gap-2 p-1.5 bg-muted border-t border-border">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">
+                      {runtimeConfigured ? settings.model : '规则模式'}
+                    </span>
+                    <Button type="submit" size="sm" disabled={!draft.trim() || responding}><Send size={14} />发送</Button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          )}
 
-              {/* Filter and sort controls */}
-              <div className="ra-filter-bar">
-                <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} aria-label="按严重度筛选">
-                  <option value="all">全部严重度</option>
-                  <option value="critical">严重</option>
-                  <option value="high">高</option>
-                  <option value="medium">中</option>
-                  <option value="low">低</option>
+          {activeTab === 'review' && (
+            <div className="p-4">
+              <h3 className="text-sm font-semibold text-foreground m-0 mb-1">Review 范围</h3>
+              <p className="text-xs text-muted-foreground m-0 mb-3">
+                {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
+              </p>
+              {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
+                <div className="p-3 rounded-lg bg-muted border border-border">
+                  <h3 className="text-sm font-semibold m-0 mb-1">{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
+                  <p className="text-xs text-muted-foreground m-0">{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
+                  <div className="flex flex-wrap gap-2 mt-2.5">
+                    <Button size="sm" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</Button>
+                    {savedSession && <Button variant="outline" size="sm" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</Button>}
+                  </div>
+                  {savedSession && <p className="text-[10px] text-muted-foreground mt-2">上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
+                </div>
+              )}
+              {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && (
+                <div className="p-3 rounded-lg bg-muted border border-border">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <strong className="text-xs">{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/10 text-info">进行中</span>
+                  </div>
+                  <div className="w-full h-[7px] rounded-full bg-border overflow-hidden">
+                    <div className="h-full bg-primary rounded-full transition-all" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} />
+                  </div>
+                  <Button variant="destructive" size="xs" className="mt-2.5" onClick={cancelReview}><Square size={13} />取消</Button>
+                </div>
+              )}
+            {reviewStatus === 'completed' && <>
+              <div className="grid grid-cols-4 gap-1.5 mb-3">
+                {([
+                  [findings.length, 'Findings'],
+                  [findings.filter((f) => f.severity === 'high' || f.severity === 'critical').length, 'High+'],
+                  [findings.filter((f) => f.status === 'published').length, '已发布'],
+                  [findings.filter((f) => f.status === 'ignored').length, '已忽略'],
+                ]).map(([val, label]) => (
+                  <div key={label as string} className="p-2 text-center rounded bg-muted border border-border">
+                    <strong className="block text-base text-foreground">{val}</strong>
+                    <span className="text-[9px] text-muted-foreground">{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-4 gap-1 mb-2.5">
+                <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} aria-label="按严重度筛选"
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  <option value="all">全部严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
                 </select>
-                <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} aria-label="按分类筛选">
-                  <option value="all">全部分类</option>
-                  <option value="bug">缺陷</option>
-                  <option value="security">安全</option>
-                  <option value="performance">性能</option>
-                  <option value="maintainability">可维护性</option>
-                  <option value="test">测试</option>
+                <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} aria-label="按分类筛选"
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  <option value="all">全部分类</option><option value="bug">缺陷</option><option value="security">安全</option><option value="performance">性能</option><option value="maintainability">可维护性</option><option value="test">测试</option>
                 </select>
-                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="按状态筛选">
-                  <option value="all">全部状态</option>
-                  <option value="draft">草稿</option>
-                  <option value="published">已发布</option>
-                  <option value="ignored">已忽略</option>
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="按状态筛选"
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  <option value="all">全部状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
                 </select>
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序方式">
-                  <option value="severity">按严重度</option>
-                  <option value="line">按行号</option>
-                  <option value="path">按文件</option>
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序方式"
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  <option value="severity">按严重度</option><option value="line">按行号</option><option value="path">按文件</option>
                 </select>
               </div>
               {filteredFindings.length !== findings.length && (
-                <p className="ra-section-copy">显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
+                <p className="text-xs text-muted-foreground m-0 mb-2">显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
               )}
 
-              {selectedFindings.size > 0 && (
-                <div className="ra-batch-bar">
-                  <span>已选 {selectedFindings.size} 个</span>
-                  <button type="button" className="ra-btn primary" disabled={!mrContext || batchPublishing} onClick={() => setShowBatchConfirm(true)}>
-                    <MessageSquare size={13} />{batchPublishing ? '发布中…' : `批量发布 ${selectedFindings.size} 条`}
-                  </button>
-                  <button type="button" className="ra-btn" onClick={clearSelection}>取消选择</button>
-                </div>
+              <div className="flex items-center gap-2 mb-2.5 p-2 rounded-md bg-muted border border-border text-xs">
+                {selectedFindings.size > 0 ? (
+                  <>
+                    <span className="font-semibold text-foreground">已选 {selectedFindings.size} 个</span>
+                    <Button size="xs" disabled={!mrContext || batchPublishing} onClick={() => setShowBatchConfirm(true)}>
+                      <MessageSquare size={13} />{batchPublishing ? '发布中…' : `批量发布 ${selectedFindings.size} 条`}
+                    </Button>
+                    <Button variant="outline" size="xs" onClick={clearSelection}>取消选择</Button>
+                  </>
+                ) : (
+                  <Button variant="outline" size="xs" onClick={selectAllPublishable}>全选可发布</Button>
+                )}
+              </div>
+              <div className="grid gap-2">{filteredFindings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} selected={selectedFindings.has(finding.id)} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onSelect={() => toggleFindingSelection(finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>
+              {filteredFindings.length > visibleFindingCount && (
+                <Button variant="outline" className="w-full mt-2" onClick={() => setVisibleFindingCount((c) => c + 20)}>
+                  显示更多（还有 {filteredFindings.length - visibleFindingCount} 个）
+                </Button>
               )}
-              {selectedFindings.size === 0 && (
-                <div className="ra-batch-bar">
-                  <button type="button" className="ra-btn" onClick={selectAllPublishable}>全选可发布</button>
-                </div>
-              )}
-              <div className="ra-finding-list">{filteredFindings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} selected={selectedFindings.has(finding.id)} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onSelect={() => toggleFindingSelection(finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>{filteredFindings.length > visibleFindingCount && <button type="button" className="ra-btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setVisibleFindingCount((count) => count + 20)}>显示更多（还有 {filteredFindings.length - visibleFindingCount} 个）</button>}</>}
-          </div>}
+            </>}
+            </div>
+          )}
 
           {activeTab === 'settings' && <div className="ra-settings-view">
             <h3 className="ra-section-title">模型配置</h3>
