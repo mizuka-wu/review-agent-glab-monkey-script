@@ -14,6 +14,8 @@ function makeSettings(overrides: Partial<RuntimeSettings> = {}): RuntimeSettings
     gitlabToken: '',
     effort: 'balanced',
     language: 'zh-CN',
+    mcp: { enabled: false, serverUrl: '' },
+    auth: { mode: 'bearer', customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
     ...overrides,
   };
 }

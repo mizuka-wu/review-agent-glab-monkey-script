@@ -4,6 +4,7 @@ import { ReviewEngine } from '../../src/core/review-engine';
 import type { Finding } from '../../src/core/types';
 
 const settings = {
+  provider: 'openai' as const,
   modelBaseUrl: 'https://model.test/v1',
   apiKey: 'key',
   model: 'model',
@@ -11,6 +12,7 @@ const settings = {
   effort: 'balanced' as const,
   language: 'zh-CN' as const,
   mcp: { enabled: false, serverUrl: '' },
+  auth: { mode: 'bearer' as const, customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
 };
 
 const file = normalizeFileDiff({

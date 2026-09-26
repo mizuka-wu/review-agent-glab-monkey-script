@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAIRuntime } from '../../src/core/openai-runtime';
 
 const settings = {
+  provider: 'openai' as const,
   modelBaseUrl: 'https://model.test/v1',
   apiKey: 'key',
   model: 'model',
   gitlabToken: '',
   effort: 'balanced' as const,
   language: 'zh-CN' as const,
+  mcp: { enabled: false, serverUrl: '' },
+  auth: { mode: 'bearer' as const, customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
 };
 
 afterEach(() => {
