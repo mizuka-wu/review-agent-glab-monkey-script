@@ -160,7 +160,7 @@ test.describe('mock mode', () => {
     await expect(page.getByText('src/payment.ts:L1-1')).toBeVisible();
 
     // Verify composer is available
-    await expect(page.getByLabel('Message input')).toBeVisible();
+    await expect(page.getByLabel('消息输入框')).toBeVisible();
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {

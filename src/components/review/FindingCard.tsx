@@ -74,7 +74,7 @@ export function FindingCard({
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
         <h3>{finding.title}</h3>
-        <code className="block mt-1 text-muted-foreground font-mono text-[9px]">{finding.path}:{finding.line}-{finding.endLine} · {finding.source}</code>
+        <code className="block mt-1 font-mono text-[9px]" style={{ color: '#6b778b' }}>{finding.path}:{finding.line}-{finding.endLine} · {finding.source}</code>
       </button>
       {expanded && (
         <div className="px-2.5 pb-2.5 border-t border-border">
@@ -90,7 +90,7 @@ export function FindingCard({
               </div>
             </div>
           ) : (
-            <p>{finding.content}</p>
+            <p style={{ color: '#2d3748' }}>{finding.content}</p>
           )}
           {!edit && finding.evidence.map((evidence) => (
             <div className="my-2.5 p-2 rounded bg-muted" key={`${evidence.path}-${evidence.lines}-${evidence.quote}`}>
@@ -107,14 +107,14 @@ export function FindingCard({
           <div className="flex flex-wrap gap-1.5 mt-2.5">
             {edit ? (
               <>
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setEdit(undefined)}><X size={14} />取消</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={() => setEdit(undefined)}><X size={14} />取消</button>
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={saveEdit} disabled={editInvalid}><Save size={14} />保存修改</button>
               </>
             ) : (
               <>
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={startEdit} disabled={finding.status === 'published'}><Edit3 size={14} />编辑</button>
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={onLocate}><Crosshair size={14} />定位</button>
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={onCopy}><Copy size={14} />复制评论</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={startEdit} disabled={finding.status === 'published'}><Edit3 size={14} />编辑</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={onLocate}><Crosshair size={14} />定位</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={onCopy}><Copy size={14} />复制评论</button>
                 <button
                   type="button"
                   className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer"

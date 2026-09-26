@@ -885,8 +885,8 @@ export default function App({ page, adapter }: AppProps) {
 
           {activeTab === 'review' && (
             <div className="p-4">
-              <h3 className="text-sm font-semibold text-foreground m-0 mb-1">Review 范围</h3>
-              <p className="text-xs text-muted-foreground m-0 mb-3">
+              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>Review 范围</h3>
+              <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>
                 {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
               </p>
               {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
@@ -973,8 +973,8 @@ export default function App({ page, adapter }: AppProps) {
           )}
 
           {activeTab === 'settings' && <div className="p-4">
-            <h3 className="text-sm font-semibold text-foreground m-0 mb-1">模型配置</h3>
-            <p className="text-xs text-muted-foreground m-0 mb-3">选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>模型配置</h3>
+            <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
             <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] bg-muted rounded-md">
               {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
                 <button
@@ -1001,16 +1001,16 @@ export default function App({ page, adapter }: AppProps) {
               <div className="grid gap-1.5">
                 <label htmlFor="model-url">Base URL</label>
                 <input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} />
-                <span className="text-[9px] text-muted-foreground opacity-70">自部署/企业网关才需要改</span>
+                <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>自部署/企业网关才需要改</span>
               </div>
               <div className="grid gap-1.5">
                 <label htmlFor="model-name">模型名称</label>
                 <input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} placeholder={providerPresets[settings.provider].defaultModel} />
-                <span className="text-[9px] text-muted-foreground opacity-70">留空使用默认模型</span>
+                <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>留空使用默认模型</span>
               </div>
             </div>
 
-            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>输出设置</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>输出设置</h3>
             <div className="grid gap-3">
               <div className="grid gap-1.5">
                 <label htmlFor="effort">审查强度</label>
@@ -1035,7 +1035,7 @@ export default function App({ page, adapter }: AppProps) {
                 <div className="grid gap-1.5">
                   <label htmlFor="gitlab-token">GitLab PAT</label>
                   <input id="gitlab-token" type="password" value={settings.gitlabToken} onChange={(event) => setSettings({ ...settings, gitlabToken: event.target.value })} autoComplete="off" placeholder="留空使用 Cookie 认证" />
-                  <span className="text-[9px] text-muted-foreground opacity-70">留空即可，脚本自动使用页面 Cookie + CSRF</span>
+                  <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>留空即可，脚本自动使用页面 Cookie + CSRF</span>
                 </div>
                 <div className="grid gap-1.5">
                   <label htmlFor="auth-mode">API 认证方式</label>
@@ -1045,7 +1045,7 @@ export default function App({ page, adapter }: AppProps) {
                     <option value="query-param">Query Parameter</option>
                     <option value="custom">自定义 Header</option>
                   </select>
-                  <span className="text-[9px] text-muted-foreground opacity-70">企业网关才需要改</span>
+                  <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>企业网关才需要改</span>
                 </div>
                 {(settings.auth?.mode === 'api-key-header' || settings.auth?.mode === 'custom') && (
                   <div className="grid gap-1.5">
@@ -1069,7 +1069,7 @@ export default function App({ page, adapter }: AppProps) {
             </div>
             <div className="grid gap-2"><div className="grid gap-2 p-3 rounded-lg bg-muted border border-border"><div className="flex items-center justify-between gap-2.5"><strong>GitLab API</strong><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
 
-            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>Token 用量统计</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>Token 用量统计</h3>
             {usageSummary ? (
               <div className="p-3 rounded-lg bg-muted border border-border mt-3">
                 <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
@@ -1085,11 +1085,11 @@ export default function App({ page, adapter }: AppProps) {
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" style={{ marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground m-0 mb-3">暂无用量记录。模型调用后会自动统计。</p>
+              <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>暂无用量记录。模型调用后会自动统计。</p>
             )}
 
-            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
-            <p className="text-xs text-muted-foreground m-0 mb-3">配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
+            <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
 
             <div className="grid gap-2 mb-3">
               {rulePacks.map((pack) => (
@@ -1194,8 +1194,8 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
 
-            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
-            <p className="text-xs text-muted-foreground m-0 mb-3">连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
+            <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
             <div className="grid gap-3">
               <div className="grid gap-1.5">
                 <label htmlFor="mcp-enabled">启用 MCP</label>
@@ -1225,7 +1225,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
 
-            <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>兼容性诊断</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>兼容性诊断</h3>
             {capabilities && <div className="grid gap-2">
               <div className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
                 <div className="flex items-center justify-between gap-2.5">
@@ -1269,7 +1269,7 @@ export default function App({ page, adapter }: AppProps) {
             </div>
 
             {sessionHistory.length > 0 && <>
-              <h3 className="text-sm font-semibold text-foreground m-0 mb-1" style={{ marginTop: 20 }}>Review 会话历史</h3>
+              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>Review 会话历史</h3>
               <div className="grid gap-2">
                 {sessionHistory.map((session) => (
                   <div key={session.id} className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
