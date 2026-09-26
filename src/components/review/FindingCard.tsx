@@ -20,8 +20,10 @@ const categoryLabel = { bug: '缺陷', security: '安全', performance: '性能'
 interface FindingCardProps {
   finding: Finding;
   expanded: boolean;
+  selected?: boolean;
   publishDisabled: boolean;
   onToggle: () => void;
+  onSelect?: () => void;
   onLocate: () => void;
   onCopy: () => void;
   onPublish: () => void;
@@ -32,8 +34,10 @@ interface FindingCardProps {
 export function FindingCard({
   finding,
   expanded,
+  selected,
   publishDisabled,
   onToggle,
+  onSelect,
   onLocate,
   onCopy,
   onPublish,
@@ -54,6 +58,11 @@ export function FindingCard({
     <article className={`ra-finding severity-${finding.severity} status-${finding.status}`}>
       <button type="button" className="ra-finding-summary" onClick={onToggle} aria-expanded={expanded}>
         <div className="ra-finding-meta">
+          {onSelect && (
+            <span className="ra-finding-checkbox" onClick={(e) => { e.stopPropagation(); onSelect(); }}>
+              <input type="checkbox" checked={selected ?? false} onChange={onSelect} aria-label="选择此 Finding" />
+            </span>
+          )}
           <span className={`ra-severity ${finding.severity}`}>{severityLabel[finding.severity]}</span>
           <span className="ra-badge neutral">{categoryLabel[finding.category]}</span>
           <span className="ra-confidence">置信度 {finding.confidence === 'high' ? '高' : finding.confidence === 'medium' ? '中' : '低'}</span>

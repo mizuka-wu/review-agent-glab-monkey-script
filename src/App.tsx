@@ -6,6 +6,7 @@ import {
 import { FindingCard } from './components/review/FindingCard';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { Markdown } from './components/Markdown';
+import { highlightFindingOnPage, clearHighlights, injectHighlightStyles } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { createModelRuntime, type ModelRuntime, type AgentMessage } from './core/model-runtime';
@@ -92,6 +93,9 @@ export default function App({ page, adapter }: AppProps) {
   const [visibleFindingCount, setVisibleFindingCount] = useState(20);
   const [diffLoadProgress, setDiffLoadProgress] = useState<{ loaded: number; hasMore: boolean } | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+  const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
+  const [batchPublishing, setBatchPublishing] = useState(false);
+  const [batchPublishTarget, setBatchPublishTarget] = useState<'review' | 'chat'>('review');
 
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
@@ -494,15 +498,68 @@ export default function App({ page, adapter }: AppProps) {
   const editingPack = rulePacks.find((pack) => pack.id === editingPackId);
 
   const locateFinding = (finding: Finding) => {
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-line-number], .line_holder'));
-    const row = rows.find((candidate) => {
-      const lineNumber = Number(candidate.dataset.lineNumber ?? candidate.dataset.line);
-      const path = candidate.closest('[data-file-path], .diff-file')?.textContent ?? '';
-      return lineNumber === finding.line && path.includes(finding.path);
-    }) ?? rows.find((candidate) => Number(candidate.dataset.lineNumber ?? candidate.dataset.line) === finding.line);
-    row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    row?.setAttribute('data-ra-highlight', 'true');
-    setToast(row ? `已定位到 ${finding.path}:${finding.line}` : '当前页面找不到对应 Diff 行');
+    injectHighlightStyles();
+    const highlighted = highlightFindingOnPage(finding);
+    setToast(highlighted.length > 0
+      ? `已高亮定位 ${finding.path}:${finding.line}（${highlighted.length} 行）`
+      : '当前页面找不到对应 Diff 行');
+  };
+
+  // --- Batch publish ---
+
+  const toggleFindingSelection = (id: string) => {
+    setSelectedFindings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllPublishable = () => {
+    const publishable = findings.filter((f) => f.status === 'draft' && f.anchor?.publishable !== false);
+    setSelectedFindings(new Set(publishable.map((f) => f.id)));
+  };
+
+  const clearSelection = () => setSelectedFindings(new Set());
+
+  const batchConfirmPublish = async () => {
+    const toPublish = findings.filter((f) => selectedFindings.has(f.id) && f.status === 'draft');
+    if (toPublish.length === 0 || !mergeRequestRef || !mrContext) return;
+
+    setBatchPublishing(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const finding of toPublish) {
+      try {
+        await adapter.createDiscussion(mergeRequestRef, {
+          body: finding.comment,
+          path: finding.path,
+          oldPath: finding.oldPath ?? finding.path,
+          newPath: finding.newPath ?? finding.path,
+          startLine: finding.line,
+          endLine: finding.endLine,
+          side: finding.side,
+          newFile: finding.newFile,
+          deletedFile: finding.deletedFile,
+          diffRefs: mrContext.diffRefs,
+        });
+        successCount += 1;
+      } catch {
+        failCount += 1;
+      }
+    }
+
+    const next = findings.map((f) =>
+      selectedFindings.has(f.id) && f.status === 'draft' ? { ...f, status: 'published' as const } : f,
+    );
+    setFindings(next);
+    persistFindings(next);
+    setSelectedFindings(new Set());
+    setBatchPublishTarget('review');
+    setToast(`批量发布完成：${successCount} 成功${failCount > 0 ? `，${failCount} 失败` : ''}`);
+    setBatchPublishing(false);
   };
 
   const confirmPublish = async () => {
@@ -585,7 +642,22 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             )}
             {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && <div className="ra-progress-card"><div className="ra-progress-head"><strong>{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong><span className="ra-badge info">进行中</span></div><div className="ra-progress-track"><div className="ra-progress-fill" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} /></div><button type="button" className="ra-btn danger" onClick={cancelReview}><Square size={13} />取消</button></div>}
-            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div><div className="ra-finding-list">{findings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>{findings.length > visibleFindingCount && <button type="button" className="ra-btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setVisibleFindingCount((count) => count + 20)}>显示更多（还有 {findings.length - visibleFindingCount} 个）</button>}</>}
+            {reviewStatus === 'completed' && <><div className="ra-result-summary"><div className="ra-summary-item"><strong>{findings.length}</strong><span>Findings</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.severity === 'high' || item.severity === 'critical').length}</strong><span>High+</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'published').length}</strong><span>已发布</span></div><div className="ra-summary-item"><strong>{findings.filter((item) => item.status === 'ignored').length}</strong><span>已忽略</span></div></div>
+              {selectedFindings.size > 0 && (
+                <div className="ra-batch-bar">
+                  <span>已选 {selectedFindings.size} 个</span>
+                  <button type="button" className="ra-btn primary" disabled={!mrContext || batchPublishing} onClick={() => setBatchPublishTarget('review')}>
+                    <MessageSquare size={13} />{batchPublishing ? '发布中…' : `批量发布 ${selectedFindings.size} 条`}
+                  </button>
+                  <button type="button" className="ra-btn" onClick={clearSelection}>取消选择</button>
+                </div>
+              )}
+              {selectedFindings.size === 0 && (
+                <div className="ra-batch-bar">
+                  <button type="button" className="ra-btn" onClick={selectAllPublishable}>全选可发布</button>
+                </div>
+              )}
+              <div className="ra-finding-list">{findings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} selected={selectedFindings.has(finding.id)} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onSelect={() => toggleFindingSelection(finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>{findings.length > visibleFindingCount && <button type="button" className="ra-btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setVisibleFindingCount((count) => count + 20)}>显示更多（还有 {findings.length - visibleFindingCount} 个）</button>}</>}
           </div>}
 
           {activeTab === 'settings' && <div className="ra-settings-view">
@@ -849,6 +921,42 @@ export default function App({ page, adapter }: AppProps) {
       {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('chat'); setPanelOpen(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
       {publishFinding && <div className="ra-modal-backdrop" role="presentation"><section className="ra-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="ra-modal-header"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="ra-icon-btn on-light" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="ra-modal-body"><div className="ra-publish-target"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="ra-publish-target"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="ra-field"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="ra-modal-actions"><button type="button" className="ra-btn" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="ra-btn primary" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
+
+      {batchPublishTarget === 'review' && selectedFindings.size > 0 && (
+        <div className="ra-modal-backdrop" role="presentation">
+          <section className="ra-modal" role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
+            <div className="ra-modal-header">
+              <div>
+                <h2 id="batch-publish-title">批量发布到 GitLab</h2>
+                <p>将选中的 {selectedFindings.size} 个 Finding 逐条创建行级 Discussion。</p>
+              </div>
+              <button type="button" className="ra-icon-btn on-light" onClick={() => setBatchPublishTarget('chat')} aria-label="关闭批量发布"><X size={16} /></button>
+            </div>
+            <div className="ra-modal-body">
+              <div className="ra-publish-target">
+                <span>{page.projectPath} · MR !{page.mergeRequestIid}</span>
+                <span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span>
+              </div>
+              <div className="ra-batch-preview">
+                {findings.filter((f) => selectedFindings.has(f.id)).slice(0, 10).map((f) => (
+                  <div key={f.id} className="ra-batch-preview-item">
+                    <span className={`ra-badge ${f.severity === 'high' || f.severity === 'critical' ? 'error' : f.severity === 'medium' ? 'warning' : 'neutral'}`}>{f.severity}</span>
+                    <span className="ra-batch-preview-title">{f.title}</span>
+                    <span className="ra-batch-preview-path">{f.path}:{f.line}</span>
+                  </div>
+                ))}
+                {selectedFindings.size > 10 && <p style={{ fontSize: 10, color: '#6b778b' }}>…还有 {selectedFindings.size - 10} 个</p>}
+              </div>
+            </div>
+            <div className="ra-modal-actions">
+              <button type="button" className="ra-btn" onClick={() => setBatchPublishTarget('chat')}>取消</button>
+              <button type="button" className="ra-btn primary" disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
+                <MessageSquare size={14} />{batchPublishing ? '发布中…' : `确认批量发布 ${selectedFindings.size} 条`}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {toast && <div className="ra-toast" role="status">{toast}</div>}
     </div>
   );
