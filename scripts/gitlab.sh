@@ -8,7 +8,7 @@ PASS="5iveRage"
 PAT="glpat-e2e-test-token-1234567890"
 
 get_status() {
-  curl -s -o /dev/null -w '%{http_code}' "$URL/users/sign_in" 2>/dev/null
+  curl -s --connect-timeout 3 -o /dev/null -w '%{http_code}' "$URL/users/sign_in" 2>/dev/null
 }
 
 do_start() {
@@ -115,7 +115,7 @@ while true; do
   echo "  10) 显示 E2E 命令"
   echo "  0) 退出"
   echo
-  read -p "选择 [0-9]: " c
+  read -p "选择 [0-10]: " c
   case $c in
     1) do_start; read -p "回车继续..." ;;
     2) docker compose -f "$COMPOSE_FILE" down; read -p "回车继续..." ;;
