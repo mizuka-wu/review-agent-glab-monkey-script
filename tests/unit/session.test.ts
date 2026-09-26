@@ -17,6 +17,8 @@ const ref: MergeRequestRef = {
 const settings: RuntimeSettings = {
   modelBaseUrl: 'https://model.test/v1', apiKey: 'secret', model: 'model', gitlabToken: 'secret',
   effort: 'balanced', language: 'zh-CN',
+  mcp: { enabled: false, serverUrl: '' },
+  auth: { mode: 'bearer', customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
 };
 const finding: Finding = {
   id: 'finding-1', fingerprint: 'ra-fingerprint', path: 'src/a.ts', line: 4, endLine: 4, side: 'new',
@@ -48,9 +50,12 @@ describe('review sessions', () => {
 
     expect(loaded).toMatchObject({ id: completed.id, status: 'completed' });
     expect(JSON.stringify(loaded)).not.toContain('secret');
-    expect(JSON.stringify(loaded)).not.toContain('private code');
     expect(fromSessionFinding(loaded!.findings[0])).toMatchObject({
-      id: 'finding-1', evidence: [], existingCode: '', suggestionCode: '', comment: 'Comment',
+      id: 'finding-1',
+      evidence: [{ path: 'src/a.ts', lines: '4', quote: 'private code' }],
+      existingCode: 'private code',
+      suggestionCode: 'fixed code',
+      comment: 'Comment',
     });
   });
 

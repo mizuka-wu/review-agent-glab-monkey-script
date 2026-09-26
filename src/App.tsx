@@ -285,6 +285,7 @@ export default function App({ page, adapter }: AppProps) {
     const history = [...messages, userMessage];
     setMessages(history);
     setDraft('');
+    setAttachment(undefined);
     if (!runtimeConfigured) {
       setMessages([...history, {
         id: `error-${Date.now()}`, role: 'assistant', error: true,
@@ -324,6 +325,7 @@ export default function App({ page, adapter }: AppProps) {
         ];
         const result = await runAgentLoop(runtime, compositeExecutor, agentMessages, {
           onEvent: (event) => setToolEvents((prev) => [...prev, event]),
+          language: settings.language,
         });
         setMessages((current) => [...current, {
           id: `assistant-${Date.now()}`,
@@ -383,7 +385,6 @@ export default function App({ page, adapter }: AppProps) {
 
     try {
       setReviewStatus('running');
-      setReviewStatus('normalizing');
       const result = await reviewEngine.run({
         files: scopedFiles,
         selection: selected,
@@ -627,6 +628,7 @@ export default function App({ page, adapter }: AppProps) {
     setBatchPublishing(true);
     let successCount = 0;
     let failCount = 0;
+    const succeededIds = new Set<string>();
 
     for (const finding of toPublish) {
       try {
@@ -643,13 +645,14 @@ export default function App({ page, adapter }: AppProps) {
           diffRefs: mrContext.diffRefs,
         });
         successCount += 1;
+        succeededIds.add(finding.id);
       } catch {
         failCount += 1;
       }
     }
 
     const next = findings.map((f) =>
-      selectedFindings.has(f.id) && f.status === 'draft' ? { ...f, status: 'published' as const } : f,
+      succeededIds.has(f.id) ? { ...f, status: 'published' as const } : f,
     );
     setFindings(next);
     persistFindings(next);

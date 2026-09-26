@@ -3,6 +3,7 @@ import type {
   FindingAnchor,
   FindingCategory,
   FindingConfidence,
+  FindingEvidence,
   FindingSeverity,
   FindingStatus,
   FullFileOmission,
@@ -29,6 +30,9 @@ export interface SessionFinding {
   confidence: FindingConfidence;
   title: string;
   content: string;
+  evidence: FindingEvidence[];
+  existingCode: string;
+  suggestionCode: string;
   comment: string;
   source: 'model' | 'rule';
   status: FindingStatus;
@@ -122,6 +126,9 @@ export function toSessionFinding(finding: Finding): SessionFinding {
     confidence: finding.confidence,
     title: finding.title,
     content: finding.content,
+    evidence: finding.evidence,
+    existingCode: finding.existingCode,
+    suggestionCode: finding.suggestionCode,
     comment: finding.comment,
     source: finding.source,
     status: finding.status,
@@ -133,9 +140,9 @@ export function toSessionFinding(finding: Finding): SessionFinding {
 export function fromSessionFinding(finding: SessionFinding): Finding {
   return {
     ...finding,
-    evidence: [],
-    existingCode: '',
-    suggestionCode: '',
+    evidence: finding.evidence ?? [],
+    existingCode: finding.existingCode ?? '',
+    suggestionCode: finding.suggestionCode ?? '',
   };
 }
 
