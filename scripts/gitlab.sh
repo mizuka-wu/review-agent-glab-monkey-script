@@ -3,7 +3,7 @@
 # 用法: ./scripts/gitlab.sh
 
 COMPOSE_FILE="docker-compose.gitlab.yml"
-URL="http://localhost:8929"
+URL="http://127.0.0.1:8929"
 PASS="5iveRage"
 PAT="glpat-e2e-test-token-1234567890"
 

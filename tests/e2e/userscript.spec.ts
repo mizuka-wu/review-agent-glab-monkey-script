@@ -8,9 +8,9 @@ const bundle = readFileSync(bundlePath, 'utf8');
 // --- 真实 GitLab 模式配置 ---
 // 设置 GITLAB_URL + GITLAB_PAT + GITLAB_MR_URL 即可测试真实 GitLab MR
 // 示例:
-//   GITLAB_URL=http://localhost:8929 \
+//   GITLAB_URL=http://127.0.0.1:8929 \
 //   GITLAB_PAT=glpat-xxx \
-//   GITLAB_MR_URL=http://localhost:8929/acme/app/-/merge_requests/1/diffs \
+//   GITLAB_MR_URL=http://127.0.0.1:8929/acme/app/-/merge_requests/1/diffs \
 //   pnpm test:e2e
 
 const realGitlabUrl = process.env.GITLAB_URL || '';
