@@ -103,6 +103,55 @@ export default function App({ page, adapter }: AppProps) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
 
+  // Panel drag state
+  const panelRef = useRef<HTMLElement>(null);
+  const dragState = useRef<{ startX: number; startY: number; startTop: number; startRight: number } | null>(null);
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startTop: rect.top,
+      startRight: window.innerWidth - rect.right,
+    };
+    const onMove = (me: MouseEvent) => {
+      const ds = dragState.current;
+      if (!ds) return;
+      const dx = me.clientX - ds.startX;
+      const dy = me.clientY - ds.startY;
+      panel.style.top = `${Math.max(0, ds.startTop + dy)}px`;
+      panel.style.right = `${Math.max(0, ds.startRight - dx)}px`;
+    };
+    const onUp = () => {
+      dragState.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // Keep panel in viewport on window resize
+  useEffect(() => {
+    const onResize = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const rect = panel.getBoundingClientRect();
+      if (rect.right > window.innerWidth) {
+        panel.style.right = '16px';
+      }
+      if (rect.bottom > window.innerHeight) {
+        panel.style.top = `${Math.max(0, window.innerHeight - rect.height - 16)}px`;
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   useEffect(() => {
     // Restore chat history
     try {
@@ -695,8 +744,8 @@ export default function App({ page, adapter }: AppProps) {
   return (
     <div ref={hostRef} className="ra-host">
       {!panelOpen && <button type="button" className="ra-host-toggle" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"><Bot size={20} /></button>}
-      <aside className={`ra-agent-panel ra-floating${panelOpen ? '' : ' closed'}`} aria-label="Review Agent">
-        <div className="ra-panel-header">
+      <aside ref={panelRef} className={`ra-agent-panel ra-floating${panelOpen ? '' : ' closed'}`} aria-label="Review Agent">
+        <div className="ra-panel-header" onMouseDown={handleDragStart}>
           <div className="ra-panel-title">
             <div>
               <h2><Bot size={17} /> Review Agent</h2>
