@@ -753,7 +753,7 @@ export default function App({ page, adapter }: AppProps) {
         </button>
       )}
       <aside ref={panelRef} aria-label="Review Agent"
-        className={`fixed z-[2147483000] top-[72px] right-4 bottom-4 w-[min(430px,calc(100vw-32px))] rounded-lg border border-border bg-card shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`}
+        className={`fixed z-[2147483000] top-[72px] right-4 bottom-4 w-[min(430px,calc(100vw-32px))] rounded-lg shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`} style={{ background: '#ffffff', border: '1px solid #d4dae3' }}
         style={{ resize: 'horizontal', minWidth: 320 }}>
         {/* Header */}
         <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
