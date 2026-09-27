@@ -756,32 +756,33 @@ export default function App({ page, adapter }: AppProps) {
         className={`fixed z-[2147483000] top-[72px] right-4 bottom-4 w-[min(430px,calc(100vw-32px))] rounded-lg border border-border bg-card shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`}
         style={{ resize: 'horizontal', minWidth: 320 }}>
         {/* Header */}
-        <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 bg-panel-header text-panel-header-foreground cursor-grab active:cursor-grabbing select-none">
+        <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-semibold m-0"><Bot size={17} /> Review Agent</h2>
-            <p className="text-xs opacity-70 mt-1 truncate">{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
+            <h2 className="flex items-center gap-2 text-sm font-semibold m-0" style={{ color: '#f0f4f8' }}><Bot size={17} /> Review Agent</h2>
+            <p className="text-xs opacity-70 mt-1 truncate" style={{ color: '#c0c8d4' }}>{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
           </div>
           <button type="button" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"
-            className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 bg-transparent cursor-pointer">
+            className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 bg-transparent cursor-pointer" style={{ color: '#c0c8d4' }}>
             <X size={16} />
           </button>
         </div>
 
         {/* Tabs */}
-        <div role="tablist" className="grid grid-cols-2 bg-panel-header border-t border-white/10">
+        <div role="tablist" className="grid grid-cols-2 border-t border-white/10" style={{ background: '#1e2536' }}>
           {([
             { id: 'review' as const, label: 'Review', icon: Sparkles, badge: findings.length },
             { id: 'settings' as const, label: '设置', icon: Settings },
           ]).map(({ id, label, icon: Icon, badge }) => (
             <button key={id} type="button" role="tab" aria-selected={activeTab === id}
               onClick={() => setActiveTab(id)}
+              style={{ color: activeTab === id ? '#ffffff' : '#a0aec0' }}
               className={`flex items-center justify-center gap-1.5 min-h-[42px] text-xs border-0 border-b-2 cursor-pointer transition-colors ${
                 activeTab === id
-                  ? 'text-white border-blue-400 bg-white/5 font-semibold'
-                  : 'text-white/60 border-transparent hover:text-white/80'
-              } bg-transparent`}>
+                  ? 'border-blue-400 bg-white/5 font-semibold'
+                  : 'border-transparent hover:bg-white/10'
+              }`}>
               <Icon size={14} />{label}
-              {badge ? <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{badge}</span> : null}
+              {badge ? <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold" style={{ background: '#d3453b', color: '#fff' }}>{badge}</span> : null}
             </button>
           ))}
         </div>
@@ -1290,7 +1291,7 @@ export default function App({ page, adapter }: AppProps) {
           </section>
         </div>
       )}
-      {toast && <div className="fixed z-[300] right-[18px] bottom-[18px] flex max-w-[360px] items-center gap-2 p-3 rounded-lg text-xs bg-panel-header text-panel-header-foreground shadow-xl" role="status">{toast}</div>}
+      {toast && <div className="fixed z-[300] right-[18px] bottom-[18px] flex max-w-[360px] items-center gap-2 p-3 rounded-lg text-xs shadow-xl" style={{ background: '#1e2536', color: '#f0f4f8' }} role="status">{toast}</div>}
     </div>
   );
 }
