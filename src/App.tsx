@@ -813,6 +813,7 @@ export default function App({ page, adapter }: AppProps) {
                   <p style={{ color: '#4a5568', fontSize: '12px', margin: 0, lineHeight: 1.5 }}>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
                   <div className="flex flex-wrap gap-2 mt-2.5">
                     <Button size="sm" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowChat(!showChat)}>✦ {showChat ? '收起提问' : '提问'}</Button>
                     {savedSession && <Button variant="outline" size="sm" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</Button>}
                   </div>
                   {savedSession && <p className="text-[10px] mt-2" style={{ color: '#6b778b' }}>上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
