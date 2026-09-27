@@ -135,12 +135,23 @@ html, body, #root {
   height: 100%;
 }
 
-/* Panel body must scroll */
+/* Panel body must scroll - strong constraints */
 .ra-host .panel-body-scroll {
-  overflow-y: auto !important;
+  overflow-y: scroll !important;
   overflow-x: hidden !important;
   min-height: 0 !important;
   flex: 1 1 0% !important;
   max-height: 100% !important;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.ra-host .panel-body-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.ra-host .panel-body-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ra-host .panel-body-scroll::-webkit-scrollbar-thumb {
+  background: #c0c8d4;
+  border-radius: 3px;
 }

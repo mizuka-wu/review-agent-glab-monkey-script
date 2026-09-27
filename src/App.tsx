@@ -749,7 +749,7 @@ export default function App({ page, adapter }: AppProps) {
       {!panelOpen && (
         <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
           className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full -foreground shadow-lg cursor-pointer border-0" style={{ color: "#245fc7", background: "#245fc7" }}>
-          <Bot size={20} />
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
         </button>
       )}
       <aside ref={panelRef} aria-label="Review Agent"
@@ -758,7 +758,7 @@ export default function App({ page, adapter }: AppProps) {
         {/* Header */}
         <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-semibold m-0" style={{ color: '#f0f4f8' }}><Bot size={17} /> Review Agent</h2>
+            <h2 className="flex items-center gap-2 text-sm font-semibold m-0" style={{ color: '#f0f4f8' }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg> Review Agent</h2>
             <p className="text-xs opacity-70 mt-1 truncate" style={{ color: '#c0c8d4' }}>{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
           </div>
           <button type="button" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"
@@ -802,7 +802,7 @@ export default function App({ page, adapter }: AppProps) {
           )}
           {activeTab === 'review' && (
             <div className="p-4">
-              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>Review 范围</h3>
+              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>Review 范围 {!runtimeConfigured && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#fff0c7', color: '#91620a' }}>规则模式</span>}</h3>
               <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>
                 {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
               </p>
