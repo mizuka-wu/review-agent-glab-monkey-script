@@ -28,3 +28,4 @@ test-results
 *.sln
 *.sw?
 ss-*.png
+tests/e2e/_debug.mjs
