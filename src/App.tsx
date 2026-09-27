@@ -846,11 +846,11 @@ export default function App({ page, adapter }: AppProps) {
                 </div>
               )}
 
-              {/* Findings header - always visible when findings exist */}
+              {/* Findings panel - collapsible */}
               {findings.length > 0 && (
-                <div style={{ flexShrink: 0, borderBottom: '1px solid #d4dae3' }}>
+                <div style={{ flex: '0 1 auto', minHeight: 0, maxHeight: 320, display: 'flex', flexDirection: 'column', borderBottom: '1px solid #d4dae3' }}>
                   <button type="button" onClick={() => setShowFindings(!showFindings)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: 0, background: '#f4f6f9', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: 0, background: '#f4f6f9', cursor: 'pointer', width: '100%', textAlign: 'left', flexShrink: 0 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#1a2332' }}>Findings</span>
                     <span style={{ fontSize: 11, color: '#245fc7', fontWeight: 700 }}>{findings.length}</span>
                     {findings.filter(f => f.severity === 'high' || f.severity === 'critical').length > 0 && <span style={{ fontSize: 10, color: '#d3453b', fontWeight: 600 }}>{findings.filter(f => f.severity === 'high' || f.severity === 'critical').length} High+</span>}
@@ -858,7 +858,7 @@ export default function App({ page, adapter }: AppProps) {
                     <span style={{ fontSize: 11, color: '#5a6b80' }}>{showFindings ? '▲' : '▼'}</span>
                   </button>
                   {showFindings && (
-                    <div style={{ maxHeight: '50%', overflowY: 'auto', borderTop: '1px solid #e8edf3', minHeight: 120 }}>
+                    <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', borderTop: '1px solid #e8edf3' }}>
                       <div style={{ display: 'flex', gap: 4, padding: '6px 12px', flexWrap: 'wrap' }}>
                         <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)} style={compactSelect} aria-label="严重度筛选">
                           <option value="all">严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
