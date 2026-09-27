@@ -748,7 +748,7 @@ export default function App({ page, adapter }: AppProps) {
     <div ref={hostRef} className="relative">
       {!panelOpen && (
         <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
-          className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg cursor-pointer border-0">
+          className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full -foreground shadow-lg cursor-pointer border-0" style={{ color: "#245fc7", background: "#245fc7" }}>
           <Bot size={20} />
         </button>
       )}
@@ -788,15 +788,15 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto bg-card">
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ background: "#ffffff" }}>
           {loadError && (
-            <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert">
+            <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               {loadError}
               <Button variant="outline" size="xs" onClick={() => location.reload()}><RefreshCw size={13} />重试</Button>
             </div>
           )}
           {!isOnline && (
-            <div className="m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert">
+            <div className="m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               网络已断开，部分功能可能不可用。
             </div>
           )}
@@ -807,7 +807,7 @@ export default function App({ page, adapter }: AppProps) {
                 {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
               </p>
               {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
-                <div className="p-3 rounded-lg bg-muted border border-border">
+                <div className="p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                   <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
                   <p className="text-xs m-0" style={{ color: '#4a5568' }}>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
                   <div className="flex flex-wrap gap-2 mt-2.5">
@@ -818,13 +818,13 @@ export default function App({ page, adapter }: AppProps) {
                 </div>
               )}
               {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && (
-                <div className="p-3 rounded-lg bg-muted border border-border">
+                <div className="p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                   <div className="flex items-center justify-between mb-2.5">
                     <strong className="text-xs">{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/10 text-info">进行中</span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.1)" }}>进行中</span>
                   </div>
                   <div className="w-full h-[7px] rounded-full bg-border overflow-hidden">
-                    <div className="h-full bg-primary rounded-full transition-all" style={{ width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} />
+                    <div className="h-full rounded-full transition-all" style={{ background: "#245fc7", width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} />
                   </div>
                   <Button variant="destructive" size="xs" className="mt-2.5" onClick={cancelReview}><Square size={13} />取消</Button>
                 </div>
@@ -837,7 +837,7 @@ export default function App({ page, adapter }: AppProps) {
                   [findings.filter((f) => f.status === 'published').length, '已发布'],
                   [findings.filter((f) => f.status === 'ignored').length, '已忽略'],
                 ]).map(([val, label]) => (
-                  <div key={label as string} className="p-2 text-center rounded bg-muted border border-border">
+                  <div key={label as string} className="p-2 text-center rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                     <strong className="block text-base" style={{ color: "#1a2332" }}>{val}</strong>
                     <span className="text-[9px]" style={{ color: "#4a5568" }}>{label}</span>
                   </div>
@@ -846,19 +846,19 @@ export default function App({ page, adapter }: AppProps) {
 
               <div className="grid grid-cols-4 gap-1 mb-2.5">
                 <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} aria-label="按严重度筛选"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
+                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
                   <option value="all">全部严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
                 </select>
                 <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} aria-label="按分类筛选"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
+                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
                   <option value="all">全部分类</option><option value="bug">缺陷</option><option value="security">安全</option><option value="performance">性能</option><option value="maintainability">可维护性</option><option value="test">测试</option>
                 </select>
                 <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="按状态筛选"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
+                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
                   <option value="all">全部状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
                 </select>
                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序方式"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
+                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
                   <option value="severity">按严重度</option><option value="line">按行号</option><option value="path">按文件</option>
                 </select>
               </div>
@@ -866,7 +866,7 @@ export default function App({ page, adapter }: AppProps) {
                 <p className="text-xs   m-0 mb-2" style={{ color: "#4a5568" }}>显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
               )}
 
-              <div className="flex items-center gap-2 mb-2.5 p-2 rounded-md bg-muted border border-border text-xs">
+              <div className="flex items-center gap-2 mb-2.5 p-2 rounded-md border text-xs" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                 <Button variant="outline" size="xs" onClick={() => setShowChat(!showChat)}><MessageSquare size={13} />{showChat ? '收起提问' : '提问'}</Button>
                 {selectedFindings.size > 0 ? (
                   <>
@@ -893,9 +893,9 @@ export default function App({ page, adapter }: AppProps) {
 
           {/* Chat section at bottom of Review tab */}
           {showChat && (
-            <div className="border-t border-border">
+            <div className="border-t" style={{ borderColor: "#d4dae3" }}>
               {attachment && (
-                <div className="flex items-center justify-between gap-2 mx-3 mt-2 p-1.5 rounded bg-info/10 border border-info/20 text-[10px] text-info">
+                <div className="flex items-center justify-between gap-2 mx-3 mt-2 p-1.5 rounded border border-info/20 text-[10px]" style={{ color: "#245fc7", background: "rgba(36,95,199,0.1)" }}>
                   <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
                   <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
                 </div>
@@ -941,7 +941,7 @@ export default function App({ page, adapter }: AppProps) {
           {activeTab === 'settings' && <div className="p-4">
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>模型配置</h3>
             <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
-            <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] bg-muted rounded-md">
+            <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] rounded-md" style={{ background: "#f0f3f7" }}>
               {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
                 <button
                   key={key}
@@ -995,7 +995,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
 
-            <details className="mt-4 border border-border rounded-md overflow-hidden">
+            <details className="mt-4 border rounded-md overflow-hidden" style={{ borderColor: "#d4dae3" }}>
               <summary>高级设置（一般不需要改）</summary>
               <div className="grid gap-3" style={{ marginTop: 10 }}>
                 <div className="grid gap-1.5">
@@ -1028,27 +1028,27 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </details>
 
-            <div className="flex justify-end gap-2 p-3 bg-muted border-t border-border">
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md text-destructive border border-destructive bg-transparent cursor-pointer" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
+            <div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border border-destructive bg-transparent cursor-pointer" style={{ color: "#d3453b" }} onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
             </div>
-            <div className="grid gap-2"><div className="grid gap-2 p-3 rounded-lg bg-muted border border-border"><div className="flex items-center justify-between gap-2.5"><strong>GitLab API</strong><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
+            <div className="grid gap-2"><div className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}><div className="flex items-center justify-between gap-2.5"><strong>GitLab API</strong><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
 
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>Token 用量统计</h3>
             {usageSummary ? (
-              <div className="p-3 rounded-lg bg-muted border border-border mt-3">
-                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
-                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>输入 Tokens</span><strong>{formatTokenCount(usageSummary.totalInputTokens)}</strong></div>
-                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>输出 Tokens</span><strong>{formatTokenCount(usageSummary.totalOutputTokens)}</strong></div>
-                <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>估算费用</span><strong>{formatCost(usageSummary.totalEstimatedCost)}</strong></div>
+              <div className="p-3 rounded-lg border mt-3" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
+                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
+                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>输入 Tokens</span><strong>{formatTokenCount(usageSummary.totalInputTokens)}</strong></div>
+                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>输出 Tokens</span><strong>{formatTokenCount(usageSummary.totalOutputTokens)}</strong></div>
+                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>估算费用</span><strong>{formatCost(usageSummary.totalEstimatedCost)}</strong></div>
                 {Object.entries(usageSummary.byModel).map(([key, data]) => (
-                  <div key={key} className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]" style={{ fontSize: 9, opacity: 0.8 }}>
+                  <div key={key} className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3", fontSize: 9, opacity: 0.8 }}>
                     <span>{key}（{data.count} 次）</span>
                     <span>{formatTokenCount(data.inputTokens + data.outputTokens)} tok · {formatCost(data.estimatedCost)}</span>
                   </div>
                 ))}
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332", marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332", marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
               </div>
             ) : (
               <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>暂无用量记录。模型调用后会自动统计。</p>
@@ -1065,7 +1065,7 @@ export default function App({ page, adapter }: AppProps) {
                       <strong>{pack.name}</strong>
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">v{pack.version}</span>
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">{pack.rules.length} 条规则</span>
-                      {pack.builtIn && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/15 text-info">内置</span>}
+                      {pack.builtIn && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.15)" }}>内置</span>}
                     </div>
                     <div className="flex items-center gap-0.5 shrink-0">
                       <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title={pack.enabled ? '禁用' : '启用'} onClick={() => void toggleRulePack(pack.id)}>
@@ -1087,7 +1087,7 @@ export default function App({ page, adapter }: AppProps) {
                   {pack.description && <p className="text-[10px] leading-relaxed" style={{ color: '#6b778b' }}>{pack.description}</p>}
 
                   {editingPackId === pack.id && (
-                    <div className="p-2.5 border-t border-border bg-muted">
+                    <div className="p-2.5 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                       {!pack.builtIn && (
                         <div className="grid gap-3" style={{ marginBottom: 8 }}>
                           <div className="grid gap-1.5">
@@ -1124,14 +1124,14 @@ export default function App({ page, adapter }: AppProps) {
                           {rule.matchPatterns.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {rule.matchPatterns.map((pattern, idx) => (
-                                <code key={idx} className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-muted   break-all" style={{ color: "#1a2332" }}>{pattern.pattern}</code>
+                                <code key={idx} className="px-1.5 py-0.5 rounded text-[9px] font-mono break-all" style={{ background: "#f0f3f7", color: "#1a2332" }}>{pattern.pattern}</code>
                               ))}
                             </div>
                           )}
                         </div>
                       ))}
                       {!pack.builtIn && (
-                        <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332", marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
+                        <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332", marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
                           <Plus size={13} /> 添加规则
                         </button>
                       )}
@@ -1141,20 +1141,20 @@ export default function App({ page, adapter }: AppProps) {
               ))}
             </div>
 
-            <div className="grid gap-2.5 pt-2.5 border-t border-border">
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => void createNewPack()}>
+            <div className="grid gap-2.5 pt-2.5 border-t" style={{ borderColor: "#d4dae3" }}>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => void createNewPack()}>
                 <Plus size={13} /> 新建规则包
               </button>
               <div className="grid gap-1.5">
                 <textarea
-                  className="w-full min-h-[60px] p-2 text-[10px] font-mono rounded-md border border-border bg-card   resize-y" style={{ color: "#1a2332" }}
+                  className="w-full min-h-[60px] p-2 text-[10px] font-mono rounded-md border resize-y" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }}
                   value={importText}
                   onChange={(e) => { setImportText(e.target.value); setImportError(''); }}
                   placeholder='粘贴规则包 JSON…'
                   rows={3}
                 />
-                {importError && <p className="text-destructive text-[10px] m-0">{importError}</p>}
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} disabled={!importText.trim()} onClick={() => void handleImportPack()}>
+                {importError && <p className="text-[10px] m-0" style={{ color: "#d3453b" }}>{importError}</p>}
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} disabled={!importText.trim()} onClick={() => void handleImportPack()}>
                   <Upload size={13} /> 导入规则包
                 </button>
               </div>
@@ -1182,10 +1182,10 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
             <div className="grid gap-2" style={{ marginTop: 10 }}>
-              <div className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
+              <div className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                 <div className="flex items-center justify-between gap-2.5">
                   <strong>MCP 传输类型</strong>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/15 text-info">Streamable HTTP</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.15)" }}>Streamable HTTP</span>
                 </div>
                 <p>浏览器油猴脚本仅支持 HTTP 传输（POST JSON-RPC）。不支持 stdio 本地进程。URL 以 /sse 结尾时自动使用 SSE 模式。</p>
               </div>
@@ -1193,27 +1193,27 @@ export default function App({ page, adapter }: AppProps) {
 
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>兼容性诊断</h3>
             {capabilities && <div className="grid gap-2">
-              <div className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
+              <div className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                 <div className="flex items-center justify-between gap-2.5">
                   <strong>GitLab 实例状态</strong>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.gitlabVersion ?? '未知版本'}</span>
                 </div>
-                <div className="p-3 rounded-lg bg-muted border border-border mt-3">
-                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>认证</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.authMode}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>API 读取</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canReadMergeRequests ? 'success' : 'error'}`}>{capabilities.canReadMergeRequests ? '可用' : '不可用'}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>代码搜索</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canSearchCode ? 'success' : 'neutral'}`}>{capabilities.canSearchCode ? '可用' : '不可用'}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>评论发布</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canCreateDiscussions ? 'success' : 'error'}`}>{capabilities.canCreateDiscussions ? '可用' : '不可用'}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>CSRF Token</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.csrfAvailable ? 'success' : 'warning'}`}>{capabilities.csrfAvailable ? '存在' : '缺失'}</span></div>
+                <div className="p-3 rounded-lg border mt-3" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
+                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>认证</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.authMode}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>API 读取</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canReadMergeRequests ? 'success' : 'error'}`}>{capabilities.canReadMergeRequests ? '可用' : '不可用'}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>代码搜索</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canSearchCode ? 'success' : 'neutral'}`}>{capabilities.canSearchCode ? '可用' : '不可用'}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>评论发布</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canCreateDiscussions ? 'success' : 'error'}`}>{capabilities.canCreateDiscussions ? '可用' : '不可用'}</span></div>
+                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>CSRF Token</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.csrfAvailable ? 'success' : 'warning'}`}>{capabilities.csrfAvailable ? '存在' : '缺失'}</span></div>
                 </div>
               </div>
             </div>}
             {capabilities?.warnings && capabilities.warnings.length > 0 && (
-              <div className="flex items-center justify-between gap-2.5 m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert" style={{ margin: '8px 0 0' }}>
+              <div className="flex items-center justify-between gap-2.5 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert" style={{ margin: '8px 0 0' }}>
                 {capabilities.warnings.join(' ')}
               </div>
             )}
             {diagnostics.length > 0 && (
-              <div className="p-3 rounded-lg bg-muted border border-border mt-3" style={{ marginTop: 8 }}>
+              <div className="p-3 rounded-lg border mt-3" style={{ background: "#f0f3f7", borderColor: "#d4dae3", marginTop: 8 }}>
                 {diagnostics.map((diag, idx) => (
                   <div key={idx} className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[9px] opacity-85">
                     <span className="w-3.5 text-center font-bold shrink-0">{diag.level === 'error' ? '✗' : diag.level === 'warn' ? '⚠' : '·'}</span>
@@ -1223,7 +1223,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             )}
             <div className="flex flex-wrap gap-2 mt-2.5" style={{ marginTop: 8 }}>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => {
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => {
                 const config = exportSiteConfig(page, capabilities ?? {
                   authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false,
                   canSearchCode: false, canReadRepository: true, canPaginateDiffs: true,
@@ -1238,7 +1238,7 @@ export default function App({ page, adapter }: AppProps) {
               <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>Review 会话历史</h3>
               <div className="grid gap-2">
                 {sessionHistory.map((session) => (
-                  <div key={session.id} className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
+                  <div key={session.id} className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                     <div className="flex items-center justify-between gap-2.5">
                       <strong>{session.projectPath} !{session.mergeRequestIid}</strong>
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${session.status === 'completed' ? 'success' : session.status === 'failed' ? 'error' : session.status === 'cancelled' ? 'warning' : 'info'}`}>{session.status}</span>
@@ -1254,26 +1254,26 @@ export default function App({ page, adapter }: AppProps) {
 
       {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('review'); setPanelOpen(true); setShowChat(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
-      {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono" style={{ color: "#4a5568" }}><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono" style={{ color: "#4a5568" }}><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
+      {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border" style={{ background: "#ffffff", borderColor: "#d4dae3" }} role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b" style={{ borderColor: "#d4dae3" }}><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:" style={{ background: "#e8edf3" }} onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
       {showBatchConfirm && selectedFindings.size > 0 && (
         <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation">
-          <section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
-            <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border">
+          <section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border" style={{ background: "#ffffff", borderColor: "#d4dae3" }} role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
+            <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b" style={{ borderColor: "#d4dae3" }}>
               <div>
                 <h2 id="batch-publish-title">批量发布到 GitLab</h2>
                 <p>将选中的 {selectedFindings.size} 个 Finding 逐条创建行级 Discussion。</p>
               </div>
-              <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
+              <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:" style={{ background: "#e8edf3" }} onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
             </div>
             <div className="grid gap-3 p-4">
-              <div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono" style={{ color: "#4a5568" }}>
+              <div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}>
                 <span>{page.projectPath} · MR !{page.mergeRequestIid}</span>
                 <span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span>
               </div>
               <div className="grid gap-1.5">
                 {findings.filter((f) => selectedFindings.has(f.id)).slice(0, 10).map((f) => (
-                  <div key={f.id} className="flex items-center gap-2 p-1.5 rounded bg-muted border border-border text-[10px]">
+                  <div key={f.id} className="flex items-center gap-2 p-1.5 rounded border text-[10px]" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${f.severity === 'high' || f.severity === 'critical' ? 'error' : f.severity === 'medium' ? 'warning' : 'neutral'}`}>{f.severity}</span>
                     <span className="flex-1 min-w-0 truncate">{f.title}</span>
                     <span className="font-mono text-[9px]" style={{ color: "#4a5568" }}>{f.path}:{f.line}</span>
@@ -1282,9 +1282,9 @@ export default function App({ page, adapter }: AppProps) {
                 {selectedFindings.size > 10 && <p style={{ fontSize: 10, color: '#6b778b' }}>…还有 {selectedFindings.size - 10} 个</p>}
               </div>
             </div>
-            <div className="flex justify-end gap-2 p-3 bg-muted border-t border-border">
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => setShowBatchConfirm(false)}>取消</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
+            <div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => setShowBatchConfirm(false)}>取消</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
                 <MessageSquare size={14} />{batchPublishing ? '发布中…' : `确认批量发布 ${selectedFindings.size} 条`}
               </button>
             </div>

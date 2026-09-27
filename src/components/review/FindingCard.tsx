@@ -66,10 +66,10 @@ export function FindingCard({
           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${finding.severity}`}>{severityLabel[finding.severity]}</span>
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">{categoryLabel[finding.category]}</span>
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">置信度 {finding.confidence === 'high' ? '高' : finding.confidence === 'medium' ? '中' : '低'}</span>
-          {finding.edited && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/15 text-info">已编辑</span>}
-          {finding.anchor?.relocatedFromPath && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-info/15 text-info">跨文件重定位</span>}
-          {finding.anchor?.source === 'full-file' && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-warning/15 text-warning">完整文件锚定</span>}
-          {finding.status === 'published' && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-success/15 text-success">已发布</span>}
+          {finding.edited && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.15)" }}>已编辑</span>}
+          {finding.anchor?.relocatedFromPath && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.15)" }}>跨文件重定位</span>}
+          {finding.anchor?.source === 'full-file' && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#b8860b", background: "rgba(184,138,11,0.15)" }}>完整文件锚定</span>}
+          {finding.status === 'published' && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#1a7a42", background: "rgba(26,122,66,0.15)" }}>已发布</span>}
           {finding.status === 'ignored' && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">已忽略</span>}
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
@@ -77,7 +77,7 @@ export function FindingCard({
         <code className="block mt-1 font-mono text-[9px]" style={{ color: '#6b778b' }}>{finding.path}:{finding.line}-{finding.endLine} · {finding.source}</code>
       </button>
       {expanded && (
-        <div className="px-2.5 pb-2.5 border-t border-border">
+        <div className="px-2.5 pb-2.5 border-t" style={{ borderColor: "#d4dae3" }}>
           {edit ? (
             <div className="grid gap-2.5 py-2.5">
               <div className="grid gap-1.5"><label htmlFor={`finding-title-${finding.id}`}>标题</label><input id={`finding-title-${finding.id}`} value={edit.title} onChange={(event) => setEdit({ ...edit, title: event.target.value })} /></div>
@@ -93,7 +93,7 @@ export function FindingCard({
             <p style={{ color: '#2d3748' }}>{finding.content}</p>
           )}
           {!edit && finding.evidence.map((evidence) => (
-            <div className="my-2.5 p-2 rounded bg-muted" key={`${evidence.path}-${evidence.lines}-${evidence.quote}`}>
+            <div className="my-2.5 p-2 rounded" style={{ background: "#f0f3f7" }} key={`${evidence.path}-${evidence.lines}-${evidence.quote}`}>
               <strong>{evidence.path} · {evidence.lines}</strong>
               <span>{evidence.quote}</span>
             </div>
@@ -108,7 +108,7 @@ export function FindingCard({
             {edit ? (
               <>
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={() => setEdit(undefined)}><X size={14} />取消</button>
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={saveEdit} disabled={editInvalid}><Save size={14} />保存修改</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} onClick={saveEdit} disabled={editInvalid}><Save size={14} />保存修改</button>
               </>
             ) : (
               <>
@@ -117,7 +117,7 @@ export function FindingCard({
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={onCopy}><Copy size={14} />复制评论</button>
                 <button
                   type="button"
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer"
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }}
                   onClick={onPublish}
                   disabled={publishDisabled || finding.status === 'published'}
                   title={finding.anchor?.publishable === false ? '完整文件位置不能发布为 MR 行级 Discussion' : undefined}

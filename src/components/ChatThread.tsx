@@ -44,17 +44,17 @@ function SimpleChatFallback({ messages, onSend }: ChatThreadProps) {
       <div className="flex-1 overflow-y-auto p-4">
         {messages.map((msg) => (
           <div key={msg.id} className="mb-3">
-            <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">{msg.role === 'user' ? '你' : 'Agent'}</div>
+            <div className="text-[10px] font-semibold uppercase mb-1" style={{ color: "#4a5568" }}>{msg.role === 'user' ? '你' : 'Agent'}</div>
             <div className={`p-2.5 rounded-lg text-xs whitespace-pre-wrap ${msg.role === 'user' ? 'bg-info/10' : 'bg-muted'}`}>{msg.content}</div>
           </div>
         ))}
       </div>
-      <form className="p-3 border-t border-border" onSubmit={(e) => {
+      <form className="p-3 border-t" style={{ borderColor: "#d4dae3" }} onSubmit={(e) => {
         e.preventDefault();
         const input = (e.target as HTMLFormElement).querySelector('textarea');
         if (input?.value.trim()) { onSend(input.value.trim()); input.value = ''; }
       }}>
-        <textarea placeholder="输入问题…" className="w-full p-2 text-xs rounded-md border border-border bg-card" rows={2} />
+        <textarea placeholder="输入问题…" className="w-full p-2 text-xs rounded-md border" style={{ background: "#ffffff", borderColor: "#d4dae3" }} rows={2} />
       </form>
     </div>
   );
