@@ -140,7 +140,7 @@ test.describe('mock mode', () => {
       gitlabToken: '', effort: 'balanced', language: 'zh-CN',
     });
 
-    await page.getByRole('tab', { name: '提问' }).click();
+    // Panel opens on Review tab by default
     await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
 
     // Simulate code selection

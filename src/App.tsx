@@ -74,7 +74,7 @@ export default function App({ page, adapter }: AppProps) {
   const [files, setFiles] = useState<FileDiff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [activeTab, setActiveTab] = useState<'chat' | 'review' | 'settings'>('chat');
+  const [activeTab, setActiveTab] = useState<'review' | 'settings'>('review');
   const [panelOpen, setPanelOpen] = useState(true);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('idle');
   const [reviewError, setReviewError] = useState('');
@@ -104,6 +104,7 @@ export default function App({ page, adapter }: AppProps) {
   const [sortBy, setSortBy] = useState<'severity' | 'line' | 'path'>('severity');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
+  const [showChat, setShowChat] = useState(false);
 
   // Panel drag state
   const panelRef = useRef<HTMLElement>(null);
@@ -211,7 +212,7 @@ export default function App({ page, adapter }: AppProps) {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
-        setActiveTab((current) => current === 'chat' ? 'review' : current === 'review' ? 'settings' : 'chat');
+        setActiveTab((current) => current === 'review' ? 'settings' : 'review');
       }
     };
     document.addEventListener('keydown', handleKeyDown);
@@ -767,9 +768,8 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Tabs */}
-        <div role="tablist" className="grid grid-cols-3 bg-panel-header border-t border-white/10">
+        <div role="tablist" className="grid grid-cols-2 bg-panel-header border-t border-white/10">
           {([
-            { id: 'chat' as const, label: '提问', icon: MessageSquare },
             { id: 'review' as const, label: 'Review', icon: Sparkles, badge: findings.length },
             { id: 'settings' as const, label: '设置', icon: Settings },
           ]).map(({ id, label, icon: Icon, badge }) => (
@@ -799,90 +799,6 @@ export default function App({ page, adapter }: AppProps) {
               网络已断开，部分功能可能不可用。
             </div>
           )}
-          {activeTab === 'chat' && (
-            <div className="flex flex-col h-full">
-              {attachment && (
-                <div className="flex items-center justify-between gap-2 mx-3 mt-2 p-1.5 rounded bg-info/10 border border-info/20 text-[10px] text-info">
-                  <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
-                  <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
-                </div>
-              )}
-              <ChatThread
-                messages={messages}
-                responding={responding}
-                onSend={(text) => {
-                  if (!text.trim() || responding) return;
-                  const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content: text, attachment };
-                  const history = [...messages, userMessage];
-                  setMessages(history);
-                  setDraft('');
-                  setAttachment(undefined);
-                  if (!runtimeConfigured) {
-                    setMessages([...history, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: '尚未配置模型。请在设置中填写 API Key。' }]);
-                    setActiveTab('settings');
-                    return;
-                  }
-                  setResponding(true);
-                  setToolEvents([]);
-                  void (async () => {
-                    try {
-                      // Use agent loop only when MCP is enabled (tools available)
-                      const useAgentLoop = settings.mcp?.enabled && settings.mcp.serverUrl && mergeRequestRef && mrContext;
-                      if (useAgentLoop) {
-                        const gitlabExecutor = new GitLabToolExecutor(adapter, mrContext.diffRefs.headSha);
-                        let compositeExecutor = new CompositeToolExecutor(gitlabExecutor);
-                        try {
-                          const mcpClient = new McpClient({ url: settings.mcp.serverUrl, enabled: true });
-                          await mcpClient.initialize();
-                          if (mcpClient.availableTools.length > 0) compositeExecutor = new CompositeToolExecutor(gitlabExecutor, mcpClient);
-                        } catch { /* MCP optional */ }
-                        const agentMessages: AgentMessage[] = history.filter((m) => m.role !== 'system' && !m.error).map((m) => ({
-                          role: m.role as 'user' | 'assistant',
-                          content: m.attachment ? `${m.content}\n\n[代码选区: ${m.attachment.filePath}:L${m.attachment.startLine}-${m.attachment.endLine}]\n\`\`\`\n${m.attachment.text}\n\`\`\`` : m.content,
-                        }));
-                        const result = await runAgentLoop(runtime, compositeExecutor, agentMessages, {
-                          onEvent: (event) => setToolEvents((prev) => [...prev, event]),
-                          language: settings.language,
-                        });
-                        setMessages((c) => [...c, { id: `assistant-${Date.now()}`, role: 'assistant', content: result.text }]);
-                      } else {
-                        // Direct model chat (with streaming)
-                        const streamId = `stream-${Date.now()}`;
-                        setMessages((c) => [...c, { id: streamId, role: 'assistant', content: '' }]);
-                        let streamed = '';
-                        const answer = await runtime.chat(history, attachment, undefined, (token) => {
-                          streamed += token;
-                          setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: streamed } : m));
-                        });
-                        setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: answer } : m));
-                      }
-                    } catch (error) {
-                      setMessages((c) => [...c, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: `模型调用失败：${String(error)}` }]);
-                    } finally {
-                      setResponding(false);
-                    }
-                  })();
-                }}
-              />
-              {responding && toolEvents.length > 0 && (
-                <div className="px-3 pb-2">
-                  <div className="grid gap-1 p-2 rounded bg-muted border border-border">
-                    {toolEvents.map((event, idx) => (
-                      <div key={idx} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] ${
-                        event.type === 'tool_call' ? 'bg-info/10 text-info' :
-                        event.type === 'tool_result' ? 'bg-success/10 text-success' :
-                        event.type === 'error' ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground'
-                      }`}>
-                        <span className="w-3.5 text-center font-bold">{event.type === 'tool_call' ? '→' : event.type === 'tool_result' ? '←' : event.type === 'error' ? '✗' : '·'}</span>
-                        {event.message}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           {activeTab === 'review' && (
             <div className="p-4">
               <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>Review 范围</h3>
@@ -950,6 +866,7 @@ export default function App({ page, adapter }: AppProps) {
               )}
 
               <div className="flex items-center gap-2 mb-2.5 p-2 rounded-md bg-muted border border-border text-xs">
+                <Button variant="outline" size="xs" onClick={() => setShowChat(!showChat)}><MessageSquare size={13} />{showChat ? '收起提问' : '提问'}</Button>
                 {selectedFindings.size > 0 ? (
                   <>
                     <span className="font-semibold text-foreground">已选 {selectedFindings.size} 个</span>
@@ -969,6 +886,54 @@ export default function App({ page, adapter }: AppProps) {
                 </Button>
               )}
             </>}
+            </div>
+          )}
+
+
+          {/* Chat section at bottom of Review tab */}
+          {showChat && (
+            <div className="border-t border-border">
+              {attachment && (
+                <div className="flex items-center justify-between gap-2 mx-3 mt-2 p-1.5 rounded bg-info/10 border border-info/20 text-[10px] text-info">
+                  <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
+                  <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
+                </div>
+              )}
+              <ChatThread
+                messages={messages}
+                responding={responding}
+                onSend={(text) => {
+                  if (!text.trim() || responding) return;
+                  const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content: text, attachment };
+                  const history = [...messages, userMessage];
+                  setMessages(history);
+                  setDraft('');
+                  setAttachment(undefined);
+                  if (!runtimeConfigured) {
+                    setMessages([...history, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: '尚未配置模型。请在设置中填写 API Key。' }]);
+                    setActiveTab('settings');
+                    return;
+                  }
+                  setResponding(true);
+                  setToolEvents([]);
+                  void (async () => {
+                    try {
+                      const streamId = `stream-${Date.now()}`;
+                      setMessages((c) => [...c, { id: streamId, role: 'assistant', content: '' }]);
+                      let streamed = '';
+                      const answer = await runtime.chat(history, attachment, undefined, (token) => {
+                        streamed += token;
+                        setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: streamed } : m));
+                      });
+                      setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: answer } : m));
+                    } catch (error) {
+                      setMessages((c) => [...c, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: `模型调用失败：${String(error)}` }]);
+                    } finally {
+                      setResponding(false);
+                    }
+                  })();
+                }}
+              />
             </div>
           )}
 
@@ -1286,7 +1251,7 @@ export default function App({ page, adapter }: AppProps) {
         </div>
       </aside>
 
-      {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('chat'); setPanelOpen(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
+      {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('review'); setPanelOpen(true); setShowChat(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
       {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
