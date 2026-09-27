@@ -788,7 +788,7 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto" style={{ background: "#ffffff" }}>
+        <div className="panel-body-scroll" style={{ background: "#ffffff" }}>
           {loadError && (
             <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               {loadError}

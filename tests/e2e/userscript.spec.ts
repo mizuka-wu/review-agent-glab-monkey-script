@@ -15,6 +15,8 @@ const bundle = readFileSync(bundlePath, 'utf8');
 
 const realGitlabUrl = process.env.GITLAB_URL || '';
 const realMrUrl = process.env.GITLAB_MR_URL || '';
+const gitlabUser = process.env.GITLAB_USER || 'root';
+const gitlabPass = process.env.GITLAB_PASS || '5iveRage';
 const isRealGitlab = Boolean(realGitlabUrl && realMrUrl);
 
 // --- Mock 模式数据 ---
@@ -186,17 +188,31 @@ test.describe('mock mode', () => {
 test.describe('real GitLab mode', () => {
   test.skip(!isRealGitlab, '跳过真实 GitLab 测试（未设置 GITLAB_URL + GITLAB_MR_URL）');
 
+  async function loginToGitLab(page: Page, baseUrl: string) {
+    // Check if already logged in
+    await page.goto(`${baseUrl}/users/sign_in`);
+    await page.waitForTimeout(1000);
+    const signInForm = page.locator('input[name="user[login]"]');
+    if (await signInForm.count() > 0) {
+      await signInForm.fill(gitlabUser);
+      await page.locator('input[name="user[password]"]').fill(gitlabPass);
+      await page.locator('button[type="submit"]').first().click();
+      await page.waitForURL((url) => !url.pathname.includes('sign_in'), { timeout: 15000 });
+    }
+  }
+
   test('injects userscript and reads real MR data', async ({ page }) => {
-    // 不设置 gitlabToken —— 脚本通过浏览器 Cookie + CSRF 认证
+    await loginToGitLab(page, realGitlabUrl);
     await mountUserscript(page, realMrUrl);
-        await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 15000 });
-    await page.getByRole('tab', { name: 'Review' }).click();
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
+    await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(/已从 GitLab API 读取|当前页面没有可用/)).toBeVisible({ timeout: 15000 });
   });
 
   test('runs rule review on real MR diff', async ({ page }) => {
+    await loginToGitLab(page, realGitlabUrl);
     await mountUserscript(page, realMrUrl);
-        await page.getByRole('tab', { name: 'Review' }).click();
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
     await expect(page.getByText(/Findings|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
   });

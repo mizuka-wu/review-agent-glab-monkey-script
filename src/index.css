@@ -134,3 +134,13 @@ html, body, #root {
 .ra-host .aui-thread-root {
   height: 100%;
 }
+
+/* Panel body must scroll */
+.ra-host .panel-body-scroll {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  min-height: 0 !important;
+  flex: 1 1 0% !important;
+  max-height: 100% !important;
+  -webkit-overflow-scrolling: touch;
+}

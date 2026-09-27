@@ -135,9 +135,9 @@ while true; do
     10) echo
        echo "GITLAB_URL=$URL \\"
        echo "GITLAB_MR_URL=$URL/<项目>/-/merge_requests/<id>/diffs \\"
+       echo "GITLAB_USER=root \\"
+       echo "GITLAB_PASS=<密码> \\"
        echo "pnpm test:e2e"
-       echo ""
-       echo "（通过浏览器 Cookie 认证，无需 PAT）"
        read -p "回车继续..." ;;
     0) exit 0 ;;
   esac
