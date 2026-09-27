@@ -95,7 +95,6 @@ export default function App({ page, adapter }: AppProps) {
   const [capabilities, setCapabilities] = useState<ExtendedCapabilities | undefined>(undefined);
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
   const [visibleFindingCount, setVisibleFindingCount] = useState(20);
-  const [diffLoadProgress, setDiffLoadProgress] = useState<{ loaded: number; hasMore: boolean } | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
   const [batchPublishing, setBatchPublishing] = useState(false);
@@ -253,7 +252,7 @@ export default function App({ page, adapter }: AppProps) {
     });
     void getUsageSummary().then((summary) => {
       if (active && summary.callCount > 0) setUsageSummary(summary);
-    });
+    }).catch(() => {});
     return () => { active = false; };
   }, []);
 
@@ -268,11 +267,10 @@ export default function App({ page, adapter }: AppProps) {
       page.route === 'commit' && page.commitSha
         ? adapter.listCommitDiffs(page.commitSha)
         : mergeRequestRef
-          ? adapter.listDiffs(mergeRequestRef, { onPage: (loaded, hasMore) => setDiffLoadProgress({ loaded, hasMore }) })
+          ? adapter.listDiffs(mergeRequestRef)
           : Promise.resolve([]),
     ]).then(([context, diffs]) => {
       if (controller.signal.aborted) return;
-      setDiffLoadProgress(null);
       setMrContext(context);
       setFiles(diffs);
       setLoading(false);
@@ -280,7 +278,7 @@ export default function App({ page, adapter }: AppProps) {
         void loadLatestReviewSession(reviewSessionKey(mergeRequestRef, context.diffRefs.headSha))
           .then((session) => {
             if (!controller.signal.aborted) setSavedSession(session);
-          });
+          }).catch(() => {});
       }
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
@@ -415,6 +413,43 @@ export default function App({ page, adapter }: AppProps) {
       }]);
     } finally {
       setResponding(false);
+    }
+  };
+
+  const [testing, setTesting] = useState(false);
+  const testModelConnection = async () => {
+    if (!settings.apiKey && settings.modelBaseUrl.includes('api.openai.com')) {
+      setToast('请先填写 API Key');
+      return;
+    }
+    setTesting(true);
+    const startTime = Date.now();
+    try {
+      // Send a minimal chat completion request to verify the model works
+      const url = settings.modelBaseUrl.replace(/\/$/, '') + '/chat/completions';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (settings.apiKey) headers['Authorization'] = `Bearer ${settings.apiKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: settings.model || 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 1,
+        }),
+      });
+      const elapsed = Date.now() - startTime;
+      if (!res.ok) {
+        const err = await res.text().catch(() => '');
+        setToast(`连接失败：HTTP ${res.status} ${err.slice(0, 80)}`);
+        return;
+      }
+      const data = await res.json() as { model?: string; usage?: { total_tokens?: number } };
+      setToast(`✓ 连接成功（${elapsed}ms）· ${data.model ?? settings.model}`);
+    } catch (e) {
+      setToast(`连接失败：${e instanceof Error ? e.message : '网络错误'}`);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -1000,7 +1035,7 @@ export default function App({ page, adapter }: AppProps) {
                   void navigator.clipboard?.writeText(JSON.stringify(config, null, 2));
                   setToast('站点配置已复制');
                 }}
-                testing={false}
+                testing={testing}
               />
 
             </div>

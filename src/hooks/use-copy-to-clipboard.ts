@@ -47,7 +47,7 @@ export const useCopyToClipboard = ({
         }, copiedDuration);
       },
       () => {},
-    );
+    ).catch(() => {});
   };
 
   return { isCopied, copyToClipboard };
