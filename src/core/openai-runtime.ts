@@ -1,4 +1,5 @@
 import { diffContext } from './diff';
+import { planSystemPrompt } from './review-plan';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
 import type {
@@ -237,6 +238,28 @@ export class OpenAIRuntime {
         ...history,
       ],
       { signal, onToken },
+    );
+  }
+
+  async plan(
+    files: FileDiff[],
+    selection: CodeSelection | undefined,
+    language: RuntimeSettings['language'],
+    signal?: AbortSignal,
+    background?: string,
+  ) {
+    const context = [
+      selection ? selectionContext(selection) : diffContext(files),
+      background ? `
+业务背景：
+${background}` : '',
+    ].join('');
+    return this.complete(
+      [
+        { role: 'system', content: planSystemPrompt(language) },
+        { role: 'user', content: context + '\n请输出评审计划。' },
+      ],
+      { signal },
     );
   }
 

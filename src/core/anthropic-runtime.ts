@@ -1,4 +1,5 @@
 import { diffContext } from './diff';
+import { planSystemPrompt } from './review-plan';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
 import { parseAnthropicUsage, recordUsage } from './usage';
 import type {
@@ -154,6 +155,26 @@ export class AnthropicRuntime {
     return this.complete(
       contextMessages,
       chatSystemPrompt(this.settings.language),
+      { signal },
+    );
+  }
+
+  async plan(
+    files: FileDiff[],
+    selection: CodeSelection | undefined,
+    language: RuntimeSettings['language'],
+    signal?: AbortSignal,
+    background?: string,
+  ) {
+    const context = [
+      selection ? selectionContext(selection) : diffContext(files),
+      background ? `
+业务背景：
+${background}` : '',
+    ].join('');
+    return this.complete(
+      [{ role: 'user', content: context + '\n请输出评审计划。' }],
+      planSystemPrompt(language),
       { signal },
     );
   }

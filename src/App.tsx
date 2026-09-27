@@ -770,13 +770,13 @@ export default function App({ page, adapter }: AppProps) {
     <div ref={hostRef} className="relative">
       {!panelOpen && (
         <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
-          className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full -foreground shadow-lg cursor-pointer border-0" style={{ color: "#245fc7", background: "#245fc7" }}>
+          className="fixed bottom-[18px] right-[18px] grid h-11 w-11 place-items-center rounded-full shadow-lg cursor-pointer border-0" style={{ zIndex: 2147483647 }} style={{ color: "#245fc7", background: "#245fc7" }}>
           <span style={{ color: '#fff', fontSize: 22, lineHeight: 1 }}>✦</span>
         </button>
       )}
       <aside ref={panelRef} aria-label="Review Agent"
-        className={`fixed z-[2147483000] rounded-lg shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`}
-        style={{ background: '#ffffff', border: '1px solid #d4dae3', top: '72px', right: '16px', width: '460px', height: 'calc(100vh - 88px)', resize: 'horizontal', minWidth: 320 }}>
+        className="fixed z-[2147483000] rounded-lg shadow-2xl"
+        style={{ background: '#ffffff', border: '1px solid #d4dae3', top: '72px', right: '16px', width: '460px', height: 'calc(100vh - 88px)', display: panelOpen ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Header */}
         <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
           <div>
@@ -815,7 +815,7 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Body */}
-        <div style={{ background: '#ffffff', overflow: 'hidden', flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ background: '#ffffff', overflowY: 'auto', overflowX: 'hidden', flex: '1 1 0%', minHeight: 0 }}>
           {loadError && (
             <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               {loadError}
@@ -829,7 +829,7 @@ export default function App({ page, adapter }: AppProps) {
           )}
           {/* Main view: Chat + Findings */}
           {activeTab === 'chat' && (
-            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               {/* Status bar */}
               {(reviewStatus === 'running' || reviewStatus === 'preparing' || reviewStatus === 'normalizing') && (
                 <div style={{ padding: '6px 12px', background: '#e8f0fe', borderBottom: '1px solid #d4dae3', flexShrink: 0 }}>
@@ -858,7 +858,7 @@ export default function App({ page, adapter }: AppProps) {
                     <span style={{ fontSize: 11, color: '#5a6b80' }}>{showFindings ? '▲' : '▼'}</span>
                   </button>
                   {showFindings && (
-                    <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', borderTop: '1px solid #e8edf3' }}>
+                    <div style={{ flex: '0 0 auto', maxHeight: 260, overflowY: 'auto', borderTop: '1px solid #e8edf3' }}>
                       <div style={{ display: 'flex', gap: 4, padding: '6px 12px', flexWrap: 'wrap' }}>
                         <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)} style={compactSelect} aria-label="严重度筛选">
                           <option value="all">严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
@@ -918,7 +918,7 @@ export default function App({ page, adapter }: AppProps) {
               )}
 
               {/* Chat - fills remaining space */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div style={{ minHeight: 300, display: 'flex', flexDirection: 'column' }}>
                 {attachment && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 12px 0', padding: '5px 8px', borderRadius: 6, background: '#e8f0fe', fontSize: 11, flexShrink: 0 }}>
                     <FileText size={12} style={{ color: '#245fc7', flexShrink: 0 }} />
@@ -927,7 +927,7 @@ export default function App({ page, adapter }: AppProps) {
                       style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#8a9bb0', padding: 2 }}><X size={12} /></button>
                   </div>
                 )}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <div style={{ minHeight: 300, display: 'flex', flexDirection: 'column' }}>
                 <ChatThread
                   draft={draft}
                   onDraftChange={setDraft}
