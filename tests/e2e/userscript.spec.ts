@@ -60,6 +60,56 @@ const diff = {
 // --- Mock 路由 ---
 
 async function routeGitLab(page: Page, requests: string[] = []) {
+  // Mock model API
+  await page.route('https://model.test/**', async (route) => {
+    requests.push(new URL(route.request().url()).pathname);
+    const body = {
+      id: 'mock-completion',
+      object: 'chat.completion',
+      model: 'test-model',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: JSON.stringify([
+            {
+              title: '代码中疑似硬编码敏感信息',
+              severity: 'high',
+              category: 'security',
+              confidence: 'high',
+              path: 'src/payment.ts',
+              line: 2,
+              endLine: 2,
+              existingCode: 'const apiKey = "sk-live-123";',
+              suggestion: '从环境变量或密钥管理服务读取',
+              reason: '新增赋值涉及密码、Token 或 API Key',
+              content: '新增赋值涉及密码、Token 或 API Key。应从安全配置或密钥管理服务读取，并确认该值没有进入日志和构建产物。',
+              evidence: [{ path: 'src/payment.ts', line: 2, snippet: 'const apiKey = "sk-live-123";' }],
+              comment: '发现硬编码 API Key，应从安全配置或密钥管理服务读取。',
+            },
+            {
+              title: '新增调试日志可能泄漏运行时信息',
+              severity: 'low',
+              category: 'maintainability',
+              confidence: 'medium',
+              path: 'src/payment.ts',
+              line: 3,
+              endLine: 3,
+              existingCode: 'console.log(apiKey);',
+              suggestion: '移除调试日志',
+              reason: '日志输出敏感变量',
+              content: 'console.log 输出了 apiKey 变量，可能在生产环境泄漏敏感信息。',
+              evidence: [{ path: 'src/payment.ts', line: 3, snippet: 'console.log(apiKey);' }],
+              comment: 'console.log 可能泄漏 API Key。',
+            },
+          ]),
+        },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+    };
+    await route.fulfill({ json: body });
+  });
   await page.route('https://gitlab.test/**', async (route) => {
     const url = new URL(route.request().url());
     requests.push(url.pathname);
@@ -112,11 +162,12 @@ test.describe('mock mode', () => {
   test('loads diff, runs rule review, and publishes a confirmed discussion', async ({ page }) => {
     const requests: string[] = [];
     await routeGitLab(page, requests);
-    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
     await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
-    await page.getByRole('tab', { name: 'Review' }).click();
-    await expect(page.getByText('已从 GitLab API 读取 1 个文件的真实 Diff。')).toBeVisible();
     await page.getByRole('button', { name: '开始 Review' }).click();
 
     await expect(page.getByText('代码中疑似硬编码敏感信息')).toBeVisible();
@@ -159,7 +210,7 @@ test.describe('mock mode', () => {
 
     // Click "问一下" to open chat with attachment
     await page.getByRole('button', { name: '问一下' }).click();
-    await expect(page.getByText('src/payment.ts:L1-1')).toBeVisible();
+    await expect(page.getByText('src/payment.ts:1-1')).toBeVisible();
 
     // Verify composer is available
     await expect(page.getByLabel('消息输入框')).toBeVisible();

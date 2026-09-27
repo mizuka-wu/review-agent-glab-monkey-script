@@ -1,12 +1,14 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bot, Check, Download, ExternalLink, FileText, LoaderCircle, MessageSquare, Package,
+  Bot, Bug, Check, Download, ExternalLink, FileText, LoaderCircle, MessageSquare, Package,
   Play, Plus, RefreshCw, Send, Settings, Sparkles, Square, Trash2, Upload, X,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { FindingCard } from './components/review/FindingCard';
 import { ChatThread } from './components/ChatThread';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
+import { SettingsView } from './components/SettingsView';
+import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { Markdown } from './components/Markdown';
 import { highlightFindingOnPage, clearHighlights, injectHighlightStyles } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
@@ -74,7 +76,7 @@ export default function App({ page, adapter }: AppProps) {
   const [files, setFiles] = useState<FileDiff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [activeTab, setActiveTab] = useState<'review' | 'settings'>('review');
+  const [activeTab, setActiveTab] = useState<'chat' | 'config' | 'debug'>('chat');
   const [panelOpen, setPanelOpen] = useState(false);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('idle');
   const [reviewError, setReviewError] = useState('');
@@ -104,9 +106,18 @@ export default function App({ page, adapter }: AppProps) {
   const [sortBy, setSortBy] = useState<'severity' | 'line' | 'path'>('severity');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
-  const [showChat, setShowChat] = useState(false);
+  const [showFindings, setShowFindings] = useState(true);
+  const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
+  const [debugFilter, setDebugFilter] = useState<'all' | 'info' | 'warn' | 'error' | 'debug'>('all');
 
   // Panel drag state
+  const addLog = (level: DebugLogEntry['level'], source: string, message: string, detail?: string) => {
+    setDebugLogs(prev => [...prev.slice(-499), {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: new Date().toISOString(),
+      level, source, message, detail,
+    }]);
+  };
   const panelRef = useRef<HTMLElement>(null);
   const dragState = useRef<{ startX: number; startY: number; startTop: number; startRight: number } | null>(null);
 
@@ -213,7 +224,7 @@ export default function App({ page, adapter }: AppProps) {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
-        setActiveTab((current) => current === 'review' ? 'settings' : 'review');
+        setActiveTab((current) => current === 'chat' ? 'config' : 'chat');
       }
     };
     document.addEventListener('keydown', handleKeyDown);
@@ -343,7 +354,7 @@ export default function App({ page, adapter }: AppProps) {
         id: `error-${Date.now()}`, role: 'assistant', error: true,
         content: '尚未配置可用的 OpenAI-compatible 模型。请在“设置”中填写 Base URL、模型和 API Key。',
       }]);
-      setActiveTab('settings');
+      setActiveTab('config');
       return;
     }
     setResponding(true);
@@ -408,10 +419,15 @@ export default function App({ page, adapter }: AppProps) {
   };
 
   const startReview = async (scope: 'all' | 'selection') => {
+    if (!runtimeConfigured) {
+      setToast('请先在设置中配置模型（API Key）');
+      setActiveTab('config');
+      return;
+    }
     reviewAbort.current?.abort();
     const controller = new AbortController();
     reviewAbort.current = controller;
-    setActiveTab('review');
+    setActiveTab('chat');
     setReviewStatus('preparing');
     setReviewError('');
     setFindings([]);
@@ -425,7 +441,7 @@ export default function App({ page, adapter }: AppProps) {
         headSha: mrContext.diffRefs.headSha,
         title: mrContext.title,
         scope,
-        source: runtimeConfigured ? 'model' : 'rule',
+        source: 'model',
         settings,
       })
       : undefined;
@@ -745,6 +761,11 @@ export default function App({ page, adapter }: AppProps) {
     }
   };
 
+  const compactSelect: React.CSSProperties = {
+    padding: '4px 8px', borderRadius: 6, border: '1px solid #d4dae3',
+    fontSize: 11, color: '#2d3748', background: '#ffffff', cursor: 'pointer',
+  };
+
   return (
     <div ref={hostRef} className="relative">
       {!panelOpen && (
@@ -768,28 +789,33 @@ export default function App({ page, adapter }: AppProps) {
           </button>
         </div>
 
-        {/* Tabs */}
-        <div role="tablist" className="grid grid-cols-2 border-t border-white/10" style={{ background: '#1e2536' }}>
-          {([
-            { id: 'review' as const, label: 'Review', icon: Sparkles, badge: findings.length },
-            { id: 'settings' as const, label: '设置', icon: Settings },
-          ]).map(({ id, label, icon: Icon, badge }) => (
-            <button key={id} type="button" role="tab" aria-selected={activeTab === id}
-              onClick={() => setActiveTab(id)}
-              style={{ color: activeTab === id ? '#ffffff' : '#a0aec0' }}
-              className={`flex items-center justify-center gap-1.5 min-h-[42px] text-xs border-0 border-b-2 cursor-pointer transition-colors ${
-                activeTab === id
-                  ? 'border-blue-400 bg-white/5 font-semibold'
-                  : 'border-transparent hover:bg-white/10'
-              }`}>
-              <Icon size={14} />{label}
-              {badge ? <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold" style={{ background: '#d3453b', color: '#fff' }}>{badge}</span> : null}
-            </button>
-          ))}
+        {/* Action bar */}
+        <div className="flex items-center gap-2 border-t border-white/10 px-3 py-2" style={{ background: '#1e2536' }}>
+          <button type="button" onClick={() => void startReview(attachment ? 'selection' : 'all')}
+            disabled={files.length === 0 && !attachment && !selection}
+            className="flex items-center gap-1.5 min-h-[32px] px-3 rounded-md text-xs font-semibold border-0 cursor-pointer disabled:opacity-40"
+            style={{ background: '#245fc7', color: '#fff' }}>
+            <Play size={13} />开始 Review
+            {findings.length > 0 && <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold" style={{ background: 'rgba(255,255,255,0.25)' }}>{findings.length}</span>}
+          </button>
+          <div className="flex-1" />
+          <button type="button" onClick={() => setActiveTab(activeTab === 'debug' ? 'chat' : 'debug')} aria-label="调试"
+            className="relative grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 cursor-pointer"
+            style={{ color: activeTab === 'debug' ? '#ffffff' : '#a0aec0' }}>
+            <Bug size={15} />
+            {debugLogs.filter(l => l.level === 'error').length > 0 && (
+              <span style={{ position: 'absolute', top: 2, right: 2, width: 7, height: 7, borderRadius: '50%', background: '#d3453b' }} />
+            )}
+          </button>
+          <button type="button" onClick={() => setActiveTab(activeTab === 'config' ? 'chat' : 'config')} aria-label="配置"
+            className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 cursor-pointer"
+            style={{ color: activeTab === 'config' ? '#ffffff' : '#a0aec0' }}>
+            <Settings size={15} />
+          </button>
         </div>
 
         {/* Body */}
-        <div style={{ background: '#ffffff', overflowY: 'auto', flex: '1 1 0', minHeight: 0 }}>
+        <div style={{ background: '#ffffff', overflow: 'hidden', flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {loadError && (
             <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               {loadError}
@@ -801,460 +827,205 @@ export default function App({ page, adapter }: AppProps) {
               网络已断开，部分功能可能不可用。
             </div>
           )}
-          {activeTab === 'review' && (
-            <div style={{ padding: '16px', overflowX: 'clip', boxSizing: 'border-box' }}>
-              <h3 style={{ color: '#1a2332', fontSize: '13px', fontWeight: 600, margin: '0 0 5px 0' }}>Review 范围 {!runtimeConfigured && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#fff0c7', color: '#91620a' }}>规则模式</span>}</h3>
-              <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>
-                {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
-              </p>
-              {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
-                <div style={{ padding: '12px', borderRadius: '7px', border: '1px solid #d4dae3', background: '#f0f3f7', boxSizing: 'border-box' }}>
-                  <h3 style={{ color: '#1a2332', fontSize: '13px', fontWeight: 600, margin: '0 0 5px 0' }}>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
-                  <p style={{ color: '#4a5568', fontSize: '12px', margin: 0, lineHeight: 1.5 }}>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
-                  <div className="flex flex-wrap gap-2 mt-2.5">
-                    <Button size="sm" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</Button>
-                    <Button variant="outline" size="sm" onClick={() => setShowChat(!showChat)}>✦ {showChat ? '收起提问' : '提问'}</Button>
-                    {savedSession && <Button variant="outline" size="sm" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</Button>}
+          {/* Main view: Chat + Findings */}
+          {activeTab === 'chat' && (
+            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
+              {/* Status bar */}
+              {(reviewStatus === 'running' || reviewStatus === 'preparing' || reviewStatus === 'normalizing') && (
+                <div style={{ padding: '6px 12px', background: '#e8f0fe', borderBottom: '1px solid #d4dae3', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#245fc7' }}>
+                    <LoaderCircle size={13} className="animate-spin" />
+                    {reviewStatus === 'preparing' ? '准备中…' : reviewStatus === 'normalizing' ? '整理 Findings…' : 'Review 进行中…'}
                   </div>
-                  {savedSession && <p className="text-[10px] mt-2" style={{ color: '#6b778b' }}>上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
                 </div>
               )}
-              {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && (
-                <div style={{ padding: '12px', borderRadius: '7px', border: '1px solid #d4dae3', background: '#f0f3f7', boxSizing: 'border-box' }}>
-                  <div className="flex items-center justify-between mb-2.5">
-                    <strong className="text-xs">{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.1)" }}>进行中</span>
-                  </div>
-                  <div className="w-full h-[7px] rounded-full bg-border overflow-hidden">
-                    <div className="h-full rounded-full transition-all" style={{ background: "#245fc7", width: reviewStatus === 'running' ? '55%' : reviewStatus === 'normalizing' ? '85%' : '20%' }} />
-                  </div>
-                  <Button variant="destructive" size="xs" className="mt-2.5" onClick={cancelReview}><Square size={13} />取消</Button>
+              {reviewError && (
+                <div style={{ padding: '6px 12px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12, color: '#d3453b', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{reviewError}</span>
+                  <button type="button" onClick={() => setReviewError('')} style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#d3453b' }}><X size={13} /></button>
                 </div>
               )}
-            {reviewStatus === 'completed' && <>
-              <div className="grid grid-cols-4 gap-1.5 mb-3">
-                {([
-                  [findings.length, 'Findings'],
-                  [findings.filter((f) => f.severity === 'high' || f.severity === 'critical').length, 'High+'],
-                  [findings.filter((f) => f.status === 'published').length, '已发布'],
-                  [findings.filter((f) => f.status === 'ignored').length, '已忽略'],
-                ]).map(([val, label]) => (
-                  <div key={label as string} className="p-2 text-center rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                    <strong className="block text-base" style={{ color: "#1a2332" }}>{val}</strong>
-                    <span className="text-[9px]" style={{ color: "#4a5568" }}>{label}</span>
-                  </div>
-                ))}
-              </div>
 
-              <div className="grid grid-cols-4 gap-1 mb-2.5">
-                <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} aria-label="按严重度筛选"
-                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
-                  <option value="all">全部严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
-                </select>
-                <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} aria-label="按分类筛选"
-                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
-                  <option value="all">全部分类</option><option value="bug">缺陷</option><option value="security">安全</option><option value="performance">性能</option><option value="maintainability">可维护性</option><option value="test">测试</option>
-                </select>
-                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="按状态筛选"
-                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
-                  <option value="all">全部状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
-                </select>
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序方式"
-                  className="p-1.5 text-[10px] rounded border" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#1a2332" }}>
-                  <option value="severity">按严重度</option><option value="line">按行号</option><option value="path">按文件</option>
-                </select>
-              </div>
-              {filteredFindings.length !== findings.length && (
-                <p className="text-xs   m-0 mb-2" style={{ color: "#4a5568" }}>显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
-              )}
-
-              <div className="flex items-center gap-2 mb-2.5 p-2 rounded-md border text-xs" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                <Button variant="outline" size="xs" onClick={() => setShowChat(!showChat)}><MessageSquare size={13} />{showChat ? '收起提问' : '提问'}</Button>
-                {selectedFindings.size > 0 ? (
-                  <>
-                    <span className="font-semibold" style={{ color: "#1a2332" }}>已选 {selectedFindings.size} 个</span>
-                    <Button size="xs" disabled={!mrContext || batchPublishing} onClick={() => setShowBatchConfirm(true)}>
-                      <MessageSquare size={13} />{batchPublishing ? '发布中…' : `批量发布 ${selectedFindings.size} 条`}
-                    </Button>
-                    <Button variant="outline" size="xs" onClick={clearSelection}>取消选择</Button>
-                  </>
-                ) : (
-                  <Button variant="outline" size="xs" onClick={selectAllPublishable}>全选可发布</Button>
-                )}
-              </div>
-              <div className="grid gap-2">{filteredFindings.slice(0, visibleFindingCount).map((finding) => <FindingCard key={finding.id} finding={finding} expanded={expandedFinding === finding.id} selected={selectedFindings.has(finding.id)} publishDisabled={!mrContext || publishing || finding.anchor?.publishable === false} onToggle={() => setExpandedFinding((current) => current === finding.id ? '' : finding.id)} onSelect={() => toggleFindingSelection(finding.id)} onLocate={() => locateFinding(finding)} onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论草稿已复制'); }} onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }} onEdit={(edit) => editFinding(finding.id, edit)} onIgnore={() => ignoreFinding(finding.id)} />)}</div>
-              {filteredFindings.length > visibleFindingCount && (
-                <Button variant="outline" className="w-full mt-2" onClick={() => setVisibleFindingCount((c) => c + 20)}>
-                  显示更多（还有 {filteredFindings.length - visibleFindingCount} 个）
-                </Button>
-              )}
-            </>}
-            </div>
-          )}
-
-
-          {/* Chat section at bottom of Review tab */}
-          {showChat && (
-            <div className="border-t" style={{ borderColor: "#d4dae3" }}>
-              {attachment && (
-                <div className="flex items-center justify-between gap-2 mx-3 mt-2 p-1.5 rounded border border-info/20 text-[10px]" style={{ color: "#245fc7", background: "rgba(36,95,199,0.1)" }}>
-                  <span className="truncate">{attachment.filePath}:L{attachment.startLine}-{attachment.endLine}</span>
-                  <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件" className="shrink-0 border-0 bg-transparent cursor-pointer"><X size={13} /></button>
-                </div>
-              )}
-              <ChatThread
-                messages={messages}
-                responding={responding}
-                onSend={(text) => {
-                  if (!text.trim() || responding) return;
-                  const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content: text, attachment };
-                  const history = [...messages, userMessage];
-                  setMessages(history);
-                  setDraft('');
-                  setAttachment(undefined);
-                  if (!runtimeConfigured) {
-                    setMessages([...history, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: '尚未配置模型。请在设置中填写 API Key。' }]);
-                    setActiveTab('settings');
-                    return;
-                  }
-                  setResponding(true);
-                  setToolEvents([]);
-                  void (async () => {
-                    try {
-                      const streamId = `stream-${Date.now()}`;
-                      setMessages((c) => [...c, { id: streamId, role: 'assistant', content: '' }]);
-                      let streamed = '';
-                      const answer = await runtime.chat(history, attachment, undefined, (token) => {
-                        streamed += token;
-                        setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: streamed } : m));
-                      });
-                      setMessages((c) => c.map((m) => m.id === streamId ? { ...m, content: answer } : m));
-                    } catch (error) {
-                      setMessages((c) => [...c, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: `模型调用失败：${String(error)}` }]);
-                    } finally {
-                      setResponding(false);
-                    }
-                  })();
-                }}
-              />
-            </div>
-          )}
-
-          {activeTab === 'settings' && <div style={{ padding: '16px', overflowX: 'clip', boxSizing: 'border-box' }}>
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>模型配置</h3>
-            <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
-            <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] rounded-md" style={{ background: "#f0f3f7" }}>
-              {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={`min-h-8 px-2 py-1 text-[11px] font-semibold rounded border-0 cursor-pointer transition-colors ${settings.provider === key ? 'bg-card text-primary shadow-sm' : 'bg-transparent text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => {
-                    const provider = key as RuntimeSettings['provider'];
-                    setSettings({
-                      ...settings,
-                      provider,
-                      modelBaseUrl: preset.defaultBaseUrl,
-                      model: preset.defaultModel,
-                    });
-                  }}
-                >{preset.label}</button>
-              ))}
-            </div>
-            <div className="grid gap-3">
-              <div className="grid gap-1.5">
-                <label htmlFor="api-key">API Key <span style={{ color: '#a52a22', fontWeight: 400 }}>唯一必填</span></label>
-                <input id="api-key" type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} autoComplete="off" placeholder={providerPresets[settings.provider].placeholderKey} />
-              </div>
-              <div className="grid gap-1.5">
-                <label htmlFor="model-url">Base URL</label>
-                <input id="model-url" value={settings.modelBaseUrl} onChange={(event) => setSettings({ ...settings, modelBaseUrl: event.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} />
-                <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>自部署/企业网关才需要改</span>
-              </div>
-              <div className="grid gap-1.5">
-                <label htmlFor="model-name">模型名称</label>
-                <input id="model-name" value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} placeholder={providerPresets[settings.provider].defaultModel} />
-                <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>留空使用默认模型</span>
-              </div>
-            </div>
-
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>输出设置</h3>
-            <div className="grid gap-3">
-              <div className="grid gap-1.5">
-                <label htmlFor="effort">审查强度</label>
-                <select id="effort" value={settings.effort} onChange={(event) => setSettings({ ...settings, effort: event.target.value as RuntimeSettings['effort'] })}>
-                  <option value="fast">快速（仅高置信度）</option>
-                  <option value="balanced">均衡（推荐）</option>
-                  <option value="thorough">全面（更多问题）</option>
-                </select>
-              </div>
-              <div className="grid gap-1.5">
-                <label htmlFor="language">输出语言</label>
-                <select id="language" value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as RuntimeSettings['language'] })}>
-                  <option value="zh-CN">简体中文</option>
-                  <option value="en-US">English</option>
-                </select>
-              </div>
-            </div>
-
-            <details className="mt-4 border rounded-md overflow-hidden" style={{ borderColor: "#d4dae3" }}>
-              <summary>高级设置（一般不需要改）</summary>
-              <div className="grid gap-3" style={{ marginTop: 10 }}>
-                <div className="grid gap-1.5">
-                  <label htmlFor="gitlab-token">GitLab PAT</label>
-                  <input id="gitlab-token" type="password" value={settings.gitlabToken} onChange={(event) => setSettings({ ...settings, gitlabToken: event.target.value })} autoComplete="off" placeholder="留空使用 Cookie 认证" />
-                  <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>留空即可，脚本自动使用页面 Cookie + CSRF</span>
-                </div>
-                <div className="grid gap-1.5">
-                  <label htmlFor="auth-mode">API 认证方式</label>
-                  <select id="auth-mode" value={settings.auth?.mode ?? 'bearer'} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, mode: e.target.value as RuntimeSettings['auth']['mode'] } })}>
-                    <option value="bearer">Bearer Token（默认）</option>
-                    <option value="api-key-header">API Key Header</option>
-                    <option value="query-param">Query Parameter</option>
-                    <option value="custom">自定义 Header</option>
-                  </select>
-                  <span className="text-[9px] opacity-70" style={{ color: '#6b778b' }}>企业网关才需要改</span>
-                </div>
-                {(settings.auth?.mode === 'api-key-header' || settings.auth?.mode === 'custom') && (
-                  <div className="grid gap-1.5">
-                    <label htmlFor="auth-header-name">Header 名称</label>
-                    <input id="auth-header-name" value={settings.auth?.apiKeyHeader ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyHeader: e.target.value } })} placeholder="api-key" />
-                  </div>
-                )}
-                {settings.auth?.mode === 'query-param' && (
-                  <div className="grid gap-1.5">
-                    <label htmlFor="auth-param-name">Query 参数名</label>
-                    <input id="auth-param-name" value={settings.auth?.apiKeyQueryParam ?? ''} onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, apiKeyQueryParam: e.target.value } })} placeholder="key" />
-                  </div>
-                )}
-              </div>
-            </details>
-
-            <div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border border-destructive bg-transparent cursor-pointer" style={{ color: "#d3453b" }} onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
-            </div>
-            <div className="grid gap-2"><div className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}><div className="flex items-center justify-between gap-2.5"><strong>GitLab API</strong><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
-
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>Token 用量统计</h3>
-            {usageSummary ? (
-              <div className="p-3 rounded-lg border mt-3" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
-                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>输入 Tokens</span><strong>{formatTokenCount(usageSummary.totalInputTokens)}</strong></div>
-                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>输出 Tokens</span><strong>{formatTokenCount(usageSummary.totalOutputTokens)}</strong></div>
-                <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>估算费用</span><strong>{formatCost(usageSummary.totalEstimatedCost)}</strong></div>
-                {Object.entries(usageSummary.byModel).map(([key, data]) => (
-                  <div key={key} className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3", fontSize: 9, opacity: 0.8 }}>
-                    <span>{key}（{data.count} 次）</span>
-                    <span>{formatTokenCount(data.inputTokens + data.outputTokens)} tok · {formatCost(data.estimatedCost)}</span>
-                  </div>
-                ))}
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332", marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
-              </div>
-            ) : (
-              <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>暂无用量记录。模型调用后会自动统计。</p>
-            )}
-
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
-            <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
-
-            <div className="grid gap-2 mb-3">
-              {rulePacks.map((pack) => (
-                <div key={pack.id} className={`rounded-md border border-border bg-card overflow-hidden${pack.enabled ? '' : ' opacity-60'}`}>
-                  <div className="flex items-center justify-between gap-2.5 p-2.5">
-                    <div className="flex items-center gap-1.5 min-w-0 text-xs">
-                      <strong>{pack.name}</strong>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">v{pack.version}</span>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">{pack.rules.length} 条规则</span>
-                      {pack.builtIn && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.15)" }}>内置</span>}
-                    </div>
-                    <div className="flex items-center gap-0.5 shrink-0">
-                      <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title={pack.enabled ? '禁用' : '启用'} onClick={() => void toggleRulePack(pack.id)}>
-                        {pack.enabled ? '✓' : '✗'}
-                      </button>
-                      <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="编辑" onClick={() => setEditingPackId(editingPackId === pack.id ? null : pack.id)}>
-                        <FileText size={13} />
-                      </button>
-                      {!pack.builtIn && <>
-                        <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="导出" onClick={() => handleExportPack(pack)}>
-                          <Download size={13} />
-                        </button>
-                        <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="删除" onClick={() => void deleteRulePack(pack.id)}>
-                          <Trash2 size={13} />
-                        </button>
-                      </>}
-                    </div>
-                  </div>
-                  {pack.description && <p className="text-[10px] leading-relaxed" style={{ color: '#6b778b' }}>{pack.description}</p>}
-
-                  {editingPackId === pack.id && (
-                    <div className="p-2.5 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                      {!pack.builtIn && (
-                        <div className="grid gap-3" style={{ marginBottom: 8 }}>
-                          <div className="grid gap-1.5">
-                            <label>名称</label>
-                            <input value={pack.name} onChange={(e) => void updatePack({ ...pack, name: e.target.value })} />
-                          </div>
-                          <div className="grid gap-1.5">
-                            <label>版本</label>
-                            <input value={pack.version} onChange={(e) => void updatePack({ ...pack, version: e.target.value })} />
-                          </div>
-                          <div className="grid gap-1.5" style={{ gridColumn: '1 / -1' }}>
-                            <label>描述</label>
-                            <input value={pack.description ?? ''} onChange={(e) => void updatePack({ ...pack, description: e.target.value })} placeholder="可选描述" />
-                          </div>
-                        </div>
-                      )}
-                      {pack.rules.map((rule) => (
-                        <div key={rule.id} className={`p-2 rounded-md border border-border bg-card mb-1.5${rule.enabled ? '' : ' opacity-55'}`}>
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1.5 min-w-0 cursor-pointer text-[11px]">
-                              <input type="checkbox" checked={rule.enabled} onChange={() => void toggleRule(pack.id, rule.id)} />
-                              <span className="truncate font-semibold" style={{ color: "#1a2332" }}>{rule.title}</span>
-                            </label>
-                            <div className="flex gap-1 ml-auto shrink-0">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${rule.severity === 'high' || rule.severity === 'critical' ? 'error' : rule.severity === 'medium' ? 'warning' : 'neutral'}`}>{rule.severity}</span>
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-secondary text-secondary-foreground">{rule.category}</span>
-                            </div>
-                            {!pack.builtIn && (
-                              <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-white/10" title="删除规则" onClick={() => void removeRuleFromPack(pack.id, rule.id)}>
-                                <X size={12} />
-                              </button>
-                            )}
-                          </div>
-                          {rule.matchPatterns.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
-                              {rule.matchPatterns.map((pattern, idx) => (
-                                <code key={idx} className="px-1.5 py-0.5 rounded text-[9px] font-mono break-all" style={{ background: "#f0f3f7", color: "#1a2332" }}>{pattern.pattern}</code>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {!pack.builtIn && (
-                        <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332", marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
-                          <Plus size={13} /> 添加规则
-                        </button>
-                      )}
+              {/* Findings header - always visible when findings exist */}
+              {findings.length > 0 && (
+                <div style={{ flexShrink: 0, borderBottom: '1px solid #d4dae3' }}>
+                  <button type="button" onClick={() => setShowFindings(!showFindings)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: 0, background: '#f4f6f9', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#1a2332' }}>Findings</span>
+                    <span style={{ fontSize: 11, color: '#245fc7', fontWeight: 700 }}>{findings.length}</span>
+                    {findings.filter(f => f.severity === 'high' || f.severity === 'critical').length > 0 && <span style={{ fontSize: 10, color: '#d3453b', fontWeight: 600 }}>{findings.filter(f => f.severity === 'high' || f.severity === 'critical').length} High+</span>}
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 11, color: '#5a6b80' }}>{showFindings ? '▲' : '▼'}</span>
+                  </button>
+                  {showFindings && (
+                    <div style={{ maxHeight: '50%', overflowY: 'auto', borderTop: '1px solid #e8edf3', minHeight: 120 }}>
+                      <div style={{ display: 'flex', gap: 4, padding: '6px 12px', flexWrap: 'wrap' }}>
+                        <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)} style={compactSelect} aria-label="严重度筛选">
+                          <option value="all">严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
+                        </select>
+                        <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={compactSelect} aria-label="分类筛选">
+                          <option value="all">分类</option><option value="bug">缺陷</option><option value="security">安全</option><option value="performance">性能</option><option value="maintainability">可维护性</option><option value="testing">测试</option>
+                        </select>
+                        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={compactSelect} aria-label="状态筛选">
+                          <option value="all">状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
+                        </select>
+                        {selectedFindings.size > 0 && (
+                          <button type="button" onClick={() => setShowBatchConfirm(true)}
+                            style={{ padding: '3px 10px', borderRadius: 5, border: 0, background: '#245fc7', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                            批量发布 ({selectedFindings.size})
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 12px 8px' }}>
+                        {filteredFindings.slice(0, visibleFindingCount).map(finding => (
+                          <FindingCard
+                            key={finding.id}
+                            finding={finding}
+                            expanded={expandedFinding === finding.id}
+                            selected={selectedFindings.has(finding.id)}
+                            onToggleExpand={() => setExpandedFinding(expandedFinding === finding.id ? '' : finding.id)}
+                            onToggleSelect={() => {
+                              const next = new Set(selectedFindings);
+                              if (next.has(finding.id)) next.delete(finding.id); else next.add(finding.id);
+                              setSelectedFindings(next);
+                            }}
+                            onEdit={(edit) => editFinding(finding.id, edit)}
+                            onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }}
+                            onIgnore={() => { const next = findings.map(f => f.id === finding.id ? { ...f, status: 'ignored' as const } : f); setFindings(next); persistFindings(next); }}
+                            onNavigate={() => void highlightFindingOnPage(finding)}
+                            onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论已复制'); }}
+                          />
+                        ))}
+                        {filteredFindings.length > visibleFindingCount && (
+                          <button type="button" onClick={() => setVisibleFindingCount(c => c + 20)}
+                            style={{ padding: '6px', borderRadius: 5, border: '1px solid #d4dae3', background: '#fff', color: '#245fc7', fontSize: 11, cursor: 'pointer' }}>
+                            加载更多 ({filteredFindings.length - visibleFindingCount})
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
-              ))}
-            </div>
+              )}
 
-            <div className="grid gap-2.5 pt-2.5 border-t" style={{ borderColor: "#d4dae3" }}>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => void createNewPack()}>
-                <Plus size={13} /> 新建规则包
-              </button>
-              <div className="grid gap-1.5">
-                <textarea
-                  className="w-full min-h-[60px] p-2 text-[10px] font-mono rounded-md border resize-y" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }}
-                  value={importText}
-                  onChange={(e) => { setImportText(e.target.value); setImportError(''); }}
-                  placeholder='粘贴规则包 JSON…'
-                  rows={3}
-                />
-                {importError && <p className="text-[10px] m-0" style={{ color: "#d3453b" }}>{importError}</p>}
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} disabled={!importText.trim()} onClick={() => void handleImportPack()}>
-                  <Upload size={13} /> 导入规则包
-                </button>
-              </div>
-            </div>
-
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
-            <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
-            <div className="grid gap-3">
-              <div className="grid gap-1.5">
-                <label htmlFor="mcp-enabled">启用 MCP</label>
-                <select id="mcp-enabled" value={settings.mcp?.enabled ? 'on' : 'off'} onChange={(e) => setSettings({ ...settings, mcp: { ...settings.mcp, enabled: e.target.value === 'on' } })}>
-                  <option value="off">关闭</option>
-                  <option value="on">开启</option>
-                </select>
-              </div>
-              <div className="grid gap-1.5">
-                <label htmlFor="mcp-url">MCP Server URL</label>
-                <input
-                  id="mcp-url"
-                  value={settings.mcp?.serverUrl ?? ''}
-                  onChange={(e) => setSettings({ ...settings, mcp: { ...settings.mcp, serverUrl: e.target.value } })}
-                  placeholder="http://127.0.0.1:3000/mcp"
-                  disabled={!settings.mcp?.enabled}
-                />
-              </div>
-            </div>
-            <div className="grid gap-2" style={{ marginTop: 10 }}>
-              <div className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                <div className="flex items-center justify-between gap-2.5">
-                  <strong>MCP 传输类型</strong>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.15)" }}>Streamable HTTP</span>
-                </div>
-                <p>浏览器油猴脚本仅支持 HTTP 传输（POST JSON-RPC）。不支持 stdio 本地进程。URL 以 /sse 结尾时自动使用 SSE 模式。</p>
-              </div>
-            </div>
-
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>兼容性诊断</h3>
-            {capabilities && <div className="grid gap-2">
-              <div className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                <div className="flex items-center justify-between gap-2.5">
-                  <strong>GitLab 实例状态</strong>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.gitlabVersion ?? '未知版本'}</span>
-                </div>
-                <div className="p-3 rounded-lg border mt-3" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>认证</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.authenticated ? 'success' : 'warning'}`}>{capabilities.authMode}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>API 读取</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canReadMergeRequests ? 'success' : 'error'}`}>{capabilities.canReadMergeRequests ? '可用' : '不可用'}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>代码搜索</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canSearchCode ? 'success' : 'neutral'}`}>{capabilities.canSearchCode ? '可用' : '不可用'}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>评论发布</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.canCreateDiscussions ? 'success' : 'error'}`}>{capabilities.canCreateDiscussions ? '可用' : '不可用'}</span></div>
-                  <div className="flex items-center justify-between py-1.5 border-t first:border-t-0 text-[10px]" style={{ borderColor: "#d4dae3" }}><span>CSRF Token</span><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${capabilities.csrfAvailable ? 'success' : 'warning'}`}>{capabilities.csrfAvailable ? '存在' : '缺失'}</span></div>
-                </div>
-              </div>
-            </div>}
-            {capabilities?.warnings && capabilities.warnings.length > 0 && (
-              <div className="flex items-center justify-between gap-2.5 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert" style={{ margin: '8px 0 0' }}>
-                {capabilities.warnings.join(' ')}
-              </div>
-            )}
-            {diagnostics.length > 0 && (
-              <div className="p-3 rounded-lg border mt-3" style={{ background: "#f0f3f7", borderColor: "#d4dae3", marginTop: 8 }}>
-                {diagnostics.map((diag, idx) => (
-                  <div key={idx} className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[9px] opacity-85">
-                    <span className="w-3.5 text-center font-bold shrink-0">{diag.level === 'error' ? '✗' : diag.level === 'warn' ? '⚠' : '·'}</span>
-                    <span>[{diag.source}] {diag.message}</span>
+              {/* Diff info */}
+              {findings.length === 0 && (
+                <div style={{ padding: '12px', textAlign: 'center', flexShrink: 0 }}>
+                  <div style={{ fontSize: 12, color: '#8a9bb0' }}>
+                    {files.length > 0 ? `已读取 ${files.length} 个文件的 Diff` : '正在读取 MR Diff…'}
                   </div>
-                ))}
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2 mt-2.5" style={{ marginTop: 8 }}>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => {
-                const config = exportSiteConfig(page, capabilities ?? {
-                  authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false,
-                  canSearchCode: false, canReadRepository: true, canPaginateDiffs: true,
-                  maxDiffPageSize: 100, authMode: 'none', domAvailable: true, csrfAvailable: true, warnings: [],
-                }, settings as unknown as Record<string, unknown>);
-                void navigator.clipboard?.writeText(config);
-                setToast('站点配置已复制到剪贴板');
-              }}><Download size={13} /> 导出配置</button>
-            </div>
+                </div>
+              )}
 
-            {sessionHistory.length > 0 && <>
-              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>Review 会话历史</h3>
-              <div className="grid gap-2">
-                {sessionHistory.map((session) => (
-                  <div key={session.id} className="grid gap-2 p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                    <div className="flex items-center justify-between gap-2.5">
-                      <strong>{session.projectPath} !{session.mergeRequestIid}</strong>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${session.status === 'completed' ? 'success' : session.status === 'failed' ? 'error' : session.status === 'cancelled' ? 'warning' : 'info'}`}>{session.status}</span>
-                    </div>
-                    <p style={{ fontSize: 9 }}>{session.findings.length} Findings · {session.source} · {new Date(session.updatedAt).toLocaleString()}</p>
+              {/* Chat - fills remaining space */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                {attachment && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 12px 0', padding: '5px 8px', borderRadius: 6, background: '#e8f0fe', fontSize: 11, flexShrink: 0 }}>
+                    <FileText size={12} style={{ color: '#245fc7', flexShrink: 0 }} />
+                    <span style={{ color: '#245fc7', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filePath}:{attachment.startLine}-{attachment.endLine}</span>
+                    <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件"
+                      style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#8a9bb0', padding: 2 }}><X size={12} /></button>
                   </div>
-                ))}
+                )}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <ChatThread
+                  draft={draft}
+                  onDraftChange={setDraft}
+                  messages={messages}
+                  onSend={(text) => void sendMessage(text)}
+                  responding={responding}
+                />
+                </div>
               </div>
-            </>}
-          </div>}
+            </div>
+          )}
+
+          {/* Config overlay */}
+          {activeTab === 'config' && (
+            <div style={{ flex: '1 1 0%', overflowY: 'auto', minHeight: 0 }}>
+              <SettingsView
+                settings={settings}
+                onSettingsChange={setSettings}
+                onSave={() => { void saveSettings(settings).then(() => setToast('设置已保存')); }}
+                onTestModel={() => void testModelConnection()}
+                onClearApiKey={() => { setSettings({ ...settings, apiKey: '' }); void clearSensitiveSettings(); setToast('密钥已清除'); }}
+                rulePacks={rulePacks}
+                onToggleRulePack={(id, enabled) => {
+                  const next = rulePacks.map(p => p.id === id ? { ...p, enabled } : p);
+                  setRulePacks(next);
+                  void saveRulePacks(next);
+                }}
+                onDeleteRulePack={(id) => {
+                  const next = rulePacks.filter(p => p.id !== id);
+                  setRulePacks(next);
+                  void removeRulePack(id);
+                }}
+                onImportRulePack={(json) => {
+                  try {
+                    const pack = importRulePack(json);
+                    const next = [...rulePacks, pack];
+                    setRulePacks(next);
+                    void saveRulePacks(next);
+                    setToast('规则包已导入');
+                  } catch (e) {
+                    setToast(e instanceof Error ? e.message : '导入失败');
+                  }
+                }}
+                onExportRulePack={(id) => {
+                  const pack = rulePacks.find(p => p.id === id);
+                  if (pack) {
+                    void navigator.clipboard?.writeText(exportRulePack(pack));
+                    setToast('规则包 JSON 已复制');
+                  }
+                }}
+                onUpdateRulePack={(id, patch) => {
+                  const next = rulePacks.map(p => p.id === id ? { ...p, ...patch } : p);
+                  setRulePacks(next);
+                  void saveRulePacks(next);
+                }}
+                importError={importError}
+                usageSummary={usageSummary}
+                onClearUsage={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}
+                capabilities={capabilities}
+                onProbeCapabilities={() => {
+                  void probeCapabilities(page.origin, settings.gitlabToken).then(({ capabilities: caps, diagnostics: diags }) => {
+                    setCapabilities(caps);
+                    setDiagnostics(diags);
+                    setToast('权限检测完成');
+                  });
+                }}
+                onExportSiteConfig={() => {
+                  const config = exportSiteConfig(page, capabilities ?? { authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false });
+                  void navigator.clipboard?.writeText(JSON.stringify(config, null, 2));
+                  setToast('站点配置已复制');
+                }}
+                testing={false}
+              />
+
+            </div>
+          )}
+
+          {/* Debug overlay - separate from config */}
+          {activeTab === 'debug' && (
+            <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <DebugPanel
+                logs={debugLogs}
+                diagnostics={diagnostics}
+                toolEvents={toolEvents}
+                usageSummary={usageSummary}
+                reviewStatus={reviewStatus}
+                findingsCount={findings.length}
+                filesCount={files.length}
+                modelConfigured={runtimeConfigured}
+                mcpEnabled={settings.mcp?.enabled ?? false}
+                onClearLogs={() => setDebugLogs([])}
+              />
+            </div>
+          )}
         </div>
       </aside>
 
-      {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('review'); setPanelOpen(true); setShowChat(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
+      {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('chat'); setPanelOpen(true); setShowChat(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
       {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border" style={{ background: "#ffffff", borderColor: "#d4dae3" }} role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b" style={{ borderColor: "#d4dae3" }}><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:" style={{ background: "#e8edf3" }} onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
