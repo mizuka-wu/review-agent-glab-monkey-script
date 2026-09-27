@@ -108,7 +108,7 @@ export function FindingCard({
             {edit ? (
               <>
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={() => setEdit(undefined)}><X size={14} />取消</button>
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }} onClick={saveEdit} disabled={editInvalid}><Save size={14} />保存修改</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md cursor-pointer" style={{ color: "#ffffff", background: "#245fc7", border: "1px solid #245fc7" }} onClick={saveEdit} disabled={editInvalid}><Save size={14} />保存修改</button>
               </>
             ) : (
               <>
@@ -117,7 +117,7 @@ export function FindingCard({
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md bg-white border border-[#d4dae3] cursor-pointer" style={{ color: '#1a2332' }} onClick={onCopy}><Copy size={14} />复制评论</button>
                 <button
                   type="button"
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md -foreground border border-primary cursor-pointer" style={{ color: "#245fc7", background: "#245fc7" }}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[30px] px-2 py-1 text-xs font-semibold rounded-md cursor-pointer" style={{ color: "#ffffff", background: "#245fc7", border: "1px solid #245fc7" }}
                   onClick={onPublish}
                   disabled={publishDisabled || finding.status === 'published'}
                   title={finding.anchor?.publishable === false ? '完整文件位置不能发布为 MR 行级 Discussion' : undefined}
