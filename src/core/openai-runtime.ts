@@ -302,6 +302,16 @@ ${background}` : '',
     return true;
   }
 
+  async listModels(signal?: AbortSignal): Promise<string[]> {
+    const response = await fetch(this.buildUrl('/models'), {
+      headers: this.headers(),
+      signal,
+    });
+    if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}`);
+    const data = await response.json() as { data?: Array<{ id: string }> };
+    return (data.data ?? []).map(m => m.id).sort();
+  }
+
   async callWithTools(
     messages: { role: 'user' | 'assistant' | 'tool'; content: string; tool_call_id?: string }[],
     tools: ToolDefinition[],

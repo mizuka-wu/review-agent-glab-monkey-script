@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Check, X, Eye, EyeOff, ChevronDown, ChevronRight, Cpu, Globe, Package, Puzzle, Shield, TestTube } from 'lucide-react';
-import type { RuntimeSettings, ModelProvider, RulePack } from '../core/types';
-import { providerPresets, defaultSettings } from '../core/settings';
+import type { RuntimeSettings, RulePack } from '../core/types';
+import { defaultSettings } from '../core/settings';
 import { BUILT_IN_PACK } from '../core/rule-packs';
 import type { UsageSummary } from '../core/usage';
 import { formatTokenCount, formatCost } from '../core/usage';
@@ -40,13 +40,6 @@ export function SettingsView({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 12, paddingBottom: 24 }}>
       {/* Model Config */}
       <Section icon={<Cpu size={15} />} title="模型配置" desc="选择提供商后自动填充默认地址和模型">
-        <ProviderPicker
-          value={settings.provider}
-          onChange={(p) => {
-            const preset = providerPresets[p];
-            onSettingsChange({ ...settings, provider: p, modelBaseUrl: preset.defaultBaseUrl, model: preset.defaultModel });
-          }}
-        />
         <div style={{ display: 'grid', gap: 10 }}>
           <Field label="API Key" required hint="唯一必填项">
             <div style={{ position: 'relative' }}>
@@ -55,7 +48,7 @@ export function SettingsView({
                 value={settings.apiKey}
                 onChange={(e) => onSettingsChange({ ...settings, apiKey: e.target.value })}
                 autoComplete="off"
-                placeholder={providerPresets[settings.provider].placeholderKey}
+                placeholder="sk-..."
                 style={inputStyle}
               />
               <button
@@ -65,12 +58,15 @@ export function SettingsView({
               >{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
             </div>
           </Field>
-          <Field label="Base URL" hint="自部署/企业网关才需要改">
-            <input value={settings.modelBaseUrl} onChange={(e) => onSettingsChange({ ...settings, modelBaseUrl: e.target.value })} placeholder={providerPresets[settings.provider].defaultBaseUrl} style={inputStyle} />
+          <Field label="Base URL" hint="OpenAI 兼容接口地址">
+            <input value={settings.modelBaseUrl} onChange={(e) => onSettingsChange({ ...settings, modelBaseUrl: e.target.value })} placeholder="https://api.openai.com/v1" style={inputStyle} />
           </Field>
-          <Field label="模型名称" hint="留空使用默认模型">
-            <input value={settings.model} onChange={(e) => onSettingsChange({ ...settings, model: e.target.value })} placeholder={providerPresets[settings.provider].defaultModel} style={inputStyle} />
-          </Field>
+          <ModelPicker
+            value={settings.model}
+            baseUrl={settings.modelBaseUrl}
+            apiKey={settings.apiKey}
+            onChange={(model) => onSettingsChange({ ...settings, model })}
+          />
           <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
             <Btn variant="outline" onClick={onClearApiKey} icon={<X size={13} />}>清除密钥</Btn>
             <Btn variant="outline" onClick={onTestModel} icon={<TestTube size={13} />} disabled={testing}>{testing ? '测试中…' : '测试模型'}</Btn>
@@ -221,24 +217,61 @@ function Field({ label, required, hint, children }: { label: string; required?: 
   );
 }
 
-function ProviderPicker({ value, onChange }: { value: ModelProvider; onChange: (p: ModelProvider) => void }) {
+function ModelPicker({ value, baseUrl, apiKey, onChange }: { value: string; baseUrl: string; apiKey: string; onChange: (model: string) => void }) {
+  const [models, setModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [manual, setManual] = useState(false);
+
+  const fetchModels = async () => {
+    if (!baseUrl) return;
+    setLoading(true);
+    setError('');
+    try {
+      const url = baseUrl.replace(/\/$/, '') + '/models';
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { data?: Array<{ id: string }> };
+      setModels((data.data ?? []).map(m => m.id).sort());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '获取模型列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, padding: 3, background: '#f0f3f7', borderRadius: 8, marginBottom: 12 }}>
-      {(Object.entries(providerPresets) as [ModelProvider, { label: string }][]).map(([key, preset]) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => onChange(key)}
-          style={{
-            padding: '7px 4px', borderRadius: 6, border: 0, cursor: 'pointer',
-            fontSize: 11, fontWeight: 500, textAlign: 'center',
-            background: value === key ? '#ffffff' : 'transparent',
-            color: value === key ? '#245fc7' : '#5a6b80',
-            boxShadow: value === key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-          }}
-        >{preset.label}</button>
-      ))}
-    </div>
+    <Field label="模型" hint={models.length > 0 ? `${models.length} 个可用模型` : '点击刷新获取模型列表'}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {manual ? (
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="gpt-4o-mini"
+            style={{ ...inputStyle, flex: 1 }}
+          />
+        ) : (
+          <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            style={{ ...inputStyle, flex: 1 }}
+          >
+            <option value="">{loading ? '加载中…' : models.length === 0 ? '— 点击刷新获取 —' : '选择模型'}</option>
+            {models.map(m => <option key={m} value={m}>{m}</option>)}
+            {value && !models.includes(value) && <option value={value}>{value}</option>}
+          </select>
+        )}
+        <Btn variant="outline" onClick={() => { if (manual) { setManual(false); } else { void fetchModels(); } }} disabled={loading && !manual}>
+          {manual ? '列表' : loading ? '…' : '刷新'}
+        </Btn>
+        <Btn variant="outline" onClick={() => setManual(!manual)}>
+          {manual ? '下拉' : '手动'}
+        </Btn>
+      </div>
+      {error && <div style={{ color: '#d3453b', fontSize: 11, marginTop: 4 }}>{error}</div>}
+    </Field>
   );
 }
 
