@@ -209,7 +209,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
+            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-3 pt-2",
             isEmpty && "justify-center",
           )}
         >
@@ -222,7 +222,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
 
           <div
             data-slot="aui_message-group"
-            className="mb-6 flex flex-col gap-y-6 empty:hidden"
+            className="mb-2 flex flex-col gap-y-2 empty:hidden"
           >
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
@@ -231,15 +231,24 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
         </div>
       </ThreadPrimitive.Viewport>
 
-      {/* Composer: fixed at bottom, outside scrollable viewport */}
-      <div
-        data-slot="aui_thread-footer"
-        className="flex flex-col gap-1.5 px-3 pb-2 pt-1.5"
-        style={{ flexShrink: 0, background: '#f8f9fb', borderTop: '1px solid #e5e7eb' }}
-      >
+      {/* Composer: fixed at bottom */}
+      <div style={{
+        flexShrink: 0,
+        background: '#f7f8fa',
+        borderTop: '1px solid #e2e5ea',
+        padding: '10px 12px 12px',
+      }}>
         <ThreadScrollToBottom />
         <ThreadFollowupSuggestions />
-        <Composer autoFocus={autoFocus} />
+        <div style={{
+          border: '2px solid #6b7280',
+          borderRadius: '12px',
+          background: '#ffffff',
+          overflow: 'hidden',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        }}>
+          <Composer autoFocus={autoFocus} />
+        </div>
         <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
           <ThreadSuggestions />
         </AuiIf>
@@ -365,7 +374,7 @@ const ThreadScrollToBottom: FC = () => {
 
 const ThreadWelcome: FC = () => {
   return (
-    <div className="aui-thread-welcome-root mb-6 flex flex-col px-2">
+    <div className="aui-thread-welcome-root mb-3 flex flex-col px-2">
       <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-medium tracking-tight duration-200 text-[#1a2332]">
         有什么可以帮您的？
       </p>
@@ -404,7 +413,7 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]" />}><ComposerAttachments /><ComposerPrimitive.Input
                       placeholder="输入消息…"
-                      className="aui-composer-input w-full resize-none bg-transparent outline-none" style={{ fontSize: '13px', lineHeight: '20px', minHeight: '20px', maxHeight: '120px', caretColor: '#245fc7', padding: 0 }}
+                      className="aui-composer-input w-full resize-none bg-transparent outline-none" style={{ fontSize: '13px', lineHeight: '20px', caretColor: '#245fc7', padding: 0, color: '#1a2332' }}
                       rows={1}
                       autoFocus={autoFocus}
                       enterKeyHint="send"
@@ -423,7 +432,7 @@ const ComposerAction: FC = () => {
   );
 
   return (
-    <div className="aui-composer-action-wrapper relative flex items-center justify-between">
+    <div className="aui-composer-action-wrapper relative flex items-center justify-between mt-1">
       <ComposerAddAttachment />
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
