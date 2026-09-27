@@ -111,7 +111,8 @@ test.describe('mock mode', () => {
     const requests: string[] = [];
     await routeGitLab(page, requests);
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
-        await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
     await page.getByRole('tab', { name: 'Review' }).click();
     await expect(page.getByText('已从 GitLab API 读取 1 个文件的真实 Diff。')).toBeVisible();
     await page.getByRole('button', { name: '开始 Review' }).click();
@@ -139,8 +140,7 @@ test.describe('mock mode', () => {
       provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
       gitlabToken: '', effort: 'balanced', language: 'zh-CN',
     });
-
-    // Panel opens on Review tab by default
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
     await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
 
     // Simulate code selection
@@ -178,7 +178,8 @@ test.describe('mock mode', () => {
     await routeGitLab(page);
     await page.goto('https://gitlab.test/acme/app/-/merge_requests/248/diffs');
     await page.addScriptTag({ content: bundle });
-        await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible();
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible();
   });
 });
 

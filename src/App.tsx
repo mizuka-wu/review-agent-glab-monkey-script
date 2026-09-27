@@ -75,7 +75,7 @@ export default function App({ page, adapter }: AppProps) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [activeTab, setActiveTab] = useState<'review' | 'settings'>('review');
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('idle');
   const [reviewError, setReviewError] = useState('');
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -788,7 +788,7 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto bg-card">
+        <div className="flex-1 min-h-0 overflow-y-auto bg-card">
           {loadError && (
             <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md text-destructive bg-destructive/10 border border-destructive/20 text-xs" role="alert">
               {loadError}
