@@ -802,7 +802,7 @@ export default function App({ page, adapter }: AppProps) {
             </div>
           )}
           {activeTab === 'review' && (
-            <div style={{ padding: '16px', overflowX: 'hidden', overflowY: 'auto', flex: '1 1 0', minHeight: 0, boxSizing: 'border-box' }}>
+            <div style={{ padding: '16px', overflowX: 'clip', boxSizing: 'border-box' }}>
               <h3 style={{ color: '#1a2332', fontSize: '13px', fontWeight: 600, margin: '0 0 5px 0' }}>Review 范围 {!runtimeConfigured && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#fff0c7', color: '#91620a' }}>规则模式</span>}</h3>
               <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>
                 {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
@@ -939,7 +939,7 @@ export default function App({ page, adapter }: AppProps) {
             </div>
           )}
 
-          {activeTab === 'settings' && <div style={{ padding: '16px', overflowX: 'hidden', overflowY: 'auto', flex: '1 1 0', minHeight: 0, boxSizing: 'border-box' }}>
+          {activeTab === 'settings' && <div style={{ padding: '16px', overflowX: 'clip', boxSizing: 'border-box' }}>
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>模型配置</h3>
             <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
             <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] rounded-md" style={{ background: "#f0f3f7" }}>
