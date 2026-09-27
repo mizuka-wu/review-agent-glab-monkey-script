@@ -814,7 +814,7 @@ export default function App({ page, adapter }: AppProps) {
                     <Button size="sm" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</Button>
                     {savedSession && <Button variant="outline" size="sm" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</Button>}
                   </div>
-                  {savedSession && <p className="text-[10px] text-muted-foreground mt-2">上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
+                  {savedSession && <p className="text-[10px] mt-2" style={{ color: '#6b778b' }}>上次会话：{savedSession.findings.length} Findings · {savedSession.status} · {new Date(savedSession.updatedAt).toLocaleString()}</p>}
                 </div>
               )}
               {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && (
@@ -838,39 +838,39 @@ export default function App({ page, adapter }: AppProps) {
                   [findings.filter((f) => f.status === 'ignored').length, '已忽略'],
                 ]).map(([val, label]) => (
                   <div key={label as string} className="p-2 text-center rounded bg-muted border border-border">
-                    <strong className="block text-base text-foreground">{val}</strong>
-                    <span className="text-[9px] text-muted-foreground">{label}</span>
+                    <strong className="block text-base" style={{ color: "#1a2332" }}>{val}</strong>
+                    <span className="text-[9px]" style={{ color: "#4a5568" }}>{label}</span>
                   </div>
                 ))}
               </div>
 
               <div className="grid grid-cols-4 gap-1 mb-2.5">
                 <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)} aria-label="按严重度筛选"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
                   <option value="all">全部严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
                 </select>
                 <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} aria-label="按分类筛选"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
                   <option value="all">全部分类</option><option value="bug">缺陷</option><option value="security">安全</option><option value="performance">性能</option><option value="maintainability">可维护性</option><option value="test">测试</option>
                 </select>
                 <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="按状态筛选"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
                   <option value="all">全部状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
                 </select>
                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="排序方式"
-                  className="p-1.5 text-[10px] rounded border border-border bg-muted text-foreground">
+                  className="p-1.5 text-[10px] rounded border border-border bg-muted" style={{ color: "#1a2332" }}>
                   <option value="severity">按严重度</option><option value="line">按行号</option><option value="path">按文件</option>
                 </select>
               </div>
               {filteredFindings.length !== findings.length && (
-                <p className="text-xs text-muted-foreground m-0 mb-2">显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
+                <p className="text-xs   m-0 mb-2" style={{ color: "#4a5568" }}>显示 {filteredFindings.length}/{findings.length} 个 Finding</p>
               )}
 
               <div className="flex items-center gap-2 mb-2.5 p-2 rounded-md bg-muted border border-border text-xs">
                 <Button variant="outline" size="xs" onClick={() => setShowChat(!showChat)}><MessageSquare size={13} />{showChat ? '收起提问' : '提问'}</Button>
                 {selectedFindings.size > 0 ? (
                   <>
-                    <span className="font-semibold text-foreground">已选 {selectedFindings.size} 个</span>
+                    <span className="font-semibold" style={{ color: "#1a2332" }}>已选 {selectedFindings.size} 个</span>
                     <Button size="xs" disabled={!mrContext || batchPublishing} onClick={() => setShowBatchConfirm(true)}>
                       <MessageSquare size={13} />{batchPublishing ? '发布中…' : `批量发布 ${selectedFindings.size} 条`}
                     </Button>
@@ -976,7 +976,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
 
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>输出设置</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>输出设置</h3>
             <div className="grid gap-3">
               <div className="grid gap-1.5">
                 <label htmlFor="effort">审查强度</label>
@@ -1030,12 +1030,12 @@ export default function App({ page, adapter }: AppProps) {
 
             <div className="flex justify-end gap-2 p-3 bg-muted border-t border-border">
               <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md text-destructive border border-destructive bg-transparent cursor-pointer" onClick={() => void clearSensitiveSettings().then(() => setSettings((current) => ({ ...current, apiKey: '', gitlabToken: '' })))}>清除密钥</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => void runtime.testConnection().then(() => setToast('模型连接正常')).catch((error: unknown) => setToast(`模型连接失败：${String(error)}`))}>测试模型</button>
               <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void saveSettings(settings).then(() => setToast('设置已保存'))}><Check size={14} />保存</button>
             </div>
             <div className="grid gap-2"><div className="grid gap-2 p-3 rounded-lg bg-muted border border-border"><div className="flex items-center justify-between gap-2.5"><strong>GitLab API</strong><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${mrContext ? 'success' : 'warning'}`}>{mrContext ? '已读取 MR' : '待连接'}</span></div><p>同源 REST API；可选 PAT。发布时携带当前页面 CSRF Token 和最新 diff refs。</p></div></div>
 
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>Token 用量统计</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>Token 用量统计</h3>
             {usageSummary ? (
               <div className="p-3 rounded-lg bg-muted border border-border mt-3">
                 <div className="flex items-center justify-between py-1.5 border-t border-border first:border-t-0 text-[10px]"><span>总调用次数</span><strong>{usageSummary.callCount}</strong></div>
@@ -1048,13 +1048,13 @@ export default function App({ page, adapter }: AppProps) {
                     <span>{formatTokenCount(data.inputTokens + data.outputTokens)} tok · {formatCost(data.estimatedCost)}</span>
                   </div>
                 ))}
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" style={{ marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332", marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
               </div>
             ) : (
               <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>暂无用量记录。模型调用后会自动统计。</p>
             )}
 
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
             <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
 
             <div className="grid gap-2 mb-3">
@@ -1084,7 +1084,7 @@ export default function App({ page, adapter }: AppProps) {
                       </>}
                     </div>
                   </div>
-                  {pack.description && <p className="text-muted-foreground text-[10px] leading-relaxed">{pack.description}</p>}
+                  {pack.description && <p className="text-[10px] leading-relaxed" style={{ color: '#6b778b' }}>{pack.description}</p>}
 
                   {editingPackId === pack.id && (
                     <div className="p-2.5 border-t border-border bg-muted">
@@ -1109,7 +1109,7 @@ export default function App({ page, adapter }: AppProps) {
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1.5 min-w-0 cursor-pointer text-[11px]">
                               <input type="checkbox" checked={rule.enabled} onChange={() => void toggleRule(pack.id, rule.id)} />
-                              <span className="truncate font-semibold text-foreground">{rule.title}</span>
+                              <span className="truncate font-semibold" style={{ color: "#1a2332" }}>{rule.title}</span>
                             </label>
                             <div className="flex gap-1 ml-auto shrink-0">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${rule.severity === 'high' || rule.severity === 'critical' ? 'error' : rule.severity === 'medium' ? 'warning' : 'neutral'}`}>{rule.severity}</span>
@@ -1124,14 +1124,14 @@ export default function App({ page, adapter }: AppProps) {
                           {rule.matchPatterns.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {rule.matchPatterns.map((pattern, idx) => (
-                                <code key={idx} className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-muted text-foreground break-all">{pattern.pattern}</code>
+                                <code key={idx} className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-muted   break-all" style={{ color: "#1a2332" }}>{pattern.pattern}</code>
                               ))}
                             </div>
                           )}
                         </div>
                       ))}
                       {!pack.builtIn && (
-                        <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" style={{ marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
+                        <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332", marginTop: 6 }} onClick={() => void addRuleToPack(pack.id)}>
                           <Plus size={13} /> 添加规则
                         </button>
                       )}
@@ -1142,25 +1142,25 @@ export default function App({ page, adapter }: AppProps) {
             </div>
 
             <div className="grid gap-2.5 pt-2.5 border-t border-border">
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => void createNewPack()}>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => void createNewPack()}>
                 <Plus size={13} /> 新建规则包
               </button>
               <div className="grid gap-1.5">
                 <textarea
-                  className="w-full min-h-[60px] p-2 text-[10px] font-mono rounded-md border border-border bg-card text-foreground resize-y"
+                  className="w-full min-h-[60px] p-2 text-[10px] font-mono rounded-md border border-border bg-card   resize-y" style={{ color: "#1a2332" }}
                   value={importText}
                   onChange={(e) => { setImportText(e.target.value); setImportError(''); }}
                   placeholder='粘贴规则包 JSON…'
                   rows={3}
                 />
                 {importError && <p className="text-destructive text-[10px] m-0">{importError}</p>}
-                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" disabled={!importText.trim()} onClick={() => void handleImportPack()}>
+                <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} disabled={!importText.trim()} onClick={() => void handleImportPack()}>
                   <Upload size={13} /> 导入规则包
                 </button>
               </div>
             </div>
 
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
             <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
             <div className="grid gap-3">
               <div className="grid gap-1.5">
@@ -1191,7 +1191,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             </div>
 
-            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>兼容性诊断</h3>
+            <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>兼容性诊断</h3>
             {capabilities && <div className="grid gap-2">
               <div className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
                 <div className="flex items-center justify-between gap-2.5">
@@ -1223,7 +1223,7 @@ export default function App({ page, adapter }: AppProps) {
               </div>
             )}
             <div className="flex flex-wrap gap-2 mt-2.5" style={{ marginTop: 8 }}>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => {
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => {
                 const config = exportSiteConfig(page, capabilities ?? {
                   authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false,
                   canSearchCode: false, canReadRepository: true, canPaginateDiffs: true,
@@ -1235,7 +1235,7 @@ export default function App({ page, adapter }: AppProps) {
             </div>
 
             {sessionHistory.length > 0 && <>
-              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }} style={{ marginTop: 20 }}>Review 会话历史</h3>
+              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}>Review 会话历史</h3>
               <div className="grid gap-2">
                 {sessionHistory.map((session) => (
                   <div key={session.id} className="grid gap-2 p-3 rounded-lg bg-muted border border-border">
@@ -1254,7 +1254,7 @@ export default function App({ page, adapter }: AppProps) {
 
       {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('review'); setPanelOpen(true); setShowChat(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
 
-      {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground"><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
+      {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border border-border bg-popover" role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border"><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono" style={{ color: "#4a5568" }}><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono" style={{ color: "#4a5568" }}><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 bg-muted border-t border-border"><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
 
       {showBatchConfirm && selectedFindings.size > 0 && (
         <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation">
@@ -1267,7 +1267,7 @@ export default function App({ page, adapter }: AppProps) {
               <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:bg-accent" onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
             </div>
             <div className="grid gap-3 p-4">
-              <div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono text-muted-foreground">
+              <div className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted border border-border text-[10px] font-mono" style={{ color: "#4a5568" }}>
                 <span>{page.projectPath} · MR !{page.mergeRequestIid}</span>
                 <span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span>
               </div>
@@ -1276,14 +1276,14 @@ export default function App({ page, adapter }: AppProps) {
                   <div key={f.id} className="flex items-center gap-2 p-1.5 rounded bg-muted border border-border text-[10px]">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${f.severity === 'high' || f.severity === 'critical' ? 'error' : f.severity === 'medium' ? 'warning' : 'neutral'}`}>{f.severity}</span>
                     <span className="flex-1 min-w-0 truncate">{f.title}</span>
-                    <span className="text-muted-foreground font-mono text-[9px]">{f.path}:{f.line}</span>
+                    <span className="font-mono text-[9px]" style={{ color: "#4a5568" }}>{f.path}:{f.line}</span>
                   </div>
                 ))}
                 {selectedFindings.size > 10 && <p style={{ fontSize: 10, color: '#6b778b' }}>…还有 {selectedFindings.size - 10} 个</p>}
               </div>
             </div>
             <div className="flex justify-end gap-2 p-3 bg-muted border-t border-border">
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer text-foreground" onClick={() => setShowBatchConfirm(false)}>取消</button>
+              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-card border border-border cursor-pointer" style={{ color: "#1a2332" }} onClick={() => setShowBatchConfirm(false)}>取消</button>
               <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md bg-primary text-primary-foreground border border-primary cursor-pointer" disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
                 <MessageSquare size={14} />{batchPublishing ? '发布中…' : `确认批量发布 ${selectedFindings.size} 条`}
               </button>
