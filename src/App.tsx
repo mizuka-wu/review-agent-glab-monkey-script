@@ -146,6 +146,7 @@ export default function App({ page, adapter }: AppProps) {
       const rect = panel.getBoundingClientRect();
       if (rect.right > window.innerWidth) {
         panel.style.right = '16px';
+        panel.style.top = '72px';
       }
       if (rect.bottom > window.innerHeight) {
         panel.style.top = `${Math.max(0, window.innerHeight - rect.height - 16)}px`;
@@ -749,16 +750,16 @@ export default function App({ page, adapter }: AppProps) {
       {!panelOpen && (
         <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
           className="fixed bottom-[18px] right-[18px] z-[2147483000] grid h-11 w-11 place-items-center rounded-full -foreground shadow-lg cursor-pointer border-0" style={{ color: "#245fc7", background: "#245fc7" }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+          <span style={{ color: '#fff', fontSize: 22, lineHeight: 1 }}>✦</span>
         </button>
       )}
       <aside ref={panelRef} aria-label="Review Agent"
-        className={`fixed z-[2147483000] top-[72px] right-4 bottom-4 w-[min(430px,calc(100vw-32px))] rounded-lg shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`} style={{ background: '#ffffff', border: '1px solid #d4dae3' }}
-        style={{ resize: 'horizontal', minWidth: 320 }}>
+        className={`fixed z-[2147483000] rounded-lg shadow-2xl overflow-hidden flex flex-col ${panelOpen ? '' : 'hidden'}`}
+        style={{ background: '#ffffff', border: '1px solid #d4dae3', top: '72px', right: '16px', width: '460px', height: 'calc(100vh - 88px)', resize: 'horizontal', minWidth: 320 }}>
         {/* Header */}
         <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-semibold m-0" style={{ color: '#f0f4f8' }}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg> Review Agent</h2>
+            <h2 className="flex items-center gap-2 text-sm font-semibold m-0" style={{ color: '#f0f4f8' }}>✦ Review Agent</h2>
             <p className="text-xs opacity-70 mt-1 truncate" style={{ color: '#c0c8d4' }}>{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
           </div>
           <button type="button" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"
@@ -788,7 +789,7 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Body */}
-        <div className="panel-body-scroll" style={{ background: "#ffffff" }}>
+        <div style={{ background: '#ffffff', overflowY: 'auto', flex: '1 1 0', minHeight: 0 }}>
           {loadError && (
             <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               {loadError}
@@ -801,15 +802,15 @@ export default function App({ page, adapter }: AppProps) {
             </div>
           )}
           {activeTab === 'review' && (
-            <div className="p-4">
-              <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>Review 范围 {!runtimeConfigured && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#fff0c7', color: '#91620a' }}>规则模式</span>}</h3>
-              <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>
+            <div style={{ padding: '16px', overflowX: 'hidden', overflowY: 'auto', flex: '1 1 0', minHeight: 0, boxSizing: 'border-box' }}>
+              <h3 style={{ color: '#1a2332', fontSize: '13px', fontWeight: 600, margin: '0 0 5px 0' }}>Review 范围 {!runtimeConfigured && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ background: '#fff0c7', color: '#91620a' }}>规则模式</span>}</h3>
+              <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>
                 {diffLoadProgress ? `正在加载 Diff… 已读取 ${diffLoadProgress.loaded} 个文件` : files.length > 0 ? `已从 GitLab API 读取 ${files.length} 个文件的真实 Diff。` : '当前页面没有可用的 MR Diff；仍可 Review 已选中的代码。'}
               </p>
               {(reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') && (
-                <div className="p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                  <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
-                  <p className="text-xs m-0" style={{ color: '#4a5568' }}>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
+                <div style={{ padding: '12px', borderRadius: '7px', border: '1px solid #d4dae3', background: '#f0f3f7', boxSizing: 'border-box' }}>
+                  <h3 style={{ color: '#1a2332', fontSize: '13px', fontWeight: 600, margin: '0 0 5px 0' }}>{reviewStatus === 'cancelled' ? '任务已取消' : reviewStatus === 'failed' ? 'Review 失败' : '准备开始'}</h3>
+                  <p style={{ color: '#4a5568', fontSize: '12px', margin: 0, lineHeight: 1.5 }}>{reviewError || 'Finding 先进入草稿，逐条确认后才会创建 GitLab Discussion。'}</p>
                   <div className="flex flex-wrap gap-2 mt-2.5">
                     <Button size="sm" onClick={() => void startReview(attachment ? 'selection' : 'all')} disabled={files.length === 0 && !attachment && !selection}><Play size={14} />开始 Review</Button>
                     {savedSession && <Button variant="outline" size="sm" onClick={() => void resumeSession()}><RefreshCw size={14} />恢复上次 Review</Button>}
@@ -818,7 +819,7 @@ export default function App({ page, adapter }: AppProps) {
                 </div>
               )}
               {(reviewStatus === 'preparing' || reviewStatus === 'running' || reviewStatus === 'normalizing') && (
-                <div className="p-3 rounded-lg border" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
+                <div style={{ padding: '12px', borderRadius: '7px', border: '1px solid #d4dae3', background: '#f0f3f7', boxSizing: 'border-box' }}>
                   <div className="flex items-center justify-between mb-2.5">
                     <strong className="text-xs">{reviewStatus === 'preparing' ? '准备上下文' : reviewStatus === 'running' ? '分析真实 Diff' : '校验与定位'}</strong>
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold" style={{ color: "#245fc7", background: "rgba(36,95,199,0.1)" }}>进行中</span>
@@ -938,9 +939,9 @@ export default function App({ page, adapter }: AppProps) {
             </div>
           )}
 
-          {activeTab === 'settings' && <div className="p-4">
+          {activeTab === 'settings' && <div style={{ padding: '16px', overflowX: 'hidden', overflowY: 'auto', flex: '1 1 0', minHeight: 0, boxSizing: 'border-box' }}>
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332' }}>模型配置</h3>
-            <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
+            <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>选择提供商后自动填充默认地址和模型，只需填 API Key。</p>
             <div className="grid grid-cols-3 gap-[3px] mb-3 p-[3px] rounded-md" style={{ background: "#f0f3f7" }}>
               {(Object.entries(providerPresets) as [string, typeof providerPresets.openai][]).map(([key, preset]) => (
                 <button
@@ -1051,11 +1052,11 @@ export default function App({ page, adapter }: AppProps) {
                 <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332", marginTop: 6 }} onClick={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}>清空记录</button>
               </div>
             ) : (
-              <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>暂无用量记录。模型调用后会自动统计。</p>
+              <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>暂无用量记录。模型调用后会自动统计。</p>
             )}
 
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}><Package size={15} /> 规则包管理</h3>
-            <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
+            <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>配置确定性规则检查包。未配置模型时，Review 将使用已启用的规则包。</p>
 
             <div className="grid gap-2 mb-3">
               {rulePacks.map((pack) => (
@@ -1161,7 +1162,7 @@ export default function App({ page, adapter }: AppProps) {
             </div>
 
             <h3 className="text-[13px] font-semibold m-0 mb-1" style={{ color: '#1a2332', marginTop: 20 }}><Package size={15} /> MCP 扩展工具</h3>
-            <p className="text-xs m-0 mb-3" style={{ color: '#4a5568' }}>连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
+            <p style={{ color: '#4a5568', fontSize: '12px', margin: '0 0 13px 0', lineHeight: 1.5 }}>连接本地 MCP server（Streamable HTTP），扩展 Agent 工具能力。仅支持 HTTP 传输，不支持 stdio。</p>
             <div className="grid gap-3">
               <div className="grid gap-1.5">
                 <label htmlFor="mcp-enabled">启用 MCP</label>
