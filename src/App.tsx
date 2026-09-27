@@ -819,7 +819,7 @@ export default function App({ page, adapter }: AppProps) {
       )}
       <aside ref={panelRef} aria-label="Review Agent"
         className="fixed z-[2147483000] rounded-lg shadow-2xl"
-        style={{ background: '#ffffff', border: '1px solid #d4dae3', top: '72px', right: '16px', width: '460px', height: 'calc(100vh - 88px)', display: panelOpen ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}>
+        style={{ background: '#ffffff', border: '1px solid #d4dae3', top: '72px', right: '16px', width: '460px', height: 'min(60vh, 580px)', display: panelOpen ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Header */}
         <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
           <div>
@@ -858,7 +858,7 @@ export default function App({ page, adapter }: AppProps) {
         </div>
 
         {/* Body */}
-        <div style={{ background: '#ffffff', overflowY: 'auto', overflowX: 'hidden', flex: '1 1 0%', minHeight: 0 }}>
+        <div style={{ background: '#ffffff', overflow: 'hidden', flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {loadError && (
             <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
               {loadError}
@@ -901,7 +901,7 @@ export default function App({ page, adapter }: AppProps) {
 
               {/* Findings collapsible panel (shows after review) */}
               {findings.length > 0 && (
-                <div style={{ flexShrink: 0, borderBottom: '1px solid #d4dae3', display: 'flex', flexDirection: 'column', maxHeight: showFindings ? 320 : 40, transition: 'max-height 0.2s ease' }}>
+                <div style={{ flexShrink: 0, borderBottom: '1px solid #d4dae3', display: 'flex', flexDirection: 'column', maxHeight: showFindings ? 180 : 38, transition: 'max-height 0.2s ease' }}>
                   <button type="button" onClick={() => setShowFindings(!showFindings)}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: 0, background: '#f4f6f9', cursor: 'pointer', width: '100%', textAlign: 'left', flexShrink: 0 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#1a2332' }}>Review 结果</span>
@@ -963,8 +963,8 @@ export default function App({ page, adapter }: AppProps) {
                 </div>
               )}
 
-              {/* Chat thread fills remaining space */}
-              <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {/* Chat thread: messages scroll, composer at bottom */}
+              <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
                 <ChatThread
                   draft={draft}
                   onDraftChange={setDraft}
