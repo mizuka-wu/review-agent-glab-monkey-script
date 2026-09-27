@@ -7,6 +7,7 @@ import {
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import { Thread } from './assistant-ui/elements/thread.aui';
+import { FindingCard } from './review/FindingCard';
 import type { ChatMessage } from '../core/types';
 
 function toAuiMessages(messages: ChatMessage[]) {

@@ -123,6 +123,7 @@ export interface ChatMessage {
   content: string;
   attachment?: CodeSelection;
   error?: boolean;
+  findings?: Finding[];
 }
 
 export type ModelProvider = 'openai' | 'anthropic' | 'gemini';

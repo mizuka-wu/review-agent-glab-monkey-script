@@ -484,6 +484,14 @@ export default function App({ page, adapter }: AppProps) {
       setFindings(syncedFindings);
       setExpandedFinding(result.findings[0]?.id ?? '');
       setReviewStatus('completed');
+      // Push review result as assistant chat message
+      const highCount = syncedFindings.filter(f => f.severity === 'high' || f.severity === 'critical').length;
+      setMessages(prev => [...prev, {
+        id: `review-${Date.now()}`,
+        role: 'assistant',
+        content: `Review 完成（${result.source === 'model' ? '模型分析' : '规则检查'}），共发现 ${syncedFindings.length} 个问题${highCount > 0 ? `，其中 ${highCount} 个高危` : ''}。结果已在下方展示，可逐条确认后发布到 GitLab。`,
+        findings: syncedFindings,
+      }]);
       if (session) {
         const completed = updateReviewSession(session, {
           status: 'completed',
@@ -827,39 +835,56 @@ export default function App({ page, adapter }: AppProps) {
               网络已断开，部分功能可能不可用。
             </div>
           )}
-          {/* Main view: Chat + Findings */}
+          {/* Main view: Chat with integrated findings panel */}
           {activeTab === 'chat' && (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
               {/* Status bar */}
               {(reviewStatus === 'running' || reviewStatus === 'preparing' || reviewStatus === 'normalizing') && (
-                <div style={{ padding: '6px 12px', background: '#e8f0fe', borderBottom: '1px solid #d4dae3', flexShrink: 0 }}>
+                <div style={{ padding: '8px 12px', background: '#e8f0fe', borderBottom: '1px solid #d4dae3', flexShrink: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#245fc7' }}>
-                    <LoaderCircle size={13} className="animate-spin" />
-                    {reviewStatus === 'preparing' ? '准备中…' : reviewStatus === 'normalizing' ? '整理 Findings…' : 'Review 进行中…'}
+                    <LoaderCircle size={14} className="animate-spin" />
+                    {reviewStatus === 'preparing' ? '准备 Review 上下文…' : reviewStatus === 'normalizing' ? '整理 Findings…' : 'Review 进行中，请稍候…'}
                   </div>
                 </div>
               )}
               {reviewError && (
-                <div style={{ padding: '6px 12px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12, color: '#d3453b', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ padding: '8px 12px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12, color: '#d3453b', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>{reviewError}</span>
                   <button type="button" onClick={() => setReviewError('')} style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#d3453b' }}><X size={13} /></button>
                 </div>
               )}
 
-              {/* Findings panel - collapsible */}
+              {/* Attachment indicator */}
+              {attachment && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 12px 0', padding: '5px 8px', borderRadius: 6, background: '#e8f0fe', fontSize: 11, flexShrink: 0 }}>
+                  <FileText size={12} style={{ color: '#245fc7', flexShrink: 0 }} />
+                  <span style={{ color: '#245fc7', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filePath}:{attachment.startLine}-{attachment.endLine}</span>
+                  <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件"
+                    style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#8a9bb0', padding: 2 }}><X size={12} /></button>
+                </div>
+              )}
+
+              {/* Findings collapsible panel (shows after review) */}
               {findings.length > 0 && (
-                <div style={{ flex: '0 1 auto', minHeight: 0, maxHeight: 320, display: 'flex', flexDirection: 'column', borderBottom: '1px solid #d4dae3' }}>
+                <div style={{ flexShrink: 0, borderBottom: '1px solid #d4dae3', display: 'flex', flexDirection: 'column', maxHeight: showFindings ? 320 : 40, transition: 'max-height 0.2s ease' }}>
                   <button type="button" onClick={() => setShowFindings(!showFindings)}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: 0, background: '#f4f6f9', cursor: 'pointer', width: '100%', textAlign: 'left', flexShrink: 0 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#1a2332' }}>Findings</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#1a2332' }}>Review 结果</span>
                     <span style={{ fontSize: 11, color: '#245fc7', fontWeight: 700 }}>{findings.length}</span>
-                    {findings.filter(f => f.severity === 'high' || f.severity === 'critical').length > 0 && <span style={{ fontSize: 10, color: '#d3453b', fontWeight: 600 }}>{findings.filter(f => f.severity === 'high' || f.severity === 'critical').length} High+</span>}
+                    {(() => { const h = findings.filter(f => f.severity === 'high' || f.severity === 'critical').length; return h > 0 ? <span style={{ fontSize: 10, color: '#d3453b', fontWeight: 600 }}>{h} High+</span> : null; })()}
                     <div style={{ flex: 1 }} />
-                    <span style={{ fontSize: 11, color: '#5a6b80' }}>{showFindings ? '▲' : '▼'}</span>
+                    {selectedFindings.size > 0 && (
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setShowBatchConfirm(true); }}
+                        style={{ padding: '3px 10px', borderRadius: 5, border: 0, background: '#245fc7', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', marginRight: 8 }}>
+                        批量发布 ({selectedFindings.size})
+                      </button>
+                    )}
+                    <span style={{ fontSize: 11, color: '#5a6b80' }}>{showFindings ? '收起 ▲' : '展开 ▼'}</span>
                   </button>
                   {showFindings && (
-                    <div style={{ flex: '0 0 auto', maxHeight: 260, overflowY: 'auto', borderTop: '1px solid #e8edf3' }}>
-                      <div style={{ display: 'flex', gap: 4, padding: '6px 12px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, borderTop: '1px solid #e8edf3' }}>
+                      {/* Filter row */}
+                      <div style={{ display: 'flex', gap: 4, padding: '6px 12px', flexWrap: 'wrap', borderBottom: '1px solid #f0f3f7' }}>
                         <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)} style={compactSelect} aria-label="严重度筛选">
                           <option value="all">严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
                         </select>
@@ -869,14 +894,9 @@ export default function App({ page, adapter }: AppProps) {
                         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={compactSelect} aria-label="状态筛选">
                           <option value="all">状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
                         </select>
-                        {selectedFindings.size > 0 && (
-                          <button type="button" onClick={() => setShowBatchConfirm(true)}
-                            style={{ padding: '3px 10px', borderRadius: 5, border: 0, background: '#245fc7', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-                            批量发布 ({selectedFindings.size})
-                          </button>
-                        )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 12px 8px' }}>
+                      {/* Finding cards */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 12px' }}>
                         {filteredFindings.slice(0, visibleFindingCount).map(finding => (
                           <FindingCard
                             key={finding.id}
@@ -908,26 +928,8 @@ export default function App({ page, adapter }: AppProps) {
                 </div>
               )}
 
-              {/* Diff info */}
-              {findings.length === 0 && (
-                <div style={{ padding: '12px', textAlign: 'center', flexShrink: 0 }}>
-                  <div style={{ fontSize: 12, color: '#8a9bb0' }}>
-                    {files.length > 0 ? `已读取 ${files.length} 个文件的 Diff` : '正在读取 MR Diff…'}
-                  </div>
-                </div>
-              )}
-
-              {/* Chat - fills remaining space */}
-              <div style={{ minHeight: 300, display: 'flex', flexDirection: 'column' }}>
-                {attachment && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '6px 12px 0', padding: '5px 8px', borderRadius: 6, background: '#e8f0fe', fontSize: 11, flexShrink: 0 }}>
-                    <FileText size={12} style={{ color: '#245fc7', flexShrink: 0 }} />
-                    <span style={{ color: '#245fc7', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filePath}:{attachment.startLine}-{attachment.endLine}</span>
-                    <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件"
-                      style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#8a9bb0', padding: 2 }}><X size={12} /></button>
-                  </div>
-                )}
-                <div style={{ minHeight: 300, display: 'flex', flexDirection: 'column' }}>
+              {/* Chat thread fills remaining space */}
+              <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                 <ChatThread
                   draft={draft}
                   onDraftChange={setDraft}
@@ -935,7 +937,6 @@ export default function App({ page, adapter }: AppProps) {
                   onSend={(text) => void sendMessage(text)}
                   responding={responding}
                 />
-                </div>
               </div>
             </div>
           )}
