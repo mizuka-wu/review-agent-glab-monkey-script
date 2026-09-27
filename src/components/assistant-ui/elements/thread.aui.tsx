@@ -197,10 +197,9 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
         minHeight: 0,
         overflow: 'hidden',
         ["--thread-max-width" as string]: "44rem",
-        ["--composer-bg" as string]:
-          "color-mix(in oklab, var(--color-muted) 30%, transparent)",
-        ["--composer-radius" as string]: "1rem",
-        ["--composer-padding" as string]: "8px",
+        ["--composer-bg" as string]: "#ffffff",
+        ["--composer-radius" as string]: "16px",
+        ["--composer-padding" as string]: "10px 14px",
       }}
     >
       <ThreadPrimitive.Viewport
@@ -235,8 +234,8 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       {/* Composer: fixed at bottom, outside scrollable viewport */}
       <div
         data-slot="aui_thread-footer"
-        className="bg-background flex flex-col gap-2 px-4 pb-4 pt-2"
-        style={{ flexShrink: 0, borderTop: '1px solid var(--color-border, #e5e7eb)' }}
+        className="flex flex-col gap-1.5 px-3 pb-2 pt-1.5"
+        style={{ flexShrink: 0, background: '#f8f9fb', borderTop: '1px solid #e5e7eb' }}
       >
         <ThreadScrollToBottom />
         <ThreadFollowupSuggestions />
@@ -405,7 +404,7 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="border-foreground/10 focus-within:border-foreground/25 data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]" />}><ComposerAttachments /><ComposerPrimitive.Input
                       placeholder="输入消息…"
-                      className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
+                      className="aui-composer-input w-full resize-none bg-transparent outline-none" style={{ fontSize: '13px', lineHeight: '20px', minHeight: '20px', maxHeight: '120px', caretColor: '#245fc7', padding: 0 }}
                       rows={1}
                       autoFocus={autoFocus}
                       enterKeyHint="send"
