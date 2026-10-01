@@ -393,6 +393,22 @@ test.describe('mock mode', () => {
     await expect(page.getByText(/个问题/)).toBeVisible({ timeout: 10000 });
   });
 
+  test('auto-switches to an available model when the current one is missing and persists it', async ({ page }) => {
+    await routeGitLab(page);
+    await page.route('http://localhost:9999/v1/models', (route) => route.fulfill({
+      json: { data: [{ id: 'qwen35-a3b' }, { id: 'qwen38-27b' }] },
+    }));
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'http://localhost:9999/v1', model: 'gpt-4o-mini', apiKey: '',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('tab', { name: /设置/ }).click();
+    await expect(page.getByText(/已自动切换到 qwen35-a3b/)).toBeVisible({ timeout: 10000 });
+    const stored = await page.evaluate(() => (JSON.parse(localStorage.getItem('review-agent-settings-v1') ?? '{}') as { model?: string }).model);
+    expect(stored).toBe('qwen35-a3b');
+  });
+
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
     const metadata = bundle.slice(bundle.indexOf('// ==UserScript=='), bundle.indexOf('// ==/UserScript=='));
     expect(metadata).toContain('@name         Review Agent for GitLab');

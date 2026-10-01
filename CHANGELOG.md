@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.2.0 — 2026-10-01
+- Model picker is now a typeable input with datalist suggestions (no more 下拉/手动 split); when the fetched server list does not contain the current model (e.g. switching from the OpenAI preset to a local server still holding `gpt-4o-mini`), it auto-switches to the first available model and persists immediately; a compact picker also appears atop the chat tab.
 - Rule packs now live as language docs: `rule_docs/*.md` (frontmatter + pattern fence + examples) are the source of truth; `scripts/generate-rules.mjs` emits `builtin-rules.generated.ts` and `--check` guards drift in CI. Migration verified lossless by unit tests and the eval benchmark.
 - Expand the eval benchmark from 8 to 31 fixtures (one annotated sample per built-in rule plus a clean negative).
 - Symbol precision stage one: import-aware resolution (ts/js/python/go) records `resolvedPath` on refs and call chains drop same-name local-definition false edges.

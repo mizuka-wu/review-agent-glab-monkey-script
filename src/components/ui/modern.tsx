@@ -120,9 +120,9 @@ export function Spinner({ size = 16, color = C.primary }: { size?: number; color
 }
 
 // ─── Input ───
-export function Input({ value, onChange, placeholder, type = 'text', icon, rightIcon, style, mono }: {
+export function Input({ value, onChange, placeholder, type = 'text', icon, rightIcon, style, mono, list }: {
   value: string; onChange: (v: string) => void; placeholder?: string;
-  type?: string; icon?: ReactNode; rightIcon?: ReactNode; style?: CSSProperties; mono?: boolean;
+  type?: string; icon?: ReactNode; rightIcon?: ReactNode; style?: CSSProperties; mono?: boolean; list?: string;
 }) {
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState(false);
@@ -142,7 +142,7 @@ export function Input({ value, onChange, placeholder, type = 'text', icon, right
       {icon && <span style={{ color: focus ? C.primary : C.textMuted, display: 'flex', flexShrink: 0, transition: 'color 0.15s' }}>{icon}</span>}
       <input
         type={type} value={value} onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
+        placeholder={placeholder} list={list}
         onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
         style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: C.text, fontFamily: mono ? 'ui-monospace, monospace' : 'inherit', minWidth: 0 }}
       />

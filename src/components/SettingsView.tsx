@@ -38,6 +38,7 @@ interface SettingsViewProps {
   projectLabel: string;
   publicCustomCount: number;
   onPackScopeChange: (kind: 'public' | 'project') => void;
+  onSettingsCommit: (s: RuntimeSettings) => void;
   onOpenDebug: () => void;
   importError: string;
   usageSummary: UsageSummary | null;
@@ -125,7 +126,7 @@ function Capability({ ok, name, detail }: { ok: boolean; name: string; detail: s
 }
 
 // ─── Model Config ───
-function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClearApiKey, testing }: SettingsViewProps) {
+function ModelSection({ settings, onSettingsChange, onSettingsCommit, onSave, onTestModel, onClearApiKey, testing }: SettingsViewProps) {
   const [showKey, setShowKey] = useState(false);
   const [showLocalHint, setShowLocalHint] = useState(false);
 
@@ -164,7 +165,7 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
             ].map(preset => (
               <button
                 key={preset.url} type="button"
-                onClick={() => onSettingsChange({ ...settings, modelBaseUrl: preset.url })}
+                onClick={() => onSettingsCommit({ ...settings, modelBaseUrl: preset.url })}
                 style={{
                   padding: '3px 9px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
                   border: `1px solid ${settings.modelBaseUrl === preset.url ? C.primary : C.border}`,
@@ -185,7 +186,7 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
               <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, borderRadius: C.radiusSm, border: `1px solid ${C.border}`, background: C.bgMuted }}>
                 {LOCAL_MODEL_ENDPOINTS.map(ep => (
                   <button key={ep.url} type="button"
-                    onClick={() => onSettingsChange({ ...settings, modelBaseUrl: ep.url })}
+                    onClick={() => onSettingsCommit({ ...settings, modelBaseUrl: ep.url })}
                     style={{ display: 'flex', justifyContent: 'space-between', gap: 8, border: 0, background: 'transparent', cursor: 'pointer', padding: '2px 0', fontSize: 11, color: settings.modelBaseUrl === ep.url ? C.primary : C.textSecondary, fontWeight: settings.modelBaseUrl === ep.url ? 700 : 500 }}>
                     <span>{ep.label}</span>
                     <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>{ep.url}</span>
@@ -200,7 +201,7 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
             value={settings.model}
             baseUrl={settings.modelBaseUrl}
             apiKey={settings.apiKey}
-            onChange={m => onSettingsChange({ ...settings, model: m })}
+            onChange={m => onSettingsCommit({ ...settings, model: m })}
           />
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
@@ -231,13 +232,13 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
 }
 
 // ─── Model Picker with /models fetch ───
-function ModelPicker({ value, baseUrl, apiKey, onChange }: {
-  value: string; baseUrl: string; apiKey: string; onChange: (m: string) => void;
+export function ModelPicker({ value, baseUrl, apiKey, onChange, compact = false }: {
+  value: string; baseUrl: string; apiKey: string; onChange: (m: string) => void; compact?: boolean;
 }) {
   const [models, setModels] = useState<Array<{ value: string; label: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [manual, setManual] = useState(false);
+  const [autoSwitched, setAutoSwitched] = useState('');
 
   const isLocal = (() => {
     try {
@@ -258,7 +259,14 @@ function ModelPicker({ value, baseUrl, apiKey, onChange }: {
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { data?: Array<{ id: string }> };
-      setModels((data.data ?? []).map(m => ({ value: m.id, label: m.id })).sort((a, b) => a.label.localeCompare(b.label)));
+      const list = (data.data ?? []).map(m => ({ value: m.id, label: m.id })).sort((a, b) => a.label.localeCompare(b.label));
+      setModels(list);
+      // 当前模型不在服务器列表里（例如从官方预设切到本地服务）时自动切到第一个可用模型，
+      // 避免拿着 gpt-4o-mini 反复请求本地服务得到 404 not_found_error。
+      if (list.length > 0 && value && !list.some((m) => m.value === value)) {
+        setAutoSwitched(list[0].value);
+        onChange(list[0].value);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '获取模型列表失败');
     } finally {
@@ -271,28 +279,42 @@ function ModelPicker({ value, baseUrl, apiKey, onChange }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl, isLocal]);
 
-  return (
-    <Field label="模型" hint={models.length > 0 ? `${models.length} 个可用` : isLocal ? '本地服务自动获取' : '点击刷新获取'}>
+  const control = (
+    <>
       <div style={{ display: 'flex', gap: 6 }}>
-        {manual ? (
-          <Input value={value} onChange={onChange} placeholder="gpt-4o-mini" style={{ flex: 1 }} mono />
-        ) : (
-          <Select
-            value={value}
-            onChange={onChange}
-            placeholder={loading ? '加载中…' : models.length === 0 ? '点击刷新获取模型列表' : '选择模型'}
-            options={models.length > 0 ? models : (value ? [{ value, label: value }] : [])}
-            style={{ flex: 1 }}
-          />
-        )}
-        <Btn variant="outline" onClick={() => { if (manual) { setManual(false); } else { void fetchModels(); } }} disabled={loading && !manual}>
-          {loading && !manual ? <Spinner size={14} /> : manual ? '列表' : <RefreshCw size={14} />}
-        </Btn>
-        <Btn variant="ghost" onClick={() => setManual(!manual)} style={{ minWidth: 48 }}>
-          {manual ? '下拉' : '手动'}
+        <Input
+          value={value}
+          onChange={onChange}
+          list="ra-model-suggestions"
+          placeholder="模型名，如 qwen35-a3b / gpt-4o-mini"
+          style={{ flex: 1, ...(compact ? { height: 30 } : {}) }}
+          mono
+        />
+        <datalist id="ra-model-suggestions">
+          {models.map(m => <option key={m.value} value={m.value} />)}
+        </datalist>
+        <Btn variant="outline" size={compact ? 'sm' : 'md'} onClick={() => void fetchModels()} disabled={loading} title="拉取服务器模型列表">
+          {loading ? <Spinner size={14} /> : <RefreshCw size={14} />}
         </Btn>
       </div>
-      {error && <div style={{ fontSize: 11, color: C.danger, marginTop: 2 }}>{error}</div>}
+      {error && <div style={{ fontSize: 11, color: C.danger, marginTop: 2 }}>模型列表获取失败：{error}（可直接手动填写模型名）</div>}
+      {autoSwitched && (
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+          原模型不在服务器列表中，已自动切换到 {autoSwitched}（已保存）。
+        </div>
+      )}
+      {models.length > 0 && !models.some((m) => m.value === value) && (
+        <div style={{ fontSize: 11, color: C.warning, marginTop: 2 }}>当前模型不在服务器可用列表中（手动值仍可保存）。</div>
+      )}
+    </>
+  );
+
+  if (compact) {
+    return <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{control}</div>;
+  }
+  return (
+    <Field label="模型" hint={models.length > 0 ? `${models.length} 个可用（可输入可下拉）` : isLocal ? '本地服务自动获取' : '点击刷新获取'}>
+      {control}
     </Field>
   );
 }

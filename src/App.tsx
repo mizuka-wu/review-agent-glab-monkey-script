@@ -9,7 +9,7 @@ import { buildDelegationContext } from './core/delegation';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
-import { SettingsView } from './components/SettingsView';
+import { SettingsView, ModelPicker } from './components/SettingsView';
 import {
   Banner, Btn, IconButton, InjectAnimations, Pill, Tabs, tokens as C,
 } from './components/ui/modern';
@@ -1410,6 +1410,15 @@ export default function App({ page }: AppProps) {
               onClearAttachment={() => setAttachment(undefined)}
               toolEvents={toolEvents}
               suggestions={suggestions}
+              modelPicker={modelReady ? (
+                <ModelPicker
+                  compact
+                  value={settings.model}
+                  baseUrl={settings.modelBaseUrl}
+                  apiKey={settings.apiKey}
+                  onChange={(m) => { setSettings({ ...settings, model: m }); void saveSettings({ ...settings, model: m }); }}
+                />
+              ) : undefined}
               modelReady={modelReady}
               onOpenSettings={() => setTab('settings')}
             />
@@ -1452,6 +1461,7 @@ export default function App({ page }: AppProps) {
               <SettingsView
                 settings={settings}
                 onSettingsChange={setSettings}
+                onSettingsCommit={(next) => { setSettings(next); void saveSettings(next); }}
                 onSave={() => { void saveSettings(settings).then(() => setToast('设置已保存')); }}
                 onTestModel={() => void testModelConnection()}
                 onClearApiKey={() => {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState , type ReactNode } from 'react';
 import { Bot, FileText, Send, Settings2, Sparkles, Square, User, Wrench, X } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { Btn, EmptyState, tokens as C } from './ui/modern';
@@ -18,13 +18,14 @@ export interface ChatThreadProps {
   suggestions?: string[];
   modelReady: boolean;
   onOpenSettings: () => void;
+  modelPicker?: ReactNode;
 }
 
 const COMPOSER_MAX_HEIGHT = 140;
 
 export function ChatThread({
   messages, responding, draft, onDraftChange, onSend, onStop,
-  attachment, onClearAttachment, toolEvents = [], suggestions = [], modelReady, onOpenSettings,
+  attachment, onClearAttachment, toolEvents = [], suggestions = [], modelReady, onOpenSettings, modelPicker,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -52,6 +53,9 @@ export function ChatThread({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0, background: C.bg }}>
+      {modelPicker && (
+        <div style={{ padding: '8px 12px 0', flexShrink: 0 }}>{modelPicker}</div>
+      )}
       <div ref={scrollRef} className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '10px 12px 4px' }}>
         {messages.length === 0 ? (
           <EmptyState icon={<Bot size={18} />} title="向 Review Agent 提问">
