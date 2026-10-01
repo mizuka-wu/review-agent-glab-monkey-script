@@ -25,7 +25,7 @@ interface ChatCompletionResponse {
 }
 
 interface StreamChunk {
-  choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+  choices?: { delta?: { content?: string; reasoning_content?: string }; message?: { content?: string; reasoning_content?: string } }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
@@ -141,7 +141,7 @@ export class OpenAIRuntime {
 
   async complete(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; stage?: string } = {},
+    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; onThinking?: (token: string) => void; stage?: string } = {},
   ) {
     const stage = options.stage ?? 'chat';
     const system = messages.find((message) => message.role === 'system')?.content;
@@ -166,7 +166,7 @@ export class OpenAIRuntime {
 
   private async runComplete(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; stage?: string } = {},
+    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; onThinking?: (token: string) => void; stage?: string } = {},
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const useStream = Boolean(options.onToken);
@@ -227,6 +227,8 @@ export class OpenAIRuntime {
                   content += delta;
                   options.onToken?.(delta);
                 }
+                const reasoning = choice?.delta?.reasoning_content ?? choice?.message?.reasoning_content ?? '';
+                if (reasoning) options.onThinking?.(reasoning);
               } catch {
                 // Skip malformed chunks
               }
@@ -347,7 +349,7 @@ export class OpenAIRuntime {
     language: RuntimeSettings['language'],
     signal?: AbortSignal,
     background?: string,
-    options?: { onToken?: (token: string) => void },
+    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void },
   ) {
     const context = [
       selection ? selectionContext(selection) : diffContext(files),
@@ -368,7 +370,7 @@ export class OpenAIRuntime {
         },
         { role: 'user', content: context },
       ],
-      { json: true, signal, stage: 'review', onToken: options?.onToken },
+      { json: true, signal, stage: 'review', onToken: options?.onToken, onThinking: options?.onThinking },
     );
   }
 

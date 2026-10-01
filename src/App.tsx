@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import {
   Bug, CheckSquare, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare,
   Database, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X,
@@ -6,7 +6,7 @@ import {
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { FindingsPanel } from './components/review/FindingsPanel';
-import { buildSummaryComment } from './core/findings';
+import { buildSummaryComment, extractPartialFindings, parseModelFindings } from './core/findings';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
@@ -98,6 +98,19 @@ export default function App({ page }: AppProps) {
   const [importError, setImportError] = useState('');
   const [quickBusy, setQuickBusy] = useState(false);
   const [modelStream, setModelStream] = useState('');
+  const [modelThinking, setModelThinking] = useState('');
+  const [showThinking, setShowThinking] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+  const [partialModelCount, setPartialModelCount] = useState(0);
+  const modelContentRef = useRef('');
+  const ruleLiveRef = useRef<Finding[]>([]);
+  const lastPartialParseRef = useRef(0);
+  const lastPartialCountRef = useRef(0);
+  const streamPreStyle: CSSProperties = {
+    marginTop: 4, maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+    fontSize: 11, lineHeight: 1.5, color: C.textSecondary, background: C.bgSubtle,
+    border: `1px solid ${C.border}`, borderRadius: C.radiusSm, padding: 6,
+  };
 
   const [tab, setTab] = useState<Tab>('review');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -543,6 +556,14 @@ export default function App({ page }: AppProps) {
     setStages(undefined);
     setFindings([]);
     setModelStream('');
+    setModelThinking('');
+    setShowRaw(false);
+    setShowThinking(false);
+    setPartialModelCount(0);
+    modelContentRef.current = '';
+    ruleLiveRef.current = [];
+    lastPartialCountRef.current = 0;
+    lastPartialParseRef.current = 0;
     setSelectedFindings(new Set());
     addLog('info', 'review', `开始 Review（${scope === 'selection' ? '选区' : '整个 MR'} · ${settings.reviewMode}）`, `${scopedFiles.length} 个文件`);
 
@@ -577,8 +598,28 @@ export default function App({ page }: AppProps) {
         background: repoContext ? `仓库符号上下文（本地索引 @${repoIndex?.status.ref.slice(0, 8)}）：\n${repoContext}` : undefined,
         loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
-        onRuleFindings: (ruleFindings) => setFindings(ruleFindings),
-        onModelToken: (token) => setModelStream((prev) => (prev + token).slice(-20000)),
+        onRuleFindings: (ruleFindings) => {
+          ruleLiveRef.current = ruleFindings;
+          setFindings(ruleFindings);
+        },
+        onModelToken: (token) => {
+          modelContentRef.current += token;
+          setModelStream((prev) => (prev + token).slice(-20000));
+          const now = Date.now();
+          if (now - lastPartialParseRef.current < 200) return;
+          lastPartialParseRef.current = now;
+          const objects = extractPartialFindings(modelContentRef.current);
+          if (objects.length === lastPartialCountRef.current) return;
+          lastPartialCountRef.current = objects.length;
+          try {
+            const partial = parseModelFindings(`{"findings":[${objects.join(',')}]}`, scopedFiles);
+            setPartialModelCount(partial.length);
+            setFindings([...ruleLiveRef.current, ...partial]);
+          } catch {
+            // 片段尚未完整，等待后续 token
+          }
+        },
+        onModelThinking: (token) => setModelThinking((prev) => (prev + token).slice(-20000)),
       });
       if (controller.signal.aborted) return;
 
@@ -1134,14 +1175,27 @@ export default function App({ page }: AppProps) {
                     {settings.reviewMode === 'rules' || !modelReady
                       ? `正在本地执行 ${enabledRuleCount} 条确定性规则…`
                       : '规则检查已完成，模型正在分析变更…'}
-                    {modelStream && (
-                      <div style={{ marginTop: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary }}>模型实时输出（点「取消」可停止）</div>
-                        <pre style={{
-                          marginTop: 4, maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                          fontSize: 11, lineHeight: 1.5, color: C.textSecondary, background: C.bgSubtle,
-                          border: `1px solid ${C.border}`, borderRadius: C.radiusSm, padding: 6,
-                        }}>{modelStream.slice(-1500)}</pre>
+                    {(modelThinking || partialModelCount > 0 || modelStream) && (
+                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {modelThinking && (
+                          <div>
+                            <button type="button" onClick={() => setShowThinking(!showThinking)}
+                              style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
+                              {showThinking ? '▾ 模型思考过程' : `▸ 模型思考过程（${modelThinking.length} 字）`}
+                            </button>
+                            {showThinking && <pre style={streamPreStyle}>{modelThinking.slice(-1500)}</pre>}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.textSecondary }}>
+                          <span>{partialModelCount > 0 ? `AI 已流式产出 ${partialModelCount} 条问题，继续接收中…` : '模型正在分析变更…'}</span>
+                          {modelStream && (
+                            <button type="button" onClick={() => setShowRaw(!showRaw)}
+                              style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, color: C.textMuted, textDecoration: 'underline' }}>
+                              {showRaw ? '隐藏原始输出' : '查看原始输出'}
+                            </button>
+                          )}
+                        </div>
+                        {showRaw && <pre style={streamPreStyle}>{modelStream.slice(-1500)}</pre>}
                       </div>
                     )}
                     <div style={{ marginTop: 6 }}>

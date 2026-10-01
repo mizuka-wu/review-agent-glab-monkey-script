@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeFileDiff } from '../../src/core/diff';
 import {
   buildSummaryComment,
+  extractPartialFindings,
   fingerprintFinding,
   normalizeFindings,
   parseModelFindings,
@@ -68,5 +69,25 @@ describe('buildSummaryComment', () => {
   it('marks corroborated findings as 规则+AI', () => {
     const text = buildSummaryComment([finding({ corroborated: 'model' })]);
     expect(text).toContain('[高][规则+AI]');
+  });
+});
+
+describe('extractPartialFindings', () => {
+  const obj1 = '{"path":"a.ts","line":1,"title":"one"}';
+  const obj2 = '{"path":"b.ts","line":2,"title":"two {braced} string"}';
+
+  it('returns only fully closed objects while streaming', () => {
+    expect(extractPartialFindings('{"findings":[')).toEqual([]);
+    expect(extractPartialFindings(`{"findings":[${obj1},`)).toEqual([obj1]);
+    expect(extractPartialFindings(`{"findings":[${obj1},${obj2}]}`)).toEqual([obj1, obj2]);
+  });
+
+  it('ignores braces inside strings', () => {
+    const partial = `{"findings":[${obj2},` ;
+    expect(extractPartialFindings(partial)).toEqual([obj2]);
+  });
+
+  it('returns empty for non-JSON prose', () => {
+    expect(extractPartialFindings('让我想想…')).toEqual([]);
   });
 });

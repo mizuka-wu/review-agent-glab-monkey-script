@@ -121,7 +121,8 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
     if (options?.stream && (route.request().postData() ?? '').includes('"stream":true')) {
       const step = Math.max(1, Math.floor(content.length / 3));
       const parts = [content.slice(0, step), content.slice(step, step * 2), content.slice(step * 2)];
-      const sse = parts.map((part) => `data: ${JSON.stringify({ choices: [{ delta: { content: part } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
+      const sse = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '先检查新增行是否涉及敏感信息…' } }] })}\n\n`
+        + parts.map((part) => `data: ${JSON.stringify({ choices: [{ delta: { content: part } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
       await route.fulfill({ contentType: 'text/event-stream', body: sse });
       return;
     }

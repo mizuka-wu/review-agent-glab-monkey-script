@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Codex-style streamed review presentation: the model thinking channel (`reasoning_content`) renders as a collapsed-by-default typewriter pane with a live character count, completed findings stream into the results list incrementally via a partial-JSON extractor, and the raw JSON draft is hidden behind an explicit 「查看原始输出」 toggle; thinking tokens are captured separately from content so `json_object` output stays clean.
 - Stream the review model stage over SSE: the running banner shows the model's live output draft so it is obvious the AI is working, and 「取消」 aborts the stream mid-flight; servers that ignore `stream` or omit SSE fall back to a single read with one whole-text callback; stream chunks' `usage` (when sent) is now recorded. Rule-stage findings render immediately via a stage callback instead of waiting for the model.
 - Add quick actions in the results footer: 一键 Approve (`POST .../approve`), 一键行内评论 (publish all publishable drafts as line discussions in one click) and 总评论 (one MR-level summary note with counts and a per-finding list); all use a two-step confirm button to prevent mis-clicks.
 - Clarify cancel semantics: cancelling stops the model analysis, keeps already-completed rule findings, and shows a 「已取消」 banner explaining that rule results remain publishable.

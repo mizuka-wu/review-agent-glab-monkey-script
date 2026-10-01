@@ -18,7 +18,7 @@ import type {
 
 interface ReviewRuntime {
   configured: boolean;
-  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void }): Promise<string>;
+  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void }): Promise<string>;
 }
 
 const severityOrder: Record<Finding['severity'], number> = {
@@ -98,6 +98,8 @@ export class ReviewEngine {
     onRuleFindings?: (findings: Finding[]) => void;
     /** 模型流式输出回调，用于实时展示 AI 正在工作。 */
     onModelToken?: (token: string) => void;
+    /** 模型思考通道（reasoning_content）回调。 */
+    onModelThinking?: (token: string) => void;
     /** 关闭后只跑规则检查，即使模型已配置。 */
     model?: boolean;
   }): Promise<ReviewEngineResult> {
@@ -140,7 +142,7 @@ export class ReviewEngine {
     if (this.runtime.configured && input.model !== false) {
       stages.model.ran = true;
       try {
-        const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken });
+        const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking });
         modelFindings = parseModelFindings(raw, files);
         stages.model.findings = modelFindings.length;
 

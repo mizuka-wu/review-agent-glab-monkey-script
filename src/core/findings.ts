@@ -192,6 +192,40 @@ function jsonCandidates(content: string): string[] {
   return candidates;
 }
 
+/** 从流式累积内容中提取「已完整闭合」的 finding 对象片段，用于增量渲染。 */
+export function extractPartialFindings(content: string): string[] {
+  const start = content.indexOf('[');
+  if (start === -1) return [];
+  const results: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let objectStart = -1;
+  for (let i = start; i < content.length; i += 1) {
+    const ch = content[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') {
+      if (depth === 0) objectStart = i;
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0 && objectStart >= 0) {
+        results.push(content.slice(objectStart, i + 1));
+        objectStart = -1;
+      }
+    } else if (ch === ']' && depth === 0) {
+      break;
+    }
+  }
+  return results;
+}
+
 const summarySeverityLabel = { critical: '严重', high: '高', medium: '中', low: '低' } as const;
 
 /** 生成 MR 级总评论正文：计数概览 + 逐条清单（最多 20 条）。 */
