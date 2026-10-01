@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addScopedRulePack,
   BUILT_IN_PACK,
   exportRulePack,
   importRulePack,
   loadRulePacks,
+  loadScopedRulePacks,
+  mergeScopedRulePacks,
+  PUBLIC_RULE_PACK_SCOPE,
+  rulePackStorageKey,
   runRulePackReview,
   saveRulePacks,
   validateRulePack,
@@ -282,5 +287,57 @@ describe('rule-packs', () => {
       expect(loaded[0].id).toBe('built-in');
       expect(loaded[1].id).toBe('user-pack-1');
     });
+  });
+});
+
+describe('scoped storage', () => {
+  function memStorage() {
+    const store = new Map<string, unknown>();
+    return {
+      async getValue(key: string, fallback: unknown) { return store.has(key) ? store.get(key) : fallback; },
+      async setValue(key: string, value: unknown) { store.set(key, value); },
+    };
+  }
+
+  function customPack(id: string): RulePack {
+    return {
+      id, name: id, version: '1.0.0', enabled: true, builtIn: false,
+      rules: [{
+        id: `${id}-r`, enabled: true, severity: 'low', category: 'maintainability',
+        title: 't', content: 'c', matchPatterns: [{ type: 'regex', pattern: 'x' }],
+      }],
+    };
+  }
+
+  it('keeps public and project packs in separate storage keys', async () => {
+    const storage = memStorage();
+    const project = { kind: 'project', key: 'group/proj' } as const;
+    await addScopedRulePack(customPack('pub-1'), PUBLIC_RULE_PACK_SCOPE, storage);
+    await addScopedRulePack(customPack('proj-1'), project, storage);
+
+    const pub = (await loadScopedRulePacks(PUBLIC_RULE_PACK_SCOPE, storage)).map((p) => p.id);
+    const proj = (await loadScopedRulePacks(project, storage)).map((p) => p.id);
+
+    expect(pub).toContain('pub-1');
+    expect(pub).not.toContain('proj-1');
+    expect(proj).toContain('proj-1');
+    expect(proj).not.toContain('pub-1');
+  });
+
+  it('merges project packs over public and keeps builtin from public', () => {
+    const merged = mergeScopedRulePacks(
+      [BUILT_IN_PACK, customPack('shared')],
+      [customPack('shared'), customPack('only-proj')],
+    );
+    expect(merged[0].id).toBe('built-in');
+    expect(merged.filter((p) => p.id === 'shared')).toHaveLength(1);
+    expect(merged.map((p) => p.id)).toContain('only-proj');
+  });
+
+  it('derives distinct storage keys per scope', () => {
+    const a = rulePackStorageKey({ kind: 'project', key: 'a/b' });
+    const b = rulePackStorageKey({ kind: 'project', key: 'c/d' });
+    expect(rulePackStorageKey(PUBLIC_RULE_PACK_SCOPE)).not.toBe(a);
+    expect(a).not.toBe(b);
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Bug, Cpu, Database, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
-  RefreshCw, Check, Save, Download, Upload, ChevronDown, ChevronRight,
+  RefreshCw, Check, Save, Download, Upload, ChevronDown, ChevronRight, HelpCircle,
 } from 'lucide-react';
 import type { RuntimeSettings } from '../core/types';
 import type { UsageSummary } from '../core/usage';
@@ -12,6 +12,13 @@ import {
   Card, CardHeader, CardBody, Btn, Input, Select, Segmented, Toggle,
   Field, Badge, Banner, Divider, Spinner, tokens as C,
 } from './ui/modern';
+
+/** 常见本地 OpenAI 兼容服务端默认地址，均带 /v1 后缀。 */
+const LOCAL_MODEL_ENDPOINTS = [
+  { label: 'omlx', url: 'http://localhost:8000/v1' },
+  { label: 'Ollama', url: 'http://localhost:11434/v1' },
+  { label: 'LM Studio', url: 'http://localhost:1234/v1' },
+];
 
 interface SettingsViewProps {
   settings: RuntimeSettings;
@@ -27,6 +34,10 @@ interface SettingsViewProps {
   onUpdateRulePack: (id: string, patch: Partial<RulePack>) => void;
   onToggleRule: (packId: string, ruleId: string) => void;
   onNewRulePack: () => void;
+  packScope: 'public' | 'project';
+  projectLabel: string;
+  publicCustomCount: number;
+  onPackScopeChange: (kind: 'public' | 'project') => void;
   onOpenDebug: () => void;
   importError: string;
   usageSummary: UsageSummary | null;
@@ -116,6 +127,7 @@ function Capability({ ok, name, detail }: { ok: boolean; name: string; detail: s
 // ─── Model Config ───
 function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClearApiKey, testing }: SettingsViewProps) {
   const [showKey, setShowKey] = useState(false);
+  const [showLocalHint, setShowLocalHint] = useState(false);
 
   return (
     <Card>
@@ -149,7 +161,6 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {[
               { label: '官方 OpenAI', url: 'https://api.openai.com/v1' },
-              { label: '本地 oMLX :8000', url: 'http://localhost:8000/v1' },
             ].map(preset => (
               <button
                 key={preset.url} type="button"
@@ -163,6 +174,26 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
                 }}
               >{preset.label}</button>
             ))}
+          </div>
+
+          <div>
+            <button type="button" onClick={() => setShowLocalHint(!showLocalHint)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, border: 0, background: 'transparent', cursor: 'pointer', color: C.textSecondary, fontSize: 11, padding: 0 }}>
+              <HelpCircle size={13} /> 本地模型默认地址？
+            </button>
+            {showLocalHint && (
+              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, padding: 8, borderRadius: C.radiusSm, border: `1px solid ${C.border}`, background: C.bgMuted }}>
+                {LOCAL_MODEL_ENDPOINTS.map(ep => (
+                  <button key={ep.url} type="button"
+                    onClick={() => onSettingsChange({ ...settings, modelBaseUrl: ep.url })}
+                    style={{ display: 'flex', justifyContent: 'space-between', gap: 8, border: 0, background: 'transparent', cursor: 'pointer', padding: '2px 0', fontSize: 11, color: settings.modelBaseUrl === ep.url ? C.primary : C.textSecondary, fontWeight: settings.modelBaseUrl === ep.url ? 700 : 500 }}>
+                    <span>{ep.label}</span>
+                    <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>{ep.url}</span>
+                  </button>
+                ))}
+                <div style={{ fontSize: 11, color: C.textMuted }}>OpenAI 兼容端点通常以 /v1 结尾；localhost 端点会自动拉取模型列表。</div>
+              </div>
+            )}
           </div>
 
           <ModelPicker
@@ -449,7 +480,7 @@ function UsageSection({ usageSummary, onClearUsage }: SettingsViewProps) {
 }
 
 // ─── Rule Packs ───
-function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRulePack, onDeleteRulePack, onImportRulePack, onExportRulePack, onUpdateRulePack, importError, onExportSiteConfig }: SettingsViewProps) {
+function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRulePack, onDeleteRulePack, onImportRulePack, onExportRulePack, onUpdateRulePack, importError, onExportSiteConfig, packScope, projectLabel, publicCustomCount, onPackScopeChange }: SettingsViewProps) {
   const [importText, setImportText] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -458,6 +489,23 @@ function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRuleP
       <CardHeader icon={<Package size={16} />} title="规则包" desc={`始终参与的确定性检查，当前启用 ${countEnabledRules(rulePacks)} 条规则`} />
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {projectLabel ? (
+            <Segmented
+              value={packScope}
+              onChange={v => onPackScopeChange(v as 'public' | 'project')}
+              options={[
+                { value: 'public', label: '公共' },
+                { value: 'project', label: `当前项目 ${projectLabel.replace(/^.*\//, '')}` },
+              ]}
+            />
+          ) : (
+            <div style={{ fontSize: 11, color: C.textMuted }}>公共作用域（当前页面没有项目上下文）</div>
+          )}
+          {packScope === 'project' && (
+            <div style={{ fontSize: 11, color: C.textMuted }}>
+              此处仅管理当前项目的自定义规则包；内置规则包开关在公共作用域管理，另有 {publicCustomCount} 个公共自定义包同时生效。
+            </div>
+          )}
           {rulePacks.map(pack => {
             const isBuiltin = pack.id === BUILT_IN_PACK.id;
             const expanded = expandedId === pack.id;

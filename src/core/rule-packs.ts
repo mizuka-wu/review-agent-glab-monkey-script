@@ -432,8 +432,18 @@ function defaultStorage(): StorageBackend {
   };
 }
 
-export async function loadRulePacks(storage = defaultStorage()): Promise<RulePack[]> {
-  const raw = await storage.getValue(STORAGE_KEY, []);
+/** 规则包作用域：公共（全站）或按 GitLab 项目隔离。 */
+export type RulePackScope = { kind: 'public' } | { kind: 'project'; key: string };
+
+export const PUBLIC_RULE_PACK_SCOPE: RulePackScope = { kind: 'public' };
+
+export function rulePackStorageKey(scope: RulePackScope): string {
+  return scope.kind === 'public' ? STORAGE_KEY : `${STORAGE_KEY}::project::${scope.key}`;
+}
+
+export async function loadScopedRulePacks(scope: RulePackScope, storage = defaultStorage()): Promise<RulePack[]> {
+  const key = rulePackStorageKey(scope);
+  const raw = await storage.getValue(key, []);
   const savedPacks = Array.isArray(raw) ? (raw as RulePack[]) : [];
   const userPacks = savedPacks.filter((pack) => pack.id !== BUILT_IN_PACK.id && Array.isArray(pack.rules));
 
@@ -453,27 +463,53 @@ export async function loadRulePacks(storage = defaultStorage()): Promise<RulePac
   return [builtin, ...userPacks];
 }
 
-export async function saveRulePacks(packs: RulePack[], storage = defaultStorage()): Promise<void> {
+export async function saveScopedRulePacks(packs: RulePack[], scope: RulePackScope, storage = defaultStorage()): Promise<void> {
   const toSave = packs.map((pack) => {
     if (!pack.builtIn) return pack;
     return { ...pack, rules: pack.rules.map((rule) => ({ id: rule.id, enabled: rule.enabled })) };
   });
-  await storage.setValue(STORAGE_KEY, toSave);
+  await storage.setValue(rulePackStorageKey(scope), toSave);
+}
+
+export async function addScopedRulePack(pack: RulePack, scope: RulePackScope, storage = defaultStorage()): Promise<RulePack[]> {
+  const packs = await loadScopedRulePacks(scope, storage);
+  const filtered = packs.filter((existing) => existing.id !== pack.id);
+  filtered.push(pack);
+  await saveScopedRulePacks(filtered, scope, storage);
+  return filtered;
+}
+
+export async function removeScopedRulePack(packId: string, scope: RulePackScope, storage = defaultStorage()): Promise<RulePack[]> {
+  const packs = await loadScopedRulePacks(scope, storage);
+  const filtered = packs.filter((pack) => pack.id !== packId || pack.builtIn);
+  await saveScopedRulePacks(filtered, scope, storage);
+  return filtered;
+}
+
+/** 项目作用域的自定义包覆盖同 id 的公共包；内置包开关以公共作用域为准。 */
+export function mergeScopedRulePacks(publicPacks: RulePack[], projectPacks: RulePack[]): RulePack[] {
+  const builtin = publicPacks.find((pack) => pack.builtIn) ?? BUILT_IN_PACK;
+  const users = new Map<string, RulePack>();
+  for (const pack of [...publicPacks, ...projectPacks]) {
+    if (!pack.builtIn) users.set(pack.id, pack);
+  }
+  return [builtin, ...users.values()];
+}
+
+export async function loadRulePacks(storage = defaultStorage()): Promise<RulePack[]> {
+  return loadScopedRulePacks(PUBLIC_RULE_PACK_SCOPE, storage);
+}
+
+export async function saveRulePacks(packs: RulePack[], storage = defaultStorage()): Promise<void> {
+  await saveScopedRulePacks(packs, PUBLIC_RULE_PACK_SCOPE, storage);
 }
 
 export async function addRulePack(pack: RulePack, storage = defaultStorage()): Promise<RulePack[]> {
-  const packs = await loadRulePacks(storage);
-  const filtered = packs.filter((existing) => existing.id !== pack.id);
-  filtered.push(pack);
-  await saveRulePacks(filtered, storage);
-  return filtered;
+  return addScopedRulePack(pack, PUBLIC_RULE_PACK_SCOPE, storage);
 }
 
 export async function removeRulePack(packId: string, storage = defaultStorage()): Promise<RulePack[]> {
-  const packs = await loadRulePacks(storage);
-  const filtered = packs.filter((pack) => pack.id !== packId || pack.builtIn);
-  await saveRulePacks(filtered, storage);
-  return filtered;
+  return removeScopedRulePack(packId, PUBLIC_RULE_PACK_SCOPE, storage);
 }
 
 // --- ID generation ---

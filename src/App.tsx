@@ -25,9 +25,10 @@ import { createModelRuntime, type AgentMessage, type ModelRuntime } from './core
 import { createRepoIndex, type RepoIndex, type RepoIndexStatus } from './core/repo-index';
 import { ReviewEngine } from './core/review-engine';
 import {
-  addRulePack, BUILT_IN_PACK, countEnabledRules, exportRulePack, generateRuleId,
-  generateRulePackId, importRulePack, loadRulePacks, removeRulePack, saveRulePacks,
-  type RuleDef, type RulePack,
+  addScopedRulePack, BUILT_IN_PACK, countEnabledRules, exportRulePack, generateRuleId,
+  generateRulePackId, importRulePack, loadScopedRulePacks, mergeScopedRulePacks,
+  PUBLIC_RULE_PACK_SCOPE, removeScopedRulePack, saveScopedRulePacks,
+  type RuleDef, type RulePack, type RulePackScope,
 } from './core/rule-packs';
 import { captureCodeSelection } from './core/selection';
 import {
@@ -90,7 +91,9 @@ export default function App({ page }: AppProps) {
 
   const [settings, setSettings] = useState<RuntimeSettings>(defaultSettings);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [rulePacks, setRulePacks] = useState<RulePack[]>([BUILT_IN_PACK]);
+  const [publicPacks, setPublicPacks] = useState<RulePack[]>([BUILT_IN_PACK]);
+  const [projectPacks, setProjectPacks] = useState<RulePack[]>([]);
+  const [packScopeKind, setPackScopeKind] = useState<'public' | 'project'>('public');
   const [importError, setImportError] = useState('');
 
   const [tab, setTab] = useState<Tab>('review');
@@ -138,6 +141,14 @@ export default function App({ page }: AppProps) {
     debugBus.log(level, source, message, detail);
   }, []);
 
+  const projectKey = page.projectPath ?? '';
+  const activePackScope: RulePackScope = packScopeKind === 'project' && projectKey
+    ? { kind: 'project', key: projectKey }
+    : PUBLIC_RULE_PACK_SCOPE;
+  const rulePacks = useMemo(() => mergeScopedRulePacks(publicPacks, projectPacks), [publicPacks, projectPacks]);
+  const scopePacks = activePackScope.kind === 'project' ? projectPacks : publicPacks;
+  const setScopePacks = activePackScope.kind === 'project' ? setProjectPacks : setPublicPacks;
+
   const api = useMemo(() => new GitLabAdapter(page, settings.gitlabToken), [page, settings.gitlabToken]);
   const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
   const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
@@ -159,14 +170,14 @@ export default function App({ page }: AppProps) {
     void (async () => {
       const [loaded, packs, summary, stored] = await Promise.all([
         loadSettings(),
-        loadRulePacks(),
+        loadScopedRulePacks(PUBLIC_RULE_PACK_SCOPE),
         getUsageSummary().catch(() => null),
         Promise.resolve(localStorage.getItem(CHAT_STORAGE_KEY)),
       ]);
       if (!active) return;
       setSettings(loaded);
       setSettingsLoaded(true);
-      setRulePacks(packs);
+      setPublicPacks(packs);
       if (summary && summary.callCount > 0) setUsageSummary(summary);
       if (stored) {
         try {
@@ -702,28 +713,40 @@ export default function App({ page }: AppProps) {
     addLog('info', 'session', `恢复会话 ${resumed.session.id}`);
   };
 
+  useEffect(() => {
+    if (!projectKey) {
+      setProjectPacks([]);
+      return;
+    }
+    let active = true;
+    void loadScopedRulePacks({ kind: 'project', key: projectKey }).then((packs) => {
+      if (active) setProjectPacks(packs.filter((pack) => !pack.builtIn));
+    });
+    return () => { active = false; };
+  }, [projectKey]);
+
   // --- Rule packs ---
 
   const updatePacks = async (next: RulePack[]) => {
-    setRulePacks(next);
-    await saveRulePacks(next);
+    setScopePacks(next);
+    await saveScopedRulePacks(next, activePackScope);
   };
 
   const toggleRulePack = async (packId: string, enabled: boolean) => {
-    await updatePacks(rulePacks.map((pack) => pack.id === packId ? { ...pack, enabled } : pack));
+    await updatePacks(scopePacks.map((pack) => pack.id === packId ? { ...pack, enabled } : pack));
     setToast(enabled ? '规则包已启用' : '规则包已停用');
   };
 
   const toggleRule = async (packId: string, ruleId: string) => {
-    await updatePacks(rulePacks.map((pack) => pack.id !== packId ? pack : {
+    await updatePacks(scopePacks.map((pack) => pack.id !== packId ? pack : {
       ...pack,
       rules: pack.rules.map((rule) => rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule),
     }));
   };
 
   const deleteRulePack = async (packId: string) => {
-    const next = await removeRulePack(packId);
-    setRulePacks(next);
+    const next = await removeScopedRulePack(packId, activePackScope);
+    setScopePacks(next.filter((pack) => activePackScope.kind === 'public' || !pack.builtIn));
     setToast('规则包已删除');
   };
 
@@ -736,8 +759,8 @@ export default function App({ page }: AppProps) {
         title: '新规则', content: '说明这条规则为什么重要。', matchPatterns: [{ type: 'regex', pattern: '' }],
       } satisfies RuleDef],
     };
-    const next = await addRulePack(pack);
-    setRulePacks(next);
+    const next = await addScopedRulePack(pack, activePackScope);
+    setScopePacks(next.filter((pack) => activePackScope.kind === 'public' || !pack.builtIn));
     setToast('已创建规则包');
   };
 
@@ -749,14 +772,14 @@ export default function App({ page }: AppProps) {
       return;
     }
     setImportError('');
-    void addRulePack(result.pack).then((next) => {
-      setRulePacks(next);
+    void addScopedRulePack(result.pack, activePackScope).then((next) => {
+      setScopePacks(next.filter((pack) => activePackScope.kind === 'public' || !pack.builtIn));
       setToast(`规则包「${result.pack?.name}」已导入`);
     });
   };
 
   const handleExportPack = (packId: string) => {
-    const pack = rulePacks.find((item) => item.id === packId);
+    const pack = scopePacks.find((item) => item.id === packId);
     if (!pack) return;
     void navigator.clipboard?.writeText(exportRulePack(pack));
     setToast('规则包 JSON 已复制到剪贴板');
@@ -1205,13 +1228,17 @@ export default function App({ page }: AppProps) {
                   void clearSensitiveSettings();
                   setToast('密钥已清除');
                 }}
-                rulePacks={rulePacks}
+                rulePacks={scopePacks}
+                packScope={activePackScope.kind}
+                projectLabel={projectKey}
+                publicCustomCount={publicPacks.filter((pack) => !pack.builtIn).length}
+                onPackScopeChange={(kind) => setPackScopeKind(kind)}
                 onToggleRulePack={(id, enabled) => void toggleRulePack(id, enabled)}
                 onToggleRule={(packId, ruleId) => void toggleRule(packId, ruleId)}
                 onDeleteRulePack={(id) => void deleteRulePack(id)}
                 onImportRulePack={handleImportPack}
                 onExportRulePack={handleExportPack}
-                onUpdateRulePack={(id, patch) => void updatePacks(rulePacks.map((pack) => pack.id === id ? { ...pack, ...patch } : pack))}
+                onUpdateRulePack={(id, patch) => void updatePacks(scopePacks.map((pack) => pack.id === id ? { ...pack, ...patch } : pack))}
                 importError={importError}
                 usageSummary={usageSummary}
                 onClearUsage={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}
