@@ -35,7 +35,8 @@ function endpoint(baseUrl: string, path: string) {
 }
 
 function shouldRetry(status: number) {
-  return status === 408 || status === 429 || status >= 500;
+  // 507 = 服务端内存不足（如 omlx 装不下模型），重试无意义，直接报错。
+  return status === 408 || status === 429 || (status >= 500 && status !== 507);
 }
 
 interface StreamLikeResponse {

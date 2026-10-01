@@ -1229,7 +1229,7 @@ export default function App({ page }: AppProps) {
                   >
                     {stages.model.error}
                     <div style={{ marginTop: 4 }}>
-                      常见原因：Base URL 路径与服务不一致（OpenAI 兼容通常以 /v1 结尾）、模型名不存在或已卸载、本地服务未启动。规则检查结果不受影响。
+                      常见原因：Base URL 路径与服务不一致（OpenAI 兼容通常以 /v1 结尾）、模型名不存在或已卸载、本地服务未启动、本地服务内存不足装不下模型（HTTP 507）。规则检查结果不受影响。
                     </div>
                   </Banner>
                 )}
