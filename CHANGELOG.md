@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Replace the inline oMLX preset with a Base URL 「?」hint listing omlx / Ollama / LM Studio default ports and their `/v1`-suffixed OpenAI-compatible addresses (click to fill); localhost endpoints still auto-fetch `/v1/models`.
+- Add rule-pack scopes: packs are stored per scope (public, or per GitLab project path) under separate storage keys and loaded dynamically per project; project custom packs override same-id public packs while built-in rule toggles stay public.
+- Fix the `typecheck` gate: `tsc --noEmit` against the solution-style `tsconfig.json` (`files: []`) type-checked nothing; switch to `tsc -b` so the app and node projects are actually checked.
+- Remove dead code: unused `buildSelectionContext`, `isSelectionInsideHost`, and the unwired review-plan `planUserPrompt` / `parseReviewPlan` path.
 
 - Align with OpenCodeReview's hybrid architecture: deterministic rule stage always runs (offline, zero tokens); model stage is optional and degrades gracefully to rule results on failure (`reviewMode`: hybrid / rules / ai).
 - Expand built-in rule pack from 5 to 24 multi-language rules (secrets, credentials in URLs, SQL injection, XSS, command injection, disabled TLS verification, weak hashing, predictable randomness, static mutable shared state, Java `equals` on literals, Kotlin `!!`, TS non-null assertion, weak types, swallowed promises, bare except, discarded Go errors, blocking sleep, skipped tests, debug output, hardcoded internal endpoints, TODO, conflict markers, missing tests) with language scoping, glob scope, comment-line skipping and per-file hit caps.
@@ -9,7 +13,7 @@
 - Add unconfigured-model guidance: persistent dismissible banner, capability card in settings, FAB badge, and actionable refusals in chat/review paths; rule review, locate, edit and copy all work without an API key.
 - Effort budget now only filters AI findings; deterministic findings are never dropped by confidence thresholds.
 - Rebuild the panel UI: 结果 / 对话 / 设置 / 调试 tabs, draggable + resizable panel, collapsible finding cards with code preview, batch publish bar, session resume and history, per-rule toggles.
-- Replace the assistant-ui chat with a self-contained streaming chat (markdown, attachments, tool trace) and drop tailwind/assistant-ui/ai-sdk runtime dependencies; userscript bundle 2.5 MB → 0.9 MB.
+- Replace the assistant-ui chat with a self-contained streaming chat (markdown, attachments, tool trace) and drop tailwind/assistant-ui/ai-sdk runtime dependencies; userscript bundle 2.5 MB → 0.9 MB at the strip (current ~1.16 MB / gzip ~255 KB including the repo index and debugger).
 - Fix markdown rendering (ordered lists, tables, blockquotes, safe URLs) and preserve multi-line comments through finding normalization.
 - Add a local repository index (opfs-worker OPFS cache with worker → main-thread → memory fallback): symbol search, heuristic call chains, `symbol_search` / `call_chain` agent tools, and "callers outside the diff" context injected into review prompts; same-ref caches restore without network.
 - Add an index manager: per-ref namespaces with a registry (ref / branch label / project / files / bytes / symbols), load + per-index delete + clear-all in the 索引 tab, `maxIndexes` pruning of the oldest entries, site storage usage/quota display, and a stale-index warning that also blocks repo context injection into review prompts.
@@ -17,6 +21,7 @@
 - Add a 本地 oMLX :8000 quick preset in model settings with automatic /v1/models fetch for localhost endpoints, plus a 关闭思考输出 toggle that sends `chat_template_kwargs.enable_thinking=false` for omlx/vLLM-style servers.
 - Harden `parseModelFindings` with candidate-based JSON extraction so leaked reasoning text can no longer break review parsing.
 - Add a real-model E2E (env `MODEL_BASE_URL` / `MODEL_NAME`, defaults to local omlx on :8000) that runs a hybrid review against a live GitLab and asserts the AI stage, network and prompt records.
+- Make the real-model E2E wait for true review completion (the running `Review 中` button disappearing) instead of matching the in-progress `0 个问题` counter, and prove the live model call through debug network/prompt records rather than asserting a non-deterministic AI finding count.
 - Add a four-pane debugger (logs / network / prompts / state) backed by a framework-agnostic debug bus: every GitLab API, model, MCP and index request is recorded with status/latency/bytes; every model call records full system + messages, tools and token usage; console.warn/error are mirrored; logs survive reloads; one-click JSON debug bundle export with redacted settings.
 - Route model and MCP requests through GM.xmlHttpRequest to survive gitlab.com's `connect-src 'self'` CSP, with streaming fetch and automatic fallback.
 - Add `docs/10-opencodereview-gap-analysis.md` comparing this project with alibaba/open-code-review.

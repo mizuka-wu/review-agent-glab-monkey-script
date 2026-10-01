@@ -338,7 +338,7 @@ interface AppError {
 | Markdown | react-markdown + remark-gfm | 回答与评论草稿渲染 |
 | 模型协议 | 内部 Runtime 抽象 | 不让 UI 直接依赖某个 provider SDK |
 
-`@assistant-ui/*` 与 Tailwind 已在混合评审重构中移除：Chatbox 改为自包含实现（`components/ChatThread.tsx`），样式统一由 `components/ui/modern.tsx` 设计系统与 `index.css` 承担，避免两套抽象并存并把产物从 2.5 MB 降到 0.9 MB。
+`@assistant-ui/*` 与 Tailwind 已在混合评审重构中移除：Chatbox 改为自包含实现（`components/ChatThread.tsx`），样式统一由 `components/ui/modern.tsx` 设计系统与 `index.css` 承担，避免两套抽象并存并把产物从 2.5 MB 降到 0.9 MB（加入仓库索引与调试器后当前约 1.16 MB / gzip 255 KB）。
 
 ## 10. 架构决策摘要
 

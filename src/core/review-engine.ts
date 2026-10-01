@@ -77,10 +77,6 @@ function withFullFiles(
   };
 }
 
-export function buildSelectionContext(selection: CodeSelection) {
-  return buildReviewContext({ files: [], selection });
-}
-
 export class ReviewEngine {
   constructor(
     private readonly runtime: ReviewRuntime,

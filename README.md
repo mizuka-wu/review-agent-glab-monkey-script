@@ -12,14 +12,14 @@
 
 ### 🤖 模型 Review
 - **OpenAI 兼容接口**：官方端点、企业网关、本地代理均可；Bearer Token、API Key Header、Query Parameter、自定义 Header 四种认证模式（网关免鉴权时可不填 Key）
-- **本地模型一键配置**：内置「本地 oMLX :8000」预设，localhost 端点自动拉取 `/v1/models` 列表；可用「关闭思考输出」开关抑制 omlx/vLLM 的思考过程泄漏
+- **本地模型提示**：Base URL 旁「?」列出 omlx / Ollama / LM Studio 的默认端口与带 `/v1` 后缀的兼容地址，点击即填；localhost 端点自动拉取 `/v1/models` 列表；可用「关闭思考输出」开关抑制 omlx/vLLM 的思考过程泄漏
 - **Agent 工具循环**：模型可主动调用 `file_read`、`search_code`、`git_log` 工具获取仓库上下文
 - **MCP 扩展**：通过 Streamable HTTP 连接本地 MCP server，扩展工具能力
 - **SSE 流式输出**：聊天逐 token 流式渲染
 - **三档审查强度**：fast（仅高置信）、balanced（默认）、thorough（全面）
 
 ### 📋 Review 引擎
-- **规则包系统**：内置 24 条多语言规则（硬编码密钥、URL 凭据、SQL 注入、XSS、命令注入、TLS 校验关闭、弱哈希、可预测随机数、静态可变共享状态、Java `equals`、Kotlin `!!`、TS 非空断言、弱类型、吞异常、Go 丢弃 error、阻塞 sleep、跳过测试、调试输出、内网地址、TODO、冲突标记、缺少测试），按语言与 glob 路径作用域匹配、跳过注释行、单文件命中上限；支持自定义规则包（regex、作用域、语言、JSON 导入导出、逐条开关）
+- **规则包系统**：内置 24 条多语言规则（硬编码密钥、URL 凭据、SQL 注入、XSS、命令注入、TLS 校验关闭、弱哈希、可预测随机数、静态可变共享状态、Java `equals`、Kotlin `!!`、TS 非空断言、弱类型、吞异常、Go 丢弃 error、阻塞 sleep、跳过测试、调试输出、内网地址、TODO、冲突标记、缺少测试），按语言与 glob 路径作用域匹配、跳过注释行、单文件命中上限；支持自定义规则包（regex、作用域、语言、JSON 导入导出、逐条开关），并按 **公共 / 当前项目** 两种作用域分别存储、动态加载，项目自定义包覆盖同 id 公共包
 - **Context Builder**：Diff 文件过滤（lockfile/生成文件/密钥/二进制排除）、字符预算截断、省略原因记录
 - **Finding 锚定**：`existingCode` 多行精确匹配、旧/新侧行号推断、跨文件重定位
 - **Review 硬化**：证据充分度检查、严重度校准、同源相似 Finding 合并、跨来源印证合并、置信度过滤（仅作用于 AI 结果）
@@ -61,7 +61,7 @@
 ### ⚡ 性能
 - **并行加载**：Diff 分页并发请求（3 路并发）、完整文件并发读取（5 路并发）
 - **分批渲染**：Finding 列表分批加载（每批 30 条）
-- **轻量产物**：运行时仅依赖 React + lucide，油猴脚本约 0.9 MB（gzip 190 KB），Shadow DOM 隔离不污染 GitLab 样式
+- **轻量产物**：运行时仅依赖 React + lucide，油猴脚本约 1.16 MB（gzip 255 KB），Shadow DOM 隔离不污染 GitLab 样式
 - **大 MR 支持**：500 文件 / 20k 行不阻塞 GitLab 页面
 
 ### 🔒 安全
@@ -95,7 +95,8 @@ pnpm install
 
 # 开发模式（自动构建 + 热更新）
 pnpm dev
-# 输出的 .user.js URL 直接在 Tampermonkey 中安装
+# 在 Tampermonkey 中安装开发版（注意是 /dist/ 路径，根路径 .user.js 为 404）：
+#   http://127.0.0.1:5173/dist/review-agent-glab-monkey-script.user.js
 # 之后改代码自动重建，Tampermonkey 自动更新
 
 # 类型检查
@@ -125,6 +126,13 @@ EVAL_VERBOSE=1 npx vitest run tests/eval/
 GITLAB_URL=http://127.0.0.1:8929 \
 GITLAB_MR_URL=http://127.0.0.1:8929/<项目>/-/merge_requests/<id>/diffs \
 pnpm test:e2e
+
+# 叠加真实本地模型的混合 Review（并指定登录凭据）：
+GITLAB_URL=http://127.0.0.1:8929 \
+GITLAB_MR_URL=http://127.0.0.1:8929/<项目>/-/merge_requests/<id>/diffs \
+GITLAB_USER=root GITLAB_PASS=<密码> \
+MODEL_BASE_URL=http://localhost:8000/v1 MODEL_NAME=qwen35-a3b \
+pnpm test:e2e
 ```
 
 ## 配置
@@ -140,8 +148,13 @@ pnpm test:e2e
 | **GitLab PAT** | 可选，用于跨域 API 访问 |
 | **审查强度** | fast / balanced / thorough |
 | **输出语言** | 简体中文 / English |
-| **规则包** | 内置规则 + 自定义规则包管理（导入/导出/启停） |
+| **规则包** | 内置规则 + 自定义规则包管理（导入/导出/启停）；作用域可切 公共 / 当前项目 |
 | **MCP** | 连接本地 MCP server（Streamable HTTP） |
+| **评审模式** | `规则 + AI` / `仅规则` / `仅 AI`；未配置模型时自动仅规则 |
+| **思考输出** | 关闭后向 omlx/vLLM 发送 `enable_thinking=false`，避免思考文本混入结果 |
+| **调试标签页** | 默认关闭；开启后显示 日志 / 网络 / 提示词 / 状态 四个 pane |
+| **仓库索引** | 启用 OPFS 索引及文件数 / 单份体积 / 保留份数上限 |
+| **仓库上下文** | 索引与 head 一致时，把 Diff 外调用点注入 Review 提示词 |
 
 ## 工具与能力矩阵
 
@@ -159,6 +172,8 @@ pnpm test:e2e
 | 跨文件重定位 | ✅ | 模型 API |
 | 能力探测/诊断 | ✅ | 无 |
 | Token 成本统计 | ✅ | 模型 API |
+| 符号搜索 / 调用链 | ✅ | 无（需先建立索引） |
+| 仓库上下文注入 Review | ✅ | 模型 API + 索引 |
 
 ## 架构
 
@@ -172,6 +187,10 @@ GitLab Adapter ─── Context Builder ─── Review UI
 Model Runtime (OpenAI / Anthropic / Gemini)
   ↓
 Agent Tool Loop (file_read / search_code / git_log) + MCP
+  ↓
+Repo Index (OPFS · opfs-worker) → symbol_search / call_chain → Review 上下文
+  ↓
+Debug Bus (logs / network / prompts / state · 设置中开启)
   ↓
 Finding Pipeline (normalize → anchor → harden → dedupe → filter)
   ↓
@@ -190,11 +209,12 @@ Draft → User Confirm → GitLab Discussion Publish
 8. [安全与隐私](docs/07-security-privacy.md)
 9. [测试与验收](docs/08-testing-acceptance.md)
 10. [Review Engine 计划](docs/09-p0-review-engine-plan.md)
+11. [与 OpenCodeReview 差距分析](docs/10-opencodereview-gap-analysis.md)
 
 ## 测试
 
-- **151 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计
-- **3 个 Playwright E2E**：规则 Review 发布流程、选区模型调用、元数据验证
+- **195 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线
+- **9 个 Playwright E2E**：5 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、元数据）+ 4 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
 - **8 个评测 fixture**：安全/调试日志/弱类型/缺少测试/干净代码/多文件/性能/密钥泄漏
 - **合并门禁**：`pnpm typecheck` + `pnpm test:unit` + `pnpm test:e2e` + `pnpm build`
 

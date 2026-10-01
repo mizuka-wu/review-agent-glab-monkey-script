@@ -41,7 +41,3 @@ export function captureCodeSelection(
     left: Math.min(Math.max(rect.left + rect.width / 2, 190), window.innerWidth - 190),
   };
 }
-
-export function isSelectionInsideHost(target: EventTarget | null, host: HTMLElement) {
-  return target instanceof Node && host.contains(target);
-}
