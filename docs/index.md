@@ -11,7 +11,7 @@ hero:
       link: https://github.com/mizuka-wu/review-agent-glab-monkey-script/releases/latest/download/review-agent-glab-monkey-script.user.js
     - theme: alt
       text: 系统架构
-      link: /02-architecture
+      link: /architecture
     - theme: alt
       text: GitHub
       link: https://github.com/mizuka-wu/review-agent-glab-monkey-script
