@@ -1,6 +1,9 @@
 # Changelog
 
 ## 0.2.0 — 2026-10-01
+- Rule packs now live as language docs: `rule_docs/*.md` (frontmatter + pattern fence + examples) are the source of truth; `scripts/generate-rules.mjs` emits `builtin-rules.generated.ts` and `--check` guards drift in CI. Migration verified lossless by unit tests and the eval benchmark.
+- Expand the eval benchmark from 8 to 31 fixtures (one annotated sample per built-in rule plus a clean negative).
+- Symbol precision stage one: import-aware resolution (ts/js/python/go) records `resolvedPath` on refs and call chains drop same-name local-definition false edges.
 - Close more OpenCodeReview gaps: directory-cohesive file bundling with concurrent per-bundle sub-reviews (partial-failure tolerant), a reflection pass where the model self-checks its own findings (keep/drop, skipped on fast effort), full-file rule scan over the cached repo index (ocr-scan parity, unpublishable results), one-click findings JSON export and a Delegation context export (file selection + resolved rules + diff + background + output schema) for external agents.
 - Slim `docs/` to design documents only (numeric prefixes dropped); move plans and backlog (MCP bridge plan, OpenCodeReview gaps, acceptance baselines, open items) into root `TODO.md`; docs site sidebar/README links updated accordingly.
 - Add `docs/11-mcp-bridge-and-agent-surface-plan.md`: a development plan for an optional local MCP relay bridge (stdio/Streamable HTTP to MCP hosts, outbound WS/long-poll to the userscript) exposing an MCP-isomorphic tool surface — review state/control, rule-pack read-write per scope, requirement/tech-doc context attachment, and cross-project GitLab context — plus in-page RPC so same-page extensions can call the same surface without any process.

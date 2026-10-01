@@ -32,11 +32,11 @@ GitLab 调用始终留在浏览器内（凭据不出浏览器）。
 
 ## 与 OpenCodeReview 的剩余差距（backlog）
 
-- [ ] 符号检索精度：正则启发式符号表 ≠ LSIF 级调用图（重载/泛型/动态派发会漏）
+- [x] 符号检索精度（一阶段）：import 感知解析（ts/js/py/go）+ 调用链排除同名本地定义误边；LSIF 级精确调用图仍开放
 - [x] 大 MR 文件分组 + 并发子评审（目录内聚分组、并发 3、分组失败保留其余结果）
 - [x] 评论反思（reflection）模块：模型自检 keep/drop，fast 强度跳过，移除项进 warnings
-- [ ] 基准规模：eval fixture 扩到 30+ 并引入人工标注
-- [ ] 规则文档化：从代码内数组迁移到语言文档 + 模板匹配
+- [x] 基准规模：eval fixture 8 → 31（每条规则一个标注样本 + 干净负样本）；外部人工标注引入仍开放
+- [x] 规则文档化：rule_docs/*.md 为唯一来源（frontmatter + 模式 + 正反例），scripts/generate-rules.mjs 生成代码，--check 漂移门禁进 CI
 - [x] 全文件扫描：索引页「扫描已索引文件」对已缓存文件跑规则，扫描模式结果不可发布
 - [x] 结果增量/流式输出（已落地：SSE 流式 + 思考折叠 + 增量 findings + 规则先行）
 - [x] Delegation 上下文导出：文件选择 + 适用规则 + Diff + 背景 + 输出 schema，一键复制
