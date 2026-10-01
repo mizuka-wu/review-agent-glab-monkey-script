@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-02
+- Thinking pane is now structured: bullet extraction plus a prose/JSON/code segment timeline, with the raw compacted stream behind a toggle.
+- Session viewer parity: read-only replay of historical sessions with mark fixed/ignored/back-to-draft, a hide-handled filter and restore-as-current; findings gain a `fixed` status surfaced in cards and filters.
 - Per-project supplementary review requirements: editable from the start-review hero and from settings (with a manager to switch between cached projects and delete entries); injected into the review user message rather than the system prompt.
 - MCP extension now supports multiple servers (list management in settings, per-server enable, tool names prefixed with the server id and routed back on call); legacy single-`serverUrl` settings migrate automatically.
 - The settings/debug tab red dot now means *unseen* error logs: it clears once the debug tab is opened and shows a tooltip with the reason (unconfigured model / N unseen errors).

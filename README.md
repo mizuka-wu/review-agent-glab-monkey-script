@@ -17,6 +17,8 @@
 - **本地模型提示**：Base URL 旁「?」列出 omlx / Ollama / LM Studio 的默认端口与带 `/v1` 后缀的兼容地址，点击即填；localhost 端点自动拉取 `/v1/models` 列表；模型名为「可输入 + 下拉建议」组合框，当前模型不在服务器列表时自动切换到第一个可用模型并立即保存；对话区顶部也可直接切换模型；可用「关闭思考输出」开关抑制 omlx/vLLM 的思考过程泄漏
 - **Agent 工具循环**：模型可主动调用 `file_read`、`search_code`、`git_log` 工具获取仓库上下文
 - **MCP 扩展**：可同时连接多个 MCP server（Streamable HTTP / SSE），工具名按服务 id 加前缀避免冲突，调用按前缀路由；单服务器旧配置自动迁移
+- **思考结构化**：思考 pane 默认折叠，展开后显示要点抽取与 prose/JSON/代码分段时间轴，原文流可开关
+- **会话回放**：历史会话只读回放，可标记已修复/忽略/恢复草稿、隐藏已处理项、恢复为当前会话
 - **SSE 流式输出**：聊天逐 token 流式渲染；Review 模型阶段同样流式——思考通道（`reasoning_content`）以可折叠打字机呈现（默认折叠、实时字数），finding 随流式逐条增量进入结果列表，原始 JSON 默认折叠仅供排查；可随时「取消」停止；服务端不支持 SSE 时自动回退一次性读取；规则结果在规则阶段完成后立即先行渲染
 - **三档审查强度**：fast（仅高置信）、balanced（默认）、thorough（全面）
 - **按项目补充要求**：起始页「开始一次混合评审」与设置页均可为每个项目配置补充提示（注入 review 的 user 消息、按项目记住）；设置页可在已缓存项目间切换并删除
@@ -228,8 +230,8 @@ Draft → User Confirm → GitLab Discussion Publish
 
 ## 测试
 
-- **216 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线
-- **12 个 Playwright E2E**：8 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、快速操作、流式输出、运行中停止、元数据）+ 4 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
+- **229 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线
+- **17 个 Playwright E2E**：13 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、快速操作、流式输出、运行中停止、模型失败横幅、模型自动切换、面板内划词隐藏、项目补充提示、会话回放、元数据）+ 4 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
 - **8 个评测 fixture**：安全/调试日志/弱类型/缺少测试/干净代码/多文件/性能/密钥泄漏
 - **合并门禁**：`pnpm typecheck` + `pnpm test:unit` + `pnpm test:e2e` + `pnpm build`
 
