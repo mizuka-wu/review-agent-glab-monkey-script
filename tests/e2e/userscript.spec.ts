@@ -358,11 +358,14 @@ test.describe('real GitLab mode', () => {
     await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
 
-    await expect(page.getByText(/个问题|没有发现需要处理的问题/).first()).toBeVisible({ timeout: 200_000 });
+    // 等待 Review 真正结束：运行中按钮在 preparing+running 期间都可见，消失即代表完成。
+    // 不能直接等 "N 个问题"，因为进行中的空计数也会显示 "0 个问题"，会造成提前匹配。
+    await expect(page.getByRole('button', { name: 'Review 中', exact: true })).toBeHidden({ timeout: 200_000 });
     await expect(page.getByText('AI 未运行')).toHaveCount(0);
     await expect(page.getByText('AI 评审失败')).toHaveCount(0);
-    // 结果页的来源计数里 AI 应有非零命中
-    await expect(page.getByRole('button', { name: /^AI [1-9]/ }).first()).toBeVisible();
+    // 完成态：有问题列表或明确的"没有发现"空态。模型产出数量不确定，0 也是合法结果，
+    // 因此这里不断言 AI 必须命中，真实调用由下方调试面板的网络/提示词记录证明。
+    await expect(page.getByText(/个问题|没有发现需要处理的问题/).first()).toBeVisible({ timeout: 10000 });
 
     // 调试面板里应能看到模型请求与提示词记录（设置中已打开调试）
     const panel = page.locator('aside[aria-label="Review Agent"]');
