@@ -11,8 +11,8 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: '首页', link: '/' },
-      { text: '架构', link: '/02-architecture' },
-      { text: '差距分析', link: '/10-opencodereview-gap-analysis' },
+      { text: '架构', link: '/architecture' },
+      { text: 'TODO / Backlog', link: `${repo}/blob/main/TODO.md` },
       { text: '安装', link: `${repo}/releases/latest` },
     ],
     sidebar: [
@@ -20,28 +20,18 @@ export default defineConfig({
         text: '开始',
         items: [
           { text: '文档首页', link: '/' },
-          { text: '产品需求与范围', link: '/00-product-brief' },
-          { text: '能力边界', link: '/01-capability-boundary' },
+          { text: '产品需求与范围', link: '/product-brief' },
+          { text: '能力边界', link: '/capability-boundary' },
         ],
       },
       {
         text: '设计与实现',
         items: [
-          { text: '系统架构与数据模型', link: '/02-architecture' },
-          { text: '开发计划', link: '/03-development-plan' },
-          { text: 'UX 流程与原型', link: '/04-ux-flows-and-prototype' },
-          { text: 'GitLab 接入', link: '/05-gitlab-integration' },
-          { text: 'Agent Gateway 协议', link: '/06-agent-gateway-contract' },
-          { text: '安全与隐私', link: '/07-security-privacy' },
-        ],
-      },
-      {
-        text: '质量与对齐',
-        items: [
-          { text: '测试与验收', link: '/08-testing-acceptance' },
-          { text: 'Review Engine 计划', link: '/09-p0-review-engine-plan' },
-          { text: '与 OpenCodeReview 差距分析', link: '/10-opencodereview-gap-analysis' },
-          { text: 'MCP 桥与 Agent 工具面计划', link: '/11-mcp-bridge-and-agent-surface-plan' },
+          { text: '系统架构与数据模型', link: '/architecture' },
+          { text: 'UX 流程与原型', link: '/ux-flows-and-prototype' },
+          { text: 'GitLab 接入', link: '/gitlab-integration' },
+          { text: 'Agent Gateway 协议', link: '/agent-gateway-contract' },
+          { text: '安全与隐私', link: '/security-privacy' },
         ],
       },
     ],

@@ -211,18 +211,15 @@ Draft → User Confirm → GitLab Discussion Publish
 
 在线阅读（VitePress 站点，GitHub Pages 托管）：<https://mizuka-wu.github.io/review-agent-glab-monkey-script/>
 
-1. [产品需求与范围](docs/00-product-brief.md)
-2. [能力边界](docs/01-capability-boundary.md)
-3. [系统架构](docs/02-architecture.md)
-4. [开发计划](docs/03-development-plan.md)
-5. [UX 流程](docs/04-ux-flows-and-prototype.md)
-6. [GitLab 接入](docs/05-gitlab-integration.md)
-7. [Agent Gateway 协议](docs/06-agent-gateway-contract.md)（规划中，未实现）
-8. [安全与隐私](docs/07-security-privacy.md)
-9. [测试与验收](docs/08-testing-acceptance.md)
-10. [Review Engine 计划](docs/09-p0-review-engine-plan.md)
-11. [与 OpenCodeReview 差距分析](docs/10-opencodereview-gap-analysis.md)
-12. [MCP 本地中继桥与 Agent 工具面开发计划](docs/11-mcp-bridge-and-agent-surface-plan.md)
+1. [产品需求与范围](docs/product-brief.md)
+2. [能力边界](docs/capability-boundary.md)
+3. [系统架构](docs/architecture.md)
+4. [UX 流程](docs/ux-flows-and-prototype.md)
+5. [GitLab 接入](docs/gitlab-integration.md)
+6. [Agent Gateway 协议](docs/agent-gateway-contract.md)（规划中，未实现）
+7. [安全与隐私](docs/security-privacy.md)
+
+计划与 backlog（MCP 本地中继桥、与 OpenCodeReview 的剩余差距、验收基线）见 [TODO.md](TODO.md)。
 
 ## 测试
 

@@ -187,7 +187,7 @@ data: {"usage":{"inputTokens":8120,"outputTokens":412}}
 
 ### SSE 事件
 
-复用 [系统架构](02-architecture.md) 的 `AgentEvent`，关键事件：
+复用 [系统架构](architecture.md) 的 `AgentEvent`，关键事件：
 
 - `run.created`
 - `stage.changed`
@@ -297,7 +297,7 @@ providerId + model + repositoryRevision + normalizedRequest + ruleSetVersion
 - 不接受浏览器传入任意本地路径。
 - 不把 GitLab PAT 作为 review payload 传入。
 - 命令执行必须 allowlist、固定工作目录、超时、资源限制和审计。
-- 详细威胁模型见 [安全、隐私与密钥治理](07-security-privacy.md)。
+- 详细威胁模型见 [安全、隐私与密钥治理](security-privacy.md)。
 
 ## 14. 版本策略
 

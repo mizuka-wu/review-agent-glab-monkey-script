@@ -4,7 +4,7 @@
 
 > **当前范围**：纯浏览器端实现，无本地 Gateway / CI Bot。需要服务端或本地进程的能力已明确排除。
 > 例外（计划中、可选）：MCP 本地中继桥作为**可选集成进程**承担标准 MCP server 角色，
-> 见 [11-mcp-bridge-and-agent-surface-plan.md](11-mcp-bridge-and-agent-surface-plan.md)；默认安装路径不包含它。
+> 见仓库根 [TODO.md](../TODO.md)；默认安装路径不包含它。
 
 ## 1. 总体结论
 
@@ -59,7 +59,7 @@
 | 读取已有评论 | `GET .../merge_requests/:iid/discussions` | 去重、增量 Review |
 | Pipeline / Commit | REST 或 GraphQL | 可作为证据，不在 MVP 执行命令 |
 
-详细接口、字段和降级策略见 [GitLab 接入](05-gitlab-integration.md)。
+详细接口、字段和降级策略见 [GitLab 接入](gitlab-integration.md)。
 
 ## 4. 需要本地支持的部分
 

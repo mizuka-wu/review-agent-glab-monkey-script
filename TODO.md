@@ -1,0 +1,53 @@
+# TODO / Backlog
+
+> 计划类与 backlog 内容集中在这里；`docs/` 只保留设计类文档。
+
+## MCP 本地中继桥与 Agent 工具面（计划）
+
+目标：让外部 Agent（Codex / Claude Desktop / Cursor 等）调用浏览器内的 Review Agent，
+覆盖四类场景：① 读写 coderules；② 读取 Review 状态；③ 需求/技术文档进入 Review 上下文；
+④ 跨 GitLab 项目上下文。约束：浏览器不能监听端口，故标准 MCP server 角色由**可选本地桥进程**承担；
+GitLab 调用始终留在浏览器内（凭据不出浏览器）。
+
+架构：MCP host ↔ `review-agent-bridge`（stdio / Streamable HTTP，仅绑定 127.0.0.1）
+↔ userscript（出站 WS，token 配对 + HMAC；长轮询回退）。工具面抽到 `core/agent-surface.ts`
+（MCP 同构：`tools/list` / `tools/call`），页内 postMessage RPC 复用同一实现（零进程可用）。
+
+工具面分组：
+- `review.*`：start / status / findings / getFinding / cancel / publish / approve / subscribe
+- `rules.*`：list / get / upsertRule / deleteRule / toggleRule / upsertPack / deletePack / import / export / test（作用域：公共 + 按项目）
+- `context.*`：attachDoc（url / gitlabFile / wiki / 文本）/ list / detach / addProject / setBrief / budget
+- `gitlab.*`：file_read / search_code / git_log / symbol_search / call_chain，均带可选 `project` 参数（需先 `context.addProject` 登记）
+- `session.*`：list / get / resume / export
+
+安全：读工具默认开放；写分 `mutate` 与 `publish` 两级，设置页逐项开关默认全关；桥调用全量进 DebugBus 审计。
+多标签仲裁：握手带 `tabId + mrKey`，后连者抢占；握手交换协议版本防错配。
+
+里程碑：
+- [ ] M1 工具面 + 页内 RPC（review.*/rules.* 读工具；单测 + mock e2e）
+- [ ] M2 桥只读通道（stdio MCP server + WS 中继 + 配对；重连/版本错配用例）
+- [ ] M3 写工具与权限（rules 写、publish/approve、权限开关与审计）
+- [ ] M4 上下文增强（attachDoc/setBrief/budget、跨项目 gitlab 与符号工具）
+- [ ] M5 托管 relay 评估（仅设计评审，不默认实现）
+
+## 与 OpenCodeReview 的剩余差距（backlog）
+
+- [ ] 符号检索精度：正则启发式符号表 ≠ LSIF 级调用图（重载/泛型/动态派发会漏）
+- [ ] 大 MR 文件分组 + 并发子评审（bundle 独立上下文，下一轮最大收益点）
+- [ ] 评论反思（reflection）模块：值不值得评 / 是否重复 / 位置是否正确 的自检
+- [ ] 基准规模：eval fixture 扩到 30+ 并引入人工标注
+- [ ] 规则文档化：从代码内数组迁移到语言文档 + 模板匹配
+- [ ] 全文件扫描：基于仓库索引扩展「扫描整个目录」入口（对齐 `ocr scan`）
+- [x] 结果增量/流式输出（已落地：SSE 流式 + 思考折叠 + 增量 findings + 规则先行）
+- [ ] Delegation 模式：导出「文件选择 + 规则解析」上下文供外部 Agent 消费（优先级低）
+- [ ] findings 结果导出：一键导出结构化结果（来源/证据/锚点），对齐 `--format json`
+
+## 验收基线（持续门禁）
+
+- 检测率 ≥ 80%；精确率 ≥ 70%（目标 80%）；安全类 100%；干净代码 0 误报；定位准确 ≥ 95%。
+- 合并门禁：`pnpm typecheck` + `pnpm test:unit` + `pnpm test:e2e` + `pnpm build`。
+
+## 其他开放项
+
+- [ ] P3：本地 Gateway / IDE 插件 / 团队化能力（`ReviewRuntime` 抽象已预留替换点）
+- [ ] Session viewer 剩余 parity：回放与「处理中隐藏」交互
