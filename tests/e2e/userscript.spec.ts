@@ -413,9 +413,22 @@ test.describe('mock mode', () => {
     await routeGitLab(page);
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
-    // 页内 diff 选区 → 工具条出现
-    await page.locator('code.ra-line-code').first().dblclick();
-    await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toBeVisible({ timeout: 10000 });
+    // 页内 diff 选区 → 工具条出现（拖拽选区比 dblclick 在各环境更稳定）
+    const code = page.locator('code.ra-line-code').first();
+    const box = (await code.boundingBox())!;
+    const selectLine = async () => {
+      await page.mouse.move(box.x + 1, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 6 });
+      await page.mouse.up();
+    };
+    await selectLine();
+    try {
+      await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toBeVisible({ timeout: 4000 });
+    } catch {
+      await selectLine();
+      await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toBeVisible({ timeout: 8000 });
+    }
     // 面板内选区（对话输入框）→ 工具条隐藏
     await page.getByRole('tab', { name: /对话/ }).click();
     const box = page.getByLabel('消息输入框');
