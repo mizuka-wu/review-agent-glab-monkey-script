@@ -140,6 +140,20 @@ export class RepoIndex {
 
   // --- Registry ---
 
+  /** 读取当前载入索引的全部文件内容（受 maxFiles 限制），供全文件扫描使用。 */
+  async readIndexedFiles(): Promise<{ path: string; content: string }[]> {
+    const meta = this.symbolIndex as { files?: { path: string }[] } | null;
+    if (!meta?.files?.length) return [];
+    const namespace = namespaceOf(this.statusValue.ref);
+    const limited = meta.files.slice(0, this.options.maxFiles);
+    const result: { path: string; content: string }[] = [];
+    for (const entry of limited) {
+      const content = await this.store.readFile(`${namespace}/files/${entry.path}`);
+      if (content) result.push({ path: entry.path, content });
+    }
+    return result;
+  }
+
   async list(): Promise<IndexRecord[]> {
     const raw = await this.store.readFile(REGISTRY_PATH);
     if (!raw) return [];

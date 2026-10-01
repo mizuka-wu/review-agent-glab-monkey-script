@@ -3,6 +3,8 @@ import { buildReviewContext, fileOmissionReason, includedFiles } from './context
 import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } from './full-file';
 import { parseModelFindings } from './findings';
 import { corroborateFindings, hardenFindings } from './finding-hardening';
+import { reflectFindings } from './reflection';
+import { groupFilesIntoBundles, mapWithConcurrency } from './review-bundles';
 import { BUILT_IN_PACK, countEnabledRules, runRulePackReview, type RulePack } from './rule-packs';
 import type {
   CodeSelection,
@@ -19,6 +21,7 @@ import type {
 interface ReviewRuntime {
   configured: boolean;
   review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void }): Promise<string>;
+  reflect(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal): Promise<string>;
 }
 
 const severityOrder: Record<Finding['severity'], number> = {
@@ -84,6 +87,12 @@ export class ReviewEngine {
     private readonly rulePacks: RulePack[] = [BUILT_IN_PACK],
   ) {}
 
+  /** 全文件扫描（对齐 ocr scan）：对无 diff 的文件跑确定性规则，结果不可发布为行级评论。 */
+  scan(files: FileDiff[]): Finding[] {
+    return runRulePackReview(files, this.rulePacks)
+      .map((finding) => ({ ...finding, anchor: { source: 'full-file' as const, publishable: false } }));
+  }
+
   async run(input: {
     files: FileDiff[];
     selection?: CodeSelection;
@@ -100,6 +109,8 @@ export class ReviewEngine {
     onModelToken?: (token: string) => void;
     /** 模型思考通道（reasoning_content）回调。 */
     onModelThinking?: (token: string) => void;
+    /** 分组并发评审时，每个分组完成后的增量回调。 */
+    onBundleFindings?: (findings: Finding[]) => void;
     /** 关闭后只跑规则检查，即使模型已配置。 */
     model?: boolean;
   }): Promise<ReviewEngineResult> {
@@ -142,8 +153,31 @@ export class ReviewEngine {
     if (this.runtime.configured && input.model !== false) {
       stages.model.ran = true;
       try {
-        const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking });
-        modelFindings = parseModelFindings(raw, files);
+        const bundles = groupFilesIntoBundles(files);
+        if (bundles.length <= 1) {
+          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking });
+          modelFindings = parseModelFindings(raw, files);
+        } else {
+          const bundleErrors: string[] = [];
+          const perBundle = await mapWithConcurrency(bundles, 3, async (bundle) => {
+            try {
+              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, {});
+              const parsed = parseModelFindings(raw, bundle);
+              input.onBundleFindings?.(parsed);
+              return parsed;
+            } catch (error) {
+              if (input.signal?.aborted || (error as Error)?.name === 'AbortError') throw error;
+              const message = error instanceof Error ? error.message : String(error);
+              bundleErrors.push(`${bundle[0]?.newPath ?? 'unknown'} 等 ${bundle.length} 个文件：${message}`);
+              return [] as Finding[];
+            }
+          });
+          modelFindings = perBundle.flat();
+          if (bundleErrors.length > 0) {
+            stages.model.error = bundleErrors.join('；');
+            warnings.push(`${bundles.length} 个评审分组中 ${bundleErrors.length} 个失败：${stages.model.error}。已保留其余分组结果。`);
+          }
+        }
         stages.model.findings = modelFindings.length;
 
         if (input.loadFile && input.fullFileRef) {
@@ -182,6 +216,25 @@ export class ReviewEngine {
     if (hardened.merged > 0) warnings.push(`合并了 ${hardened.merged} 个相似 Finding。`);
     if (hardened.severityAdjusted > 0) warnings.push(`校准了 ${hardened.severityAdjusted} 个 AI Finding 的严重度。`);
     if (hardened.filtered > 0) warnings.push(`按证据充分度或审查强度过滤了 ${hardened.filtered} 个 Finding。`);
+
+    if (stages.model.ran && this.settings.effort !== 'fast') {
+      const modelSourced = findings.filter((finding) => finding.source === 'model');
+      if (modelSourced.length > 0) {
+        try {
+          const verdicts = await reflectFindings(this.runtime, modelSourced, this.settings.language, input.signal);
+          const dropped = verdicts.filter((verdict) => !verdict.keep);
+          if (dropped.length > 0) {
+            const dropIds = new Set(dropped.map((verdict) => verdict.id));
+            findings = findings.filter((finding) => !dropIds.has(finding.id));
+            const reasons = dropped.slice(0, 3).map((verdict) => verdict.reason || verdict.id).join('；');
+            warnings.push(`反思模块移除 ${dropped.length} 条 AI Finding：${reasons}${dropped.length > 3 ? '…' : ''}`);
+          }
+        } catch (error) {
+          if (input.signal?.aborted || (error as Error)?.name === 'AbortError') throw error;
+          warnings.push(`反思模块未执行：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
 
     const relocated = findings.filter((finding) => finding.anchor?.relocatedFromPath).length;
     const fullFileAnchored = findings.filter((finding) => finding.anchor?.source === 'full-file').length;

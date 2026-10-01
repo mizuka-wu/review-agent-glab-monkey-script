@@ -306,6 +306,12 @@ test.describe('mock mode', () => {
     await expect(page.getByText('已缓存索引')).toBeVisible();
     await expect(page.getByText('feature/payment')).toBeVisible();
     await expect(page.getByText('当前 head')).toBeVisible();
+
+    // 全文件扫描（仅规则）：结果进入结果页且不可发布
+    await page.getByRole('button', { name: '扫描已索引文件' }).click();
+    await expect(page.getByText(/扫描完成：2 个文件/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('扫描模式（全文件规则扫描）')).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: /索引/ }).click();
     await page.getByRole('button', { name: '删除索引 feature/payment' }).click();
     await expect(page.getByText('还没有缓存')).toBeVisible();
   });

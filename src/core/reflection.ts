@@ -27,7 +27,7 @@ export function buildReflectionPayload(findings: Finding[]): string {
     line: finding.line,
     severity: finding.severity,
     category: finding.category,
-    evidence: finding.evidence[0]?.snippet ?? finding.existingCode,
+    evidence: finding.evidence[0]?.quote ?? finding.existingCode,
     suggestion: finding.suggestionCode || finding.comment,
   })));
 }
@@ -51,4 +51,20 @@ export function parseReflectionVerdicts(content: string): ReflectionVerdict[] {
     }
   }
   return [];
+}
+
+export interface ReflectionRuntime {
+  reflect(payload: string, language: 'zh-CN' | 'en-US', signal?: AbortSignal): Promise<string>;
+}
+
+/** 对模型产出的 Finding 做一轮自检，返回仅包含已知 id 的判定。 */
+export async function reflectFindings(
+  runtime: ReflectionRuntime,
+  findings: Finding[],
+  language: 'zh-CN' | 'en-US',
+  signal?: AbortSignal,
+): Promise<ReflectionVerdict[]> {
+  const raw = await runtime.reflect(buildReflectionPayload(findings), language, signal);
+  const known = new Set(findings.map((finding) => finding.id));
+  return parseReflectionVerdicts(raw).filter((verdict) => known.has(verdict.id));
 }

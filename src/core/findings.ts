@@ -247,3 +247,47 @@ export function buildSummaryComment(findings: Finding[]): string {
     findings.length > 20 ? `…其余 ${findings.length - 20} 条见侧栏结果列表` : '',
   ].filter((line) => line !== '').join('\n');
 }
+
+export interface FindingsExportMeta {
+  project?: string;
+  mergeRequestIid?: number;
+  headSha?: string;
+}
+
+/** 结构化导出本次 Review 结果（来源/证据/锚点/状态），对齐 ocr --format json 的消费场景。 */
+export function serializeFindingsExport(findings: Finding[], meta: FindingsExportMeta = {}): string {
+  const bySeverity: Record<string, number> = {};
+  const bySource: Record<string, number> = {};
+  for (const finding of findings) {
+    bySeverity[finding.severity] = (bySeverity[finding.severity] ?? 0) + 1;
+    const key = finding.corroborated ? 'rule+model' : finding.source;
+    bySource[key] = (bySource[key] ?? 0) + 1;
+  }
+  return JSON.stringify({
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    mr: meta,
+    counts: { total: findings.length, bySeverity, bySource },
+    findings: findings.map((finding) => ({
+      id: finding.id,
+      source: finding.source,
+      corroborated: finding.corroborated ?? null,
+      ruleId: finding.ruleId ?? null,
+      severity: finding.severity,
+      category: finding.category,
+      confidence: finding.confidence,
+      status: finding.status,
+      path: finding.path,
+      line: finding.line,
+      endLine: finding.endLine,
+      side: finding.side,
+      title: finding.title,
+      content: finding.content,
+      comment: finding.comment,
+      existingCode: finding.existingCode,
+      suggestionCode: finding.suggestionCode,
+      evidence: finding.evidence,
+      anchor: finding.anchor ?? null,
+    })),
+  }, null, 2);
+}

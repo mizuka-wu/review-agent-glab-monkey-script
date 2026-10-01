@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle, CheckCheck, ChevronDown, ChevronRight, FileText, Inbox, ListChecks, Loader2,
-  MessageSquarePlus, RotateCcw, ShieldCheck, Sparkles, SquareCheckBig, ThumbsUp, X,
+  Download, MessageSquarePlus, RotateCcw, Share2, ShieldCheck, Sparkles, SquareCheckBig, ThumbsUp, X,
 } from 'lucide-react';
 import {
   Banner, Btn, ConfirmButton, EmptyState, IconButton, Pill, Segmented, sourceTone, tokens as C,
@@ -45,6 +45,9 @@ export interface FindingsPanelProps {
   onApprove: () => void;
   onPublishAllInline: () => void;
   onSummaryComment: () => void;
+  onExportFindings: () => void;
+  onExportDelegation: () => void;
+  canDelegate: boolean;
   expandedId: string;
   selectedIds: Set<string>;
   onToggleExpand: (id: string) => void;
@@ -293,6 +296,12 @@ export function FindingsPanel(props: FindingsPanelProps) {
             label="总评论" confirmLabel="确认发布？" icon={<FileText size={13} />}
             disabled={findings.length === 0 || !canPublish || quickBusy} onConfirm={props.onSummaryComment}
           />
+          <Btn size="sm" variant="ghost" icon={<Download size={13} />} disabled={findings.length === 0} onClick={props.onExportFindings}>
+            导出 JSON
+          </Btn>
+          <Btn size="sm" variant="ghost" icon={<Share2 size={13} />} disabled={!props.canDelegate} onClick={props.onExportDelegation}>
+            Delegation
+          </Btn>
         </div>
       )}
 

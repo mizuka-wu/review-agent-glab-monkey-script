@@ -4,6 +4,7 @@ import { httpRequest, httpTransport } from './http';
 import { debugBus } from './debug-bus';
 import type { ToolCall, ToolDefinition } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
+import { reflectSystemPrompt } from './reflection';
 import type {
   ChatMessage,
   CodeSelection,
@@ -371,6 +372,16 @@ export class OpenAIRuntime {
         { role: 'user', content: context },
       ],
       { json: true, signal, stage: 'review', onToken: options?.onToken, onThinking: options?.onThinking },
+    );
+  }
+
+  async reflect(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal) {
+    return this.complete(
+      [
+        { role: 'system', content: reflectSystemPrompt(language) },
+        { role: 'user', content: payload },
+      ],
+      { json: true, signal, stage: 'reflection' },
     );
   }
 

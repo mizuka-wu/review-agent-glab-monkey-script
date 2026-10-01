@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Database, GitBranch, HardDrive, Loader2, Search, Trash2, X } from 'lucide-react';
+import { Database, GitBranch, HardDrive, Loader2, ScanLine, Search, Trash2, X } from 'lucide-react';
 import { Banner, Btn, EmptyState, Pill, tokens as C } from '../ui/modern';
 import type { RepoIndexStatus } from '../../core/repo-index';
 import type { CallChainNode, SymbolDef, SymbolRef } from '../../core/symbols';
@@ -28,6 +28,8 @@ export interface RepoPanelProps {
   onActivate: (ref: string) => void;
   onRemove: (ref: string) => void;
   onOpenSettings: () => void;
+  scanning: boolean;
+  onScan: () => void;
   onSearch: (query: string) => { defs: SymbolDef[]; refs: SymbolRef[] };
   onCallChain: (symbol: string, depth: number) => CallChainNode | null;
 }
@@ -125,6 +127,14 @@ export function RepoPanel(props: RepoPanelProps) {
               {status.state === 'ready' ? '更新索引' : '建立索引'}
             </Btn>
           )}
+          <Btn
+            variant="outline" size="sm" icon={<ScanLine size={12} />}
+            disabled={!enabled || status.state !== 'ready' || indexing || props.scanning}
+            title={status.state !== 'ready' ? '需要先建立索引' : '对已索引文件跑确定性规则（无 diff 位置，不可发布）'}
+            onClick={props.onScan}
+          >
+            {props.scanning ? '扫描中…' : '扫描已索引文件'}
+          </Btn>
           <Btn variant="ghost" size="sm" icon={<Trash2 size={12} />} disabled={indexing || status.files === 0} onClick={props.onClear}>
             清除本地缓存
           </Btn>

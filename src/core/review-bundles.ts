@@ -29,41 +29,31 @@ export function groupFilesIntoBundles(files: FileDiff[], options: BundleOptions 
   }
 
   const bundles: FileDiff[][] = [];
-  let current: FileDiff[] = [];
-  let currentChars = 0;
-  const flush = () => {
-    if (current.length > 0) {
-      bundles.push(current);
-      current = [];
-      currentChars = 0;
+  const pack = (list: FileDiff[]) => {
+    let current: FileDiff[] = [];
+    let currentChars = 0;
+    for (const file of list) {
+      const size = fileCharSize(file);
+      if (current.length > 0 && (current.length >= maxFiles || currentChars + size > maxChars)) {
+        bundles.push(current);
+        current = [];
+        currentChars = 0;
+      }
+      current.push(file);
+      currentChars += size;
     }
+    if (current.length > 0) bundles.push(current);
   };
+
+  // 目录内聚：变更较多的目录独占分组以保持共享上下文；小目录合并打包控制调用数。
+  const pool: FileDiff[] = [];
   for (const list of byDir.values()) {
-    let index = 0;
-    while (index < list.length) {
-      if (current.length >= maxFiles || currentChars >= maxChars) flush();
-      const room = maxFiles - current.length;
-      let taken = 0;
-      let chars = currentChars;
-      while (taken < Math.min(room, list.length - index) && chars + fileCharSize(list[index + taken]) <= maxChars) {
-        chars += fileCharSize(list[index + taken]);
-        taken += 1;
-      }
-      if (taken === 0) {
-        flush();
-        current = [list[index]];
-        currentChars = fileCharSize(list[index]);
-        index += 1;
-        flush();
-        continue;
-      }
-      current.push(...list.slice(index, index + taken));
-      currentChars = chars;
-      index += taken;
-    }
+    if (list.length > 2) pack(list);
+    else pool.push(...list);
   }
-  flush();
+  if (pool.length > 0) pack(pool);
   return bundles;
+
 }
 
 /** 受限并发映射：保持结果顺序，失败由调用方在 fn 内处理。 */

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { BookOpen, Bug, CheckSquare, Database, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
+import { normalizeFileDiff } from './core/diff';
 import { FindingsPanel } from './components/review/FindingsPanel';
-import { buildSummaryComment, extractPartialFindings, parseModelFindings } from './core/findings';
+import { buildSummaryComment, extractPartialFindings, parseModelFindings, serializeFindingsExport } from './core/findings';
+import { buildDelegationContext } from './core/delegation';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
@@ -99,7 +101,11 @@ export default function App({ page }: AppProps) {
   const [showThinking, setShowThinking] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
   const [partialModelCount, setPartialModelCount] = useState(0);
+  const [scanMode, setScanMode] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const modelContentRef = useRef('');
+  const bundleModelRef = useRef<Finding[]>([]);
+  const lastBackgroundRef = useRef('');
   const ruleLiveRef = useRef<Finding[]>([]);
   const lastPartialParseRef = useRef(0);
   const lastPartialCountRef = useRef(0);
@@ -169,7 +175,7 @@ export default function App({ page }: AppProps) {
   const config = useMemo(() => inspectConfiguration(settings), [settings]);
   const modelReady = config.modelReady;
   const enabledRuleCount = useMemo(() => countEnabledRules(rulePacks), [rulePacks]);
-  const canPublish = Boolean(mergeRequestRef && mrContext && (capabilities?.canCreateDiscussions !== false));
+  const canPublish = !scanMode && Boolean(mergeRequestRef && mrContext && (capabilities?.canCreateDiscussions !== false));
 
   const persistUi = useCallback((next: UiPrefs) => {
     setUi(next);
@@ -548,6 +554,7 @@ export default function App({ page }: AppProps) {
     reviewAbort.current = controller;
     setTab('review');
     setReviewStatus('preparing');
+    setScanMode(false);
     setReviewError('');
     setReviewWarnings([]);
     setStages(undefined);
@@ -558,6 +565,8 @@ export default function App({ page }: AppProps) {
     setShowThinking(false);
     setPartialModelCount(0);
     modelContentRef.current = '';
+    bundleModelRef.current = [];
+    lastBackgroundRef.current = '';
     ruleLiveRef.current = [];
     lastPartialCountRef.current = 0;
     lastPartialParseRef.current = 0;
@@ -586,6 +595,7 @@ export default function App({ page }: AppProps) {
         ? repoIndex.contextForFiles(scopedFiles.map((file) => file.newPath))
         : '';
       if (repoContext) addLog('debug', 'review', `注入仓库符号上下文 ${repoContext.length} 字符`);
+      lastBackgroundRef.current = repoContext;
       const result = await reviewEngine.run({
         files: scopedFiles,
         selection: selected,
@@ -617,6 +627,10 @@ export default function App({ page }: AppProps) {
           }
         },
         onModelThinking: (token) => setModelThinking((prev) => (prev + token).slice(-20000)),
+        onBundleFindings: (bundleFindings) => {
+          bundleModelRef.current = [...bundleModelRef.current, ...bundleFindings];
+          setFindings([...ruleLiveRef.current, ...bundleModelRef.current]);
+        },
       });
       if (controller.signal.aborted) return;
 
@@ -870,6 +884,61 @@ export default function App({ page }: AppProps) {
       : `已发布 ${succeeded.size} 条行内评论，失败 ${targets.length - succeeded.size} 条`);
   };
 
+  const handleScanIndexed = async () => {
+    if (!repoIndex?.ready) return;
+    setScanning(true);
+    try {
+      const indexed = await repoIndex.readIndexedFiles();
+      const diffs = indexed.map((entry) => normalizeFileDiff({
+        old_path: entry.path,
+        new_path: entry.path,
+        diff: `@@ -0,0 +1,${entry.content.split('\n').length} @@\n${entry.content.split('\n').map((line) => `+${line}`).join('\n')}`,
+      }));
+      const scanned = reviewEngine.scan(diffs);
+      setScanMode(true);
+      setFindings(scanned);
+      setStages(undefined);
+      setReviewWarnings([]);
+      setReviewStatus('completed');
+      setTab('review');
+      setToast(`扫描完成：${indexed.length} 个文件 → ${scanned.length} 条规则命中`);
+      addLog('info', 'review', `全文件扫描 ${indexed.length} 文件 → ${scanned.length} 命中`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setToast(`扫描失败：${message}`);
+      addLog('error', 'review', '全文件扫描失败', message);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleExportFindings = () => {
+    const payload = serializeFindingsExport(findings, {
+      project: page.projectPath ?? undefined,
+      mergeRequestIid: mergeRequestRef?.mergeRequestIid,
+      headSha: mrContext?.diffRefs.headSha,
+    });
+    void navigator.clipboard?.writeText(payload);
+    setToast(`已复制 ${findings.length} 条 findings 的结构化 JSON`);
+    addLog('info', 'publish', '导出 findings JSON', `${payload.length} 字符`);
+  };
+
+  const handleExportDelegation = () => {
+    const payload = buildDelegationContext({
+      files,
+      packs: rulePacks,
+      background: lastBackgroundRef.current || undefined,
+      meta: {
+        project: page.projectPath ?? undefined,
+        mergeRequestIid: mergeRequestRef?.mergeRequestIid,
+        headSha: mrContext?.diffRefs.headSha,
+      },
+    });
+    void navigator.clipboard?.writeText(payload);
+    setToast('已复制 Delegation 上下文（文件选择 + 规则解析 + Diff）');
+    addLog('info', 'review', '导出 Delegation 上下文', `${payload.length} 字符`);
+  };
+
   const handleSummaryComment = async () => {
     if (!mergeRequestRef || findings.length === 0) return;
     setQuickBusy(true);
@@ -1008,7 +1077,9 @@ export default function App({ page }: AppProps) {
   }, [settings.debugEnabled, tab]);
 
   const running = reviewStatus === 'running' || reviewStatus === 'preparing';
-  const publishDisabledReason = !mergeRequestRef || !mrContext
+    const publishDisabledReason = scanMode
+    ? '扫描模式结果无 diff 位置，不能发布为行级评论'
+    : !mergeRequestRef || !mrContext
     ? '当前页面不是 MR，无法创建行级 Discussion'
     : capabilities && !capabilities.canCreateDiscussions
       ? 'GitLab Token 没有创建 Discussion 的权限'
@@ -1222,6 +1293,9 @@ export default function App({ page }: AppProps) {
                     {savedSession && <span>已保存会话</span>}
                   </div>
                 )}
+                {scanMode && !running && (
+                  <Banner tone="warning" title="扫描模式（全文件规则扫描）">结果没有 diff 位置，不能发布为行级评论；可复制评论或导出 JSON。</Banner>
+                )}
                 {reviewStatus === 'cancelled' && !reviewError && (
                   <Banner tone="warning" title="已取消">模型分析已停止；已完成的规则结果仍保留并可发布。</Banner>
                 )}
@@ -1244,6 +1318,9 @@ export default function App({ page }: AppProps) {
                   onApprove={() => void handleApprove()}
                   onPublishAllInline={() => void handlePublishAllInline()}
                   onSummaryComment={() => void handleSummaryComment()}
+                  onExportFindings={handleExportFindings}
+                  onExportDelegation={handleExportDelegation}
+                  canDelegate={files.length > 0}
                   expandedId={expandedFinding}
                   selectedIds={selectedFindings}
                   onToggleExpand={(id) => setExpandedFinding((current) => current === id ? '' : id)}
@@ -1325,6 +1402,8 @@ export default function App({ page }: AppProps) {
               status={repoStatus}
               enabled={settings.repoIndex.enabled}
               hasMr={Boolean(mrContext)}
+              scanning={scanning}
+              onScan={() => void handleScanIndexed()}
               onIndex={() => {
                 if (!mrContext) return;
                 repoIndex.updateOptions({

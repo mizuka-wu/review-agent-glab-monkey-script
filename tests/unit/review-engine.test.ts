@@ -177,3 +177,93 @@ describe('ReviewEngine', () => {
 });
 
 export type { Finding };
+
+describe('ReviewEngine bundles and reflection', () => {
+  function modelFinding(path: string, title: string) {
+    return {
+      path,
+      existingCode: 'const x = 1;',
+      category: 'bug',
+      severity: 'high',
+      confidence: 'high',
+      title,
+      content: 'Explain the risk with evidence.',
+      evidence: [{ path, lines: 'L1', quote: 'const x = 1;' }],
+    };
+  }
+
+  it('reviews multiple bundles concurrently and merges their findings', async () => {
+    const files = [
+      ...Array.from({ length: 4 }, (_, i) => normalizeFileDiff({
+        old_path: `src/a/f${i}.ts`, new_path: `src/a/f${i}.ts`,
+        diff: '@@ -1 +1,2 @@\n-old\n+const x = 1;\n+console.log(x);',
+      })),
+      ...Array.from({ length: 4 }, (_, i) => normalizeFileDiff({
+        old_path: `src/b/f${i}.ts`, new_path: `src/b/f${i}.ts`,
+        diff: '@@ -1 +1,2 @@\n-old\n+const x = 1;\n+console.log(x);',
+      })),
+    ];
+    const bundleCalls: number[] = [];
+    const runtime = {
+      configured: true,
+      review: vi.fn().mockImplementation(async (bundle: typeof files) => {
+        bundleCalls.push(bundle.length);
+        return JSON.stringify({ findings: [modelFinding(bundle[0].newPath, `issue in ${bundle[0].newPath}`)] });
+      }),
+      reflect: vi.fn().mockResolvedValue('[]'),
+    };
+    const engine = new ReviewEngine(runtime, settings);
+    const seen: Finding[][] = [];
+    const result = await engine.run({ files, onBundleFindings: (findings) => seen.push(findings) });
+
+    expect(bundleCalls).toEqual([4, 4]);
+    expect(seen).toHaveLength(2);
+    expect(result.findings.filter((finding) => finding.source === 'model')).toHaveLength(2);
+    expect(result.stages.model.findings).toBe(2);
+  });
+
+  it('drops AI findings the reflection module rejects and keeps rule findings', async () => {
+    const runtime = {
+      configured: true,
+      review: vi.fn().mockResolvedValue(JSON.stringify({ findings: [modelFinding('src/a.ts', 'Unsafe value')] })),
+      reflect: vi.fn().mockImplementation(async (payload: string) => {
+        const items = JSON.parse(payload) as { id: string }[];
+        return JSON.stringify(items.map((item) => ({ id: item.id, keep: false, reason: '纯风格偏好' })));
+      }),
+    };
+    const engine = new ReviewEngine(runtime, settings);
+    const result = await engine.run({ files: [file] });
+
+    expect(result.findings.filter((finding) => finding.source === 'model')).toHaveLength(0);
+    expect(result.findings.some((finding) => finding.source === 'rule')).toBe(true);
+    expect(result.warnings.some((warning) => warning.includes('反思模块移除'))).toBe(true);
+  });
+
+  it('skips reflection on fast effort', async () => {
+    const reflect = vi.fn().mockResolvedValue('[]');
+    const runtime = {
+      configured: true,
+      review: vi.fn().mockResolvedValue(JSON.stringify({ findings: [modelFinding('src/a.ts', 'Unsafe value')] })),
+      reflect,
+    };
+    const engine = new ReviewEngine(runtime, { ...settings, effort: 'fast' });
+    const result = await engine.run({ files: [file] });
+    expect(reflect).not.toHaveBeenCalled();
+    expect(result.findings.filter((finding) => finding.source === 'model')).toHaveLength(1);
+  });
+});
+
+describe('ReviewEngine.scan', () => {
+  it('runs rules over full files and marks findings unpublishable', () => {
+    const runtime = { configured: false, review: vi.fn(), reflect: vi.fn() };
+    const engine = new ReviewEngine(runtime, settings);
+    const scanned = engine.scan([normalizeFileDiff({
+      old_path: 'src/s.ts', new_path: 'src/s.ts',
+      diff: '@@ -0,0 +1,2 @@\n+const apiKey = "sk-live-123";\n+use(apiKey);',
+    })]);
+    expect(scanned.length).toBeGreaterThan(0);
+    for (const finding of scanned) {
+      expect(finding.anchor).toEqual({ source: 'full-file', publishable: false });
+    }
+  });
+});

@@ -6,6 +6,7 @@ import {
   fingerprintFinding,
   normalizeFindings,
   parseModelFindings,
+  serializeFindingsExport,
 } from '../../src/core/findings';
 
 const file = normalizeFileDiff({
@@ -89,5 +90,22 @@ describe('extractPartialFindings', () => {
 
   it('returns empty for non-JSON prose', () => {
     expect(extractPartialFindings('让我想想…')).toEqual([]);
+  });
+});
+
+describe('serializeFindingsExport', () => {
+  it('emits counts, sources and anchor/evidence payloads', () => {
+    const finding: Finding = {
+      id: 'f1', fingerprint: 'fp', path: 'src/a.ts', line: 2, endLine: 2, side: 'new',
+      category: 'security', severity: 'critical', confidence: 'high', title: 'secret',
+      content: 'c', evidence: [{ path: 'src/a.ts', lines: 'L2', quote: 'sk-' }], existingCode: 'sk-',
+      suggestionCode: '', comment: 'cm', source: 'rule', status: 'draft', ruleId: 'builtin-hardcoded-secret',
+    };
+    const parsed = JSON.parse(serializeFindingsExport([finding], { project: 'g/p', mergeRequestIid: 3, headSha: 'h' }));
+    expect(parsed.version).toBe(1);
+    expect(parsed.mr).toEqual({ project: 'g/p', mergeRequestIid: 3, headSha: 'h' });
+    expect(parsed.counts).toMatchObject({ total: 1, bySeverity: { critical: 1 }, bySource: { rule: 1 } });
+    expect(parsed.findings[0]).toMatchObject({ id: 'f1', ruleId: 'builtin-hardcoded-secret', line: 2 });
+    expect(parsed.findings[0].evidence[0].quote).toBe('sk-');
   });
 });
