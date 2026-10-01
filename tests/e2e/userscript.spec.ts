@@ -205,7 +205,7 @@ test.describe('mock mode', () => {
     // 规则命中：硬编码密钥 + console.log + as any
     await expect(page.locator('article[data-finding-source="rule"]').first()).toBeVisible();
     await expect(page.getByText('代码中疑似硬编码敏感信息').first()).toBeVisible();
-    await expect(page.getByText('仅规则模式').first()).toBeVisible();
+    await expect(page.getByText('AI 未运行')).toBeVisible();
 
     // 模型接口不应该被调用
     expect(requests.some((path) => path.includes('chat/completions'))).toBe(false);

@@ -156,16 +156,6 @@ export function FindingsPanel(props: FindingsPanelProps) {
           </ul>
         )}
 
-        {!modelReady && (
-          <Banner
-            tone="warning" icon={<ShieldCheck size={14} />}
-            title="仅规则模式"
-            action={<Btn size="sm" variant="primary" icon={<Sparkles size={12} />} onClick={props.onOpenSettings}>配置模型</Btn>}
-          >
-            未配置模型 API Key，本次只运行了 {stages?.rules.rules ?? enabledRuleCount} 条本地规则。
-            规则检查完全在浏览器内完成，不联网、不消耗 token；配置后可叠加 AI 深度评审。
-          </Banner>
-        )}
         {modelReady && rulesOnlyMode && (
           <Banner tone="info" icon={<ShieldCheck size={14} />} title="仅规则模式">
             已按设置跳过 AI 评审，只运行 {stages?.rules.rules ?? enabledRuleCount} 条本地规则。可在「设置 → 审查设置」切回「规则 + AI」。
