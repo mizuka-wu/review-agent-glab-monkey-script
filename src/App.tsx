@@ -1,25 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bug, CheckSquare, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare,
-  Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X,
+  Database, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X,
 } from 'lucide-react';
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { FindingsPanel } from './components/review/FindingsPanel';
+import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { SettingsView } from './components/SettingsView';
 import {
-  Banner, Btn, IconButton, InjectAnimations, Pill, Segmented, Tabs, tokens as C,
+  Banner, Btn, IconButton, InjectAnimations, Pill, Tabs, tokens as C,
 } from './components/ui/modern';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
-import { CompositeToolExecutor, GitLabToolExecutor } from './core/agent-tools';
+import { CompositeToolExecutor, GitLabToolExecutor, RepoIndexToolExecutor } from './core/agent-tools';
+import { debugBus } from './core/debug-bus';
 import { clearHighlights, highlightFindingOnPage, injectHighlightStyles } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { McpClient } from './core/mcp-client';
 import { createModelRuntime, type AgentMessage, type ModelRuntime } from './core/model-runtime';
+import { createRepoIndex, type RepoIndex, type RepoIndexStatus } from './core/repo-index';
 import { ReviewEngine } from './core/review-engine';
 import {
   addRulePack, BUILT_IN_PACK, countEnabledRules, exportRulePack, generateRuleId,
@@ -33,13 +36,14 @@ import {
   type ReviewSessionManifest,
 } from './core/session';
 import { clearSensitiveSettings, defaultSettings, loadSettings, inspectConfiguration, saveSettings } from './core/settings';
+import { httpTransport } from './core/http';
 import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
 import type {
   ChatMessage, CodeSelection, FileDiff, Finding, MergeRequestContext, PageContext,
   ReviewStageReport, RuntimeSettings,
 } from './core/types';
 
-type Tab = 'review' | 'chat' | 'settings' | 'debug';
+type Tab = 'review' | 'chat' | 'repo' | 'settings' | 'debug';
 type ReviewStatus = 'idle' | 'preparing' | 'running' | 'completed' | 'cancelled' | 'failed';
 
 interface AppProps {
@@ -126,15 +130,12 @@ export default function App({ page }: AppProps) {
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [testing, setTesting] = useState(false);
 
-  const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
-  const [debugFilter, setDebugFilter] = useState<'all' | 'info' | 'warn' | 'error' | 'debug'>('all');
   const [toast, setToast] = useState('');
+  const [repoIndex, setRepoIndex] = useState<RepoIndex | undefined>(undefined);
+  const [repoStatus, setRepoStatus] = useState<RepoIndexStatus | undefined>(undefined);
 
   const addLog = useCallback((level: DebugLogEntry['level'], source: string, message: string, detail?: string) => {
-    setDebugLogs((prev) => [...prev.slice(-499), {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: new Date().toISOString(), level, source, message, detail,
-    }]);
+    debugBus.log(level, source, message, detail);
   }, []);
 
   const api = useMemo(() => new GitLabAdapter(page, settings.gitlabToken), [page, settings.gitlabToken]);
@@ -290,6 +291,40 @@ export default function App({ page }: AppProps) {
     return () => { active = false; };
   }, [tab]);
 
+  // --- Repo index (symbol search / call chain) ---
+
+  useEffect(() => {
+    let active = true;
+    void createRepoIndex().then((index) => {
+      if (!active) return;
+      setRepoIndex(index);
+      setRepoStatus(index.status);
+      index.subscribe((status) => setRepoStatus(status));
+      addLog('info', 'repo-index', `存储后端：${index.store.backend}`);
+    });
+    return () => { active = false; };
+  }, [addLog]);
+
+  useEffect(() => {
+    debugBus.attachConsole();
+    return debugBus.registerSnapshot(() => ({
+      settings: { ...settings, apiKey: settings.apiKey ? '***' : '', gitlabToken: settings.gitlabToken ? '***' : '' },
+      capabilities,
+      repoIndex: repoStatus,
+      review: { status: reviewStatus, findings: findings.length, files: files.length },
+      session: savedSession?.id,
+      transport: httpTransport(),
+    }));
+  }, [settings, capabilities, repoStatus, reviewStatus, findings.length, files.length, savedSession]);
+
+  useEffect(() => {
+    if (!repoIndex || !settings.repoIndex.enabled || !mrContext) return;
+    if (repoIndex.status.ref === mrContext.diffRefs.headSha && repoIndex.status.state !== 'idle') return;
+    void repoIndex.restore(mrContext.diffRefs.headSha).then((restored) => {
+      if (restored) addLog('info', 'repo-index', '命中本地索引缓存，无需重新拉取');
+    });
+  }, [repoIndex, settings.repoIndex.enabled, mrContext, addLog]);
+
   // --- Panel drag & resize ---
 
   const handleDragStart = (event: React.MouseEvent) => {
@@ -364,13 +399,21 @@ export default function App({ page }: AppProps) {
     try {
       if (mergeRequestRef && mrContext) {
         const gitlabExecutor = new GitLabToolExecutor(api, mrContext.diffRefs.headSha);
-        let executor = new CompositeToolExecutor(gitlabExecutor);
+        let executor = new CompositeToolExecutor(
+          gitlabExecutor,
+          undefined,
+          repoIndex ? [new RepoIndexToolExecutor(repoIndex)] : [],
+        );
         if (settings.mcp?.enabled && settings.mcp.serverUrl) {
           try {
             const mcpClient = new McpClient({ url: settings.mcp.serverUrl, enabled: true });
             await mcpClient.initialize();
             if (mcpClient.availableTools.length > 0) {
-              executor = new CompositeToolExecutor(gitlabExecutor, mcpClient);
+              executor = new CompositeToolExecutor(
+                gitlabExecutor,
+                mcpClient,
+                repoIndex ? [new RepoIndexToolExecutor(repoIndex)] : [],
+              );
               addLog('info', 'mcp', `已接入 ${mcpClient.availableTools.length} 个 MCP 工具`);
             }
           } catch (error) {
@@ -504,12 +547,17 @@ export default function App({ page }: AppProps) {
 
     try {
       setReviewStatus('running');
+      const repoContext = runModel && modelReady && settings.repoContext && repoIndex?.ready
+        ? repoIndex.contextForFiles(scopedFiles.map((file) => file.newPath))
+        : '';
+      if (repoContext) addLog('debug', 'review', `注入仓库符号上下文 ${repoContext.length} 字符`);
       const result = await reviewEngine.run({
         files: scopedFiles,
         selection: selected,
         signal: controller.signal,
         rules: runRules,
         model: runModel,
+        background: repoContext ? `仓库符号上下文（本地索引 @${repoIndex?.status.ref.slice(0, 8)}）：\n${repoContext}` : undefined,
         loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
       });
@@ -825,8 +873,6 @@ export default function App({ page }: AppProps) {
   }, []);
 
   const running = reviewStatus === 'running' || reviewStatus === 'preparing';
-  const visibleLogs = debugFilter === 'all' ? debugLogs : debugLogs.filter((entry) => entry.level === debugFilter);
-  const errorCount = debugLogs.filter((entry) => entry.level === 'error').length;
   const publishDisabledReason = !mergeRequestRef || !mrContext
     ? '当前页面不是 MR，无法创建行级 Discussion'
     : capabilities && !capabilities.canCreateDiscussions
@@ -945,8 +991,9 @@ export default function App({ page }: AppProps) {
           items={[
             { value: 'review', label: '结果', icon: <CheckSquare size={13} />, count: findings.length },
             { value: 'chat', label: '对话', icon: <MessageSquare size={13} />, dot: responding },
+            { value: 'repo', label: '索引', icon: <Database size={13} />, dot: repoStatus?.state === 'ready' },
             { value: 'settings', label: '设置', icon: <SettingsIcon size={13} />, dot: !modelReady && settingsLoaded },
-            { value: 'debug', label: '调试', icon: <Bug size={13} />, dot: errorCount > 0 },
+            { value: 'debug', label: '调试', icon: <Bug size={13} />, dot: debugBus.getLogs().some((entry) => entry.level === 'error') },
           ]}
         />
 
@@ -1103,6 +1150,28 @@ export default function App({ page }: AppProps) {
             />
           )}
 
+          {tab === 'repo' && repoStatus && repoIndex && (
+            <RepoPanel
+              status={repoStatus}
+              enabled={settings.repoIndex.enabled}
+              hasMr={Boolean(mrContext)}
+              onIndex={() => {
+                if (!mrContext) return;
+                repoIndex.updateOptions({
+                  maxFiles: settings.repoIndex.maxFiles,
+                  maxBytes: settings.repoIndex.maxBytes,
+                });
+                setTab('repo');
+                void repoIndex.index(api, mrContext.diffRefs.headSha);
+              }}
+              onCancel={() => repoIndex.cancel()}
+              onClear={() => { void repoIndex.clear(); setToast('本地仓库缓存已清除'); }}
+              onOpenSettings={() => setTab('settings')}
+              onSearch={(query) => repoIndex.search(query)}
+              onCallChain={(symbol, depth) => repoIndex.callChain(symbol, depth)}
+            />
+          )}
+
           {tab === 'settings' && (
             <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
               <SettingsView
@@ -1146,36 +1215,16 @@ export default function App({ page }: AppProps) {
           )}
 
           {tab === 'debug' && (
-            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderBottom: `1px solid ${C.border}`, background: C.bgSubtle, flexShrink: 0 }}>
-                <Segmented
-                  value={debugFilter}
-                  onChange={(value) => setDebugFilter(value as typeof debugFilter)}
-                  style={{ flex: 1, padding: 2 }}
-                  options={[
-                    { value: 'all', label: `全部 ${debugLogs.length}` },
-                    { value: 'info', label: 'info' },
-                    { value: 'warn', label: 'warn' },
-                    { value: 'error', label: `error ${errorCount}` },
-                  ]}
-                />
-                <IconButton icon={<X size={13} />} label="清空日志" onClick={() => setDebugLogs([])} />
-              </div>
-              <div style={{ flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                <DebugPanel
-                  logs={visibleLogs}
-                  diagnostics={diagnostics}
-                  toolEvents={toolEvents}
-                  usageSummary={usageSummary}
-                  reviewStatus={reviewStatus}
-                  findingsCount={findings.length}
-                  filesCount={files.length}
-                  modelConfigured={modelReady}
-                  mcpEnabled={settings.mcp?.enabled ?? false}
-                  onClearLogs={() => setDebugLogs([])}
-                />
-              </div>
-            </div>
+            <DebugPanel
+              diagnostics={diagnostics}
+              toolEvents={toolEvents}
+              usageSummary={usageSummary}
+              reviewStatus={reviewStatus}
+              findingsCount={findings.length}
+              filesCount={files.length}
+              modelConfigured={modelReady}
+              mcpEnabled={settings.mcp?.enabled ?? false}
+            />
           )}
         </div>
       </aside>

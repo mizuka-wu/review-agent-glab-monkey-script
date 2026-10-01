@@ -164,6 +164,13 @@ export interface UsageRecord {
   estimatedCost: number;
 }
 
+export interface RepoIndexSettings {
+  enabled: boolean;
+  maxFiles: number;
+  /** 索引总字节上限。 */
+  maxBytes: number;
+}
+
 export interface RuntimeSettings {
   provider: ModelProvider;
   modelBaseUrl: string;
@@ -175,6 +182,9 @@ export interface RuntimeSettings {
   language: 'zh-CN' | 'en-US';
   mcp: McpSettings;
   auth: AuthSettings;
+  repoIndex: RepoIndexSettings;
+  /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */
+  repoContext: boolean;
 }
 
 export interface AdapterCapabilities {

@@ -41,6 +41,11 @@ const mergeRequest = {
   diff_refs: { base_sha: 'base-sha', head_sha: 'head-sha', start_sha: 'start-sha' },
 };
 
+const repoFiles: Record<string, string> = {
+  'src/auth.ts': 'export function verifyToken(token: string) {\n  return token.length > 0;\n}\n',
+  'src/handler.ts': 'import { verifyToken } from "./auth";\nexport function handler() {\n  return verifyToken("x");\n}\n',
+};
+
 const diff = {
   old_path: 'src/payment.ts',
   new_path: 'src/payment.ts',
@@ -123,6 +128,19 @@ async function routeGitLab(page: Page, requests: string[] = []) {
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248')) {
       await route.fulfill({ json: mergeRequest });
+      return;
+    }
+    if (url.pathname.endsWith('/repository/tree')) {
+      await route.fulfill({ json: Object.keys(repoFiles).map((path) => ({ path, type: 'blob' })) });
+      return;
+    }
+    if (url.pathname.includes('/repository/files/') && url.pathname.endsWith('/raw')) {
+      const path = decodeURIComponent(url.pathname.split('/repository/files/')[1].split('/raw')[0]);
+      if (path in repoFiles) {
+        await route.fulfill({ contentType: 'text/plain', body: repoFiles[path] });
+        return;
+      }
+      await route.fulfill({ status: 404, body: 'not found' });
       return;
     }
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'GET') {
@@ -241,6 +259,27 @@ test.describe('mock mode', () => {
 
     // Verify composer is available
     await expect(page.getByLabel('消息输入框')).toBeVisible();
+  });
+
+  test('builds a local repo index and answers symbol search + call chain', async ({ page }) => {
+    await routeGitLab(page);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+      repoIndex: { enabled: true, maxFiles: 50, maxBytes: 1048576 }, repoContext: true,
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('tab', { name: /索引/ }).click();
+    await page.getByRole('button', { name: '建立索引' }).click();
+
+    await expect(page.getByText('已就绪')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('OPFS', { exact: false }).first()).toBeVisible();
+
+    await page.getByLabel('符号搜索').fill('verify');
+    await expect(page.getByRole('button', { name: /verifyToken/ })).toBeVisible();
+    await page.getByRole('button', { name: /verifyToken/ }).first().click();
+    await expect(page.getByText(/调用链（向上 2 层/)).toBeVisible();
+    await expect(page.getByText(/handler/).first()).toBeVisible();
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {

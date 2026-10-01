@@ -1,5 +1,6 @@
 import { normalizeFileDiff } from './diff';
 import { projectApiIdentifier } from './gitlab-url';
+import { debugBus } from './debug-bus';
 import type {
   AdapterCapabilities,
   DiffRefs,
@@ -96,6 +97,7 @@ export class GitLabAdapter {
       headers['Content-Type'] = 'application/x-www-form-urlencoded';
     }
 
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await this.fetcher(`${this.page.origin}${path}`, {
@@ -107,11 +109,15 @@ export class GitLabAdapter {
       });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
+      debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'network_error' });
+      debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} 连接失败`, String(error));
       throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
     }
 
     if (!response.ok) {
       const detail = await response.text().catch(() => response.statusText);
+      debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, status: response.status, ms: Date.now() - startedAt, error: detail.slice(0, 200) });
+      debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} → HTTP ${response.status}`, detail.slice(0, 300));
       throw new GitLabApiError(
         response.status,
         `GitLab API ${response.status}：${detail.slice(0, 300)}`,
@@ -119,7 +125,12 @@ export class GitLabAdapter {
       );
     }
 
-    return (await response.json()) as T;
+    const payload = (await response.json()) as T;
+    debugBus.network({
+      kind: 'gitlab', method: options.method ?? 'GET', url: path, status: response.status,
+      ms: Date.now() - startedAt, bytes: JSON.stringify(payload).length,
+    });
+    return payload;
   }
 
   private async requestText(path: string, options: RequestOptions = {}): Promise<string> {
@@ -129,6 +140,7 @@ export class GitLabAdapter {
     };
     if (this.gitlabToken) headers['PRIVATE-TOKEN'] = this.gitlabToken;
 
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await this.fetcher(`${this.page.origin}${path}`, {
@@ -140,18 +152,23 @@ export class GitLabAdapter {
       });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
+      debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'network_error' });
       throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
     }
 
     if (!response.ok) {
       const detail = await response.text().catch(() => response.statusText);
+      debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, status: response.status, ms: Date.now() - startedAt, error: detail.slice(0, 200) });
+      debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} → HTTP ${response.status}`, detail.slice(0, 300));
       throw new GitLabApiError(
         response.status,
         `GitLab API ${response.status}：${detail.slice(0, 300)}`,
         errorCode(response.status),
       );
     }
-    return response.text();
+    const text = await response.text();
+    debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, status: response.status, ms: Date.now() - startedAt, bytes: text.length });
+    return text;
   }
 
   private projectRef() {
@@ -325,6 +342,26 @@ export class GitLabAdapter {
   /**
    * Get diffs for a single commit.
    */
+  /**
+   * 递归列出仓库树。GitLab 没有符号级 REST API，
+   * 符号索引需要先拿到文件清单再逐个读取 raw 内容。
+   */
+  async listTree(
+    ref: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<{ path: string; type: string }[]> {
+    const entries: { path: string; type: string }[] = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const data = await this.request<{ path: string; type: string }[]>(
+        `/api/v4/projects/${this.projectRef()}/repository/tree?ref=${encodeURIComponent(ref)}&recursive=true&per_page=100&page=${page}`,
+        { signal: options.signal },
+      );
+      entries.push(...data);
+      if (data.length < 100) break;
+    }
+    return entries;
+  }
+
   async listCommitDiffs(sha: string): Promise<FileDiff[]> {
     const files: FileDiff[] = [];
     for (let page = 1; page <= 50; page += 1) {

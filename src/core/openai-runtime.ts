@@ -1,6 +1,8 @@
 import { diffContext } from './diff';
 import { planSystemPrompt } from './review-plan';
 import { isModelConfigured } from './settings';
+import { httpRequest, httpTransport } from './http';
+import { debugBus } from './debug-bus';
 import type { ToolCall, ToolDefinition } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
 import type {
@@ -33,6 +35,30 @@ function endpoint(baseUrl: string, path: string) {
 
 function shouldRetry(status: number) {
   return status === 408 || status === 429 || status >= 500;
+}
+
+interface StreamLikeResponse {
+  ok: boolean;
+  status: number;
+  body: ReadableStream<Uint8Array> | null;
+  text: string;
+}
+
+/** 流式优先走 fetch；被 CSP/CORS 拦截时回退到 GM 一次性请求（无逐 token 渲染）。 */
+async function fetchStream(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  signal?: AbortSignal,
+): Promise<StreamLikeResponse> {
+  try {
+    const response = await fetch(url, { method: 'POST', headers, body, signal });
+    return { ok: response.ok, status: response.status, body: response.body, text: '' };
+  } catch (error) {
+    if (signal?.aborted || (error as Error).name === 'AbortError') throw error;
+    const fallback = await httpRequest(url, { method: 'POST', headers, body, signal });
+    return { ok: fallback.status >= 200 && fallback.status < 300, status: fallback.status, body: null, text: fallback.text };
+  }
 }
 
 function wait(milliseconds: number, signal?: AbortSignal) {
@@ -114,23 +140,58 @@ export class OpenAIRuntime {
 
   async complete(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void } = {},
+    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; stage?: string } = {},
+  ) {
+    const stage = options.stage ?? 'chat';
+    const system = messages.find((message) => message.role === 'system')?.content;
+    const conversation = messages.filter((message) => message.role !== 'system');
+    try {
+      const content = await this.runComplete(messages, options);
+      debugBus.prompt({
+        stage, model: this.settings.model, system, messages: conversation,
+        response: content.slice(0, 4000), tokens: this.lastTokens,
+      });
+      return content;
+    } catch (error) {
+      debugBus.prompt({
+        stage, model: this.settings.model, system, messages: conversation,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  private lastTokens: { input: number; output: number } | undefined;
+
+  private async runComplete(
+    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; stage?: string } = {},
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const useStream = Boolean(options.onToken) && !options.json;
 
-      const response = await fetch(this.buildUrl('/chat/completions'), {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({
-          model: this.settings.model,
-          messages,
-          temperature: this.settings.effort === 'fast' ? 0 : 0.2,
-          stream: useStream,
-          ...(options.json ? { response_format: { type: 'json_object' } } : {}),
-        }),
-        signal: options.signal,
+      const payloadBody = JSON.stringify({
+        model: this.settings.model,
+        messages,
+        temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+        stream: useStream,
+        ...(options.json ? { response_format: { type: 'json_object' } } : {}),
       });
+      const requestHeaders = this.headers();
+      const startedAt = Date.now();
+      const response: StreamLikeResponse = useStream
+        ? await fetchStream(this.buildUrl('/chat/completions'), requestHeaders, payloadBody, options.signal)
+        : await httpRequest(this.buildUrl('/chat/completions'), {
+          method: 'POST',
+          headers: requestHeaders,
+          body: payloadBody,
+          signal: options.signal,
+        }).then((result) => ({
+          ok: result.status >= 200 && result.status < 300,
+          status: result.status,
+          body: null,
+          text: result.text,
+        }));
 
       if (useStream && response.ok && response.body) {
         // Parse SSE stream
@@ -174,12 +235,16 @@ export class OpenAIRuntime {
           throw streamError;
         }
 
+        debugBus.network({
+          kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream)`,
+          status: response.status, ms: Date.now() - startedAt, transport: 'fetch',
+        });
         if (!content) throw new Error('模型服务没有返回文本内容');
         // Stream responses don't include usage in chunks; skip recording
         return content;
       }
 
-      const payload = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
+      const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
       if (!response.ok || payload.error) {
         const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}`;
         if (attempt < 2 && shouldRetry(response.status)) {
@@ -194,6 +259,12 @@ export class OpenAIRuntime {
 
       // Record usage
       const usage = parseOpenAIUsage(payload as unknown as Record<string, unknown>);
+      this.lastTokens = { input: usage.inputTokens, output: usage.outputTokens };
+      debugBus.network({
+        kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions`,
+        status: response.status, ms: Date.now() - startedAt,
+        bytes: response.text.length, transport: httpTransport(),
+      });
       if (usage.inputTokens > 0 || usage.outputTokens > 0) {
         void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
       }
@@ -229,7 +300,7 @@ export class OpenAIRuntime {
           : []),
         ...history,
       ],
-      { signal, onToken },
+      { signal, onToken, stage: 'chat' },
     );
   }
 
@@ -251,7 +322,7 @@ ${background}` : '',
         { role: 'system', content: planSystemPrompt(language) },
         { role: 'user', content: context + '\n请输出评审计划。' },
       ],
-      { signal },
+      { signal, stage: 'plan' },
     );
   }
 
@@ -281,27 +352,21 @@ ${background}` : '',
         },
         { role: 'user', content: context },
       ],
-      { json: true, signal },
+      { json: true, signal, stage: 'review' },
     );
   }
 
   async testConnection(signal?: AbortSignal) {
-    const response = await fetch(this.buildUrl('/models'), {
-      headers: this.headers(),
-      signal,
-    });
-    if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}`);
+    const response = await httpRequest(this.buildUrl('/models'), { headers: this.headers(), signal });
+    if (response.status < 200 || response.status >= 300) throw new Error(`模型服务返回 HTTP ${response.status}`);
     return true;
   }
 
   async listModels(signal?: AbortSignal): Promise<string[]> {
-    const response = await fetch(this.buildUrl('/models'), {
-      headers: this.headers(),
-      signal,
-    });
-    if (!response.ok) throw new Error(`模型服务返回 HTTP ${response.status}`);
-    const data = await response.json() as { data?: Array<{ id: string }> };
-    return (data.data ?? []).map(m => m.id).sort();
+    const response = await httpRequest(this.buildUrl('/models'), { headers: this.headers(), signal });
+    if (response.status < 200 || response.status >= 300) throw new Error(`模型服务返回 HTTP ${response.status}`);
+    const data = JSON.parse(response.text || 'null') as { data?: Array<{ id: string }> } | null;
+    return (data?.data ?? []).map(m => m.id).sort();
   }
 
   async callWithTools(
@@ -324,7 +389,8 @@ ${background}` : '',
       ...messages,
     ];
 
-    const response = await fetch(this.buildUrl('/chat/completions'), {
+    const startedAt = Date.now();
+    const response = await httpRequest(this.buildUrl('/chat/completions'), {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -336,10 +402,24 @@ ${background}` : '',
       signal: options.signal,
     });
 
-    const payload = (await response.json().catch(() => ({}))) as ChatCompletionResponse;
-    if (!response.ok || payload.error) {
+    const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
+    debugBus.network({
+      kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (tools)`,
+      status: response.status, ms: Date.now() - startedAt, bytes: response.text.length, transport: httpTransport(),
+    });
+    if (response.status < 200 || response.status >= 300 || payload.error) {
+      debugBus.prompt({
+        stage: 'tools', model: this.settings.model, system, messages,
+        tools: tools.map((tool) => tool.name),
+        error: payload.error?.message ?? `模型服务返回 HTTP ${response.status}`,
+      });
       throw new Error(payload.error?.message ?? `模型服务返回 HTTP ${response.status}`);
     }
+    debugBus.prompt({
+      stage: 'tools', model: this.settings.model, system, messages,
+      tools: tools.map((tool) => tool.name),
+      response: JSON.stringify(payload.choices?.[0]?.message ?? {}).slice(0, 4000),
+    });
 
     const message = payload.choices?.[0]?.message;
     if (message?.tool_calls && message.tool_calls.length > 0) {

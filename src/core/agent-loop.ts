@@ -1,6 +1,7 @@
 import type { AgentMessage, ModelRuntime, ToolCallResponse } from './model-runtime';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
 import { MAX_TOOL_ITERATIONS, CompositeToolExecutor } from './agent-tools';
+import { debugBus } from './debug-bus';
 
 export interface AgentLoopEvent {
   type: 'tool_call' | 'tool_result' | 'text' | 'error' | 'max_iterations';
@@ -82,6 +83,12 @@ export async function runAgentLoop(
   const emit = (event: AgentLoopEvent) => {
     events.push(event);
     options.onEvent?.(event);
+    debugBus.log(
+      event.type === 'error' ? 'error' : event.type === 'max_iterations' ? 'warn' : 'debug',
+      'agent',
+      event.message,
+      event.detail?.content ?? (event.detail ? JSON.stringify(event.detail) : undefined),
+    );
   };
 
   while (iterations < maxIterations) {

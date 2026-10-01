@@ -12,6 +12,7 @@
  */
 
 import type { ToolDefinition, ToolParameter, ToolResult } from './agent-tools';
+import { httpRequest } from './http';
 
 // --- MCP JSON-RPC types ---
 
@@ -66,45 +67,6 @@ function resolveEndpoint(url: string, transport: McpTransport): string {
   return url;
 }
 
-function gmRequest(url: string, method: string, body: string, signal?: AbortSignal): Promise<{ status: number; text: string }> {
-  return new Promise((resolve, reject) => {
-    const gm = (globalThis as typeof globalThis & {
-      GM?: { xmlHttpRequest?: (details: Record<string, unknown>) => void };
-    }).GM;
-
-    if (gm?.xmlHttpRequest) {
-      gm.xmlHttpRequest({
-        method,
-        url,
-        data: body,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-        },
-        onload: (response: { status: number; responseText: string }) => {
-          resolve({ status: response.status, text: response.responseText });
-        },
-        onerror: () => reject(new Error('MCP 请求失败，请确认 MCP server 已启动且地址正确')),
-        ontimeout: () => reject(new Error('MCP 请求超时')),
-        ...(signal ? { signal } : {}),
-      });
-    } else {
-      // Fallback to fetch (works when CORS allows it, e.g. localhost dev server)
-      fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-        },
-        body,
-        signal,
-      })
-        .then(async (response) => resolve({ status: response.status, text: await response.text() }))
-        .catch((error) => reject(new Error(`MCP 请求失败: ${error instanceof Error ? error.message : String(error)}`)));
-    }
-  });
-}
-
 // --- MCP Client ---
 
 export interface McpServerConfig {
@@ -144,12 +106,12 @@ export class McpClient {
       params,
     };
 
-    const { status, text } = await gmRequest(
-      this.endpoint,
-      'POST',
-      JSON.stringify(request),
+    const { status, text } = await httpRequest(this.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify(request),
       signal,
-    );
+    });
 
     if (status !== 200) {
       throw new Error(`MCP server 返回 HTTP ${status}`);
@@ -159,8 +121,8 @@ export class McpClient {
     let responseText = text;
     if (text.includes('data:')) {
       const dataLines = text.split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trim());
+        .filter((line: string) => line.startsWith('data:'))
+        .map((line: string) => line.slice(5).trim());
       if (dataLines.length > 0) {
         responseText = dataLines.join('');
       }
@@ -192,7 +154,12 @@ export class McpClient {
       method: 'notifications/initialized',
       params: {},
     };
-    await gmRequest(this.endpoint, 'POST', JSON.stringify(notification), signal).catch(() => {});
+    await httpRequest(this.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify(notification),
+      signal,
+    }).catch(() => undefined);
 
     // List tools
     await this.listTools(signal);

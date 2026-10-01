@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "lucide-react": "^1.48.0",
+    "opfs-worker": "^2.2.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

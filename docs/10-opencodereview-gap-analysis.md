@@ -33,7 +33,7 @@ OpenCodeReview 的核心竞争力不是"会用模型"，而是**把不能出错�
 | 全文件扫描 | `ocr scan` 支持无 diff 目录审计 | 仅 MR / commit diff + 选区 | **仍有差距**（浏览器场景价值有限） |
 | 会话 | session list / resume / viewer（浏览器查看、标记 fixed/ignored） | session 持久化、resume、历史列表、逐条忽略/编辑 | viewer 是独立网页，本项目内嵌面板；功能等价度约 80% |
 | 基准评测 | AACR-Bench（200 PR、1505 标注） | 本地 8 fixture 回归门禁 | **仍有差距**：样本量与人工校验规模不可比 |
-| 上下文工具 | git 原生：search、log、全文件 | GitLab REST：file_read / search_code / git_log + MCP 扩展 | 受平台 API 限制，符号级搜索不可用 |
+| 上下文工具 | git 原生：search、log、全文件、符号级检索 | GitLab REST：file_read / search_code / git_log + MCP 扩展；**本地符号索引**（OPFS 缓存 + 启发式符号表）提供 `symbol_search` / `call_chain` 工具与 Review 仓库上下文 | 符号检索为启发式（正则符号表），非精确调用图 |
 | 发布 | 输出 JSON / CI 评论 | 行级 Discussion 草稿，人工确认后发布（含批量） | 形态不同；本项目强调"人确认" |
 
 ## 3. 本轮已落地
@@ -46,14 +46,18 @@ OpenCodeReview 的核心竞争力不是"会用模型"，而是**把不能出错�
 6. **强度预算只作用于 AI 结果**：确定性结果不再被 `effort` 过滤，用户启用的规则始终可见。
 7. **UI 重构**：结果 / 对话 / 设置 / 调试四标签；面板可拖拽、可拉伸宽度；Finding 折叠卡片带代码预览；批量发布条；会话恢复与历史。
 8. **依赖瘦身**：移除 assistant-ui / tailwind / ai-sdk 等运行时依赖，产物 2.5 MB → 0.9 MB（gzip 190 KB），注入更快、样式不再与 GitLab 互相污染。
+9. **本地仓库索引**（`repo-store.ts` / `repo-index.ts` / `symbols.ts`）：引入 [opfs-worker](https://github.com/kachurun/opfs-worker)，优先独立 Worker（gitlab.com CSP 允许 `blob:` worker），退回主线程 OPFS，再退回内存；按 head ref 缓存仓库文件并构建符号表，提供符号搜索、启发式调用链，以及注入 Review 提示词的「Diff 外调用点」上下文。同 ref 命中缓存时零网络开销恢复。
+10. **调试工具链**（`debug-bus.ts` + DebugPanel）：日志 / 网络 / 提示词 / 状态四面板。GitLab API、模型调用、MCP、索引的每次请求都记录方法、状态码、耗时、字节数；每次模型调用记录完整 system 与消息内容（超长截断）、工具列表、token 用量；`console.warn/error` 被镜像进日志；日志跨刷新保留；一键导出 JSON 调试包（含脱敏快照）。
+11. **CSP 兼容传输**（`http.ts`）：模型/MCP 请求优先走 `GM.xmlHttpRequest`（不受 gitlab.com `connect-src 'self'` 与 CORS 限制），流式对话保留 fetch 并在被拦截时自动回退。
 
 ## 4. 仍然存在的差距（按优先级）
 
+0. **符号检索精度**：本地符号表是正则启发式（定义/调用点/包围函数），不等于 LSIF 级别的精确调用图；重载、泛型特化、动态派发会漏。
 1. **大 MR 文件分组与并发子评审**：对方把相关文件打包成 bundle 并行评审，覆盖率更稳。浏览器端可用 `Promise` 并发 + 每 bundle 独立上下文近似实现，是下一轮最大收益点。
 2. **评论反思（reflection）模块**：对模型产出做一轮"是否值得评论 / 是否重复 / 位置是否正确"的自检，可进一步提升精确率。
 3. **基准规模**：把本地 eval fixture 扩到 30+ 并引入人工标注，才能量化"精确率优先"的取舍。
 4. **规则文档化**：对方的规则以语言文档形式维护（`rule_docs/*.md`），可读性与可扩展性更好；本项目规则仍是代码内数组。
-5. **全文件扫描**：对无 diff 的目录做审计（`ocr scan`），浏览器端可通过 GitLab repository tree API 近似实现。
+5. **全文件扫描**：对无 diff 的目录做审计（`ocr scan`）。仓库索引已具备 tree + raw 拉取能力，可在此基础上扩展「扫描整个目录」入口。
 
 ## 5. 明确不做
 

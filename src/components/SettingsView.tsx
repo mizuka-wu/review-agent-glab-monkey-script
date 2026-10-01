@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Cpu, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
+  Cpu, Database, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
   RefreshCw, Check, Save, Download, Upload, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import type { RuntimeSettings } from '../core/types';
@@ -42,6 +42,7 @@ export function SettingsView(props: SettingsViewProps) {
       <StatusSection {...props} />
       <ModelSection {...props} />
       <ReviewSection {...props} />
+      <RepoIndexSection {...props} />
       <GitLabSection {...props} />
       {props.usageSummary && props.usageSummary.callCount > 0 && <UsageSection {...props} />}
       <RulePackSection {...props} />
@@ -258,6 +259,62 @@ function ReviewSection({ settings, onSettingsChange }: SettingsViewProps) {
             />
           </Field>
           </div>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ─── Repo index ───
+function RepoIndexSection({ settings, onSettingsChange }: SettingsViewProps) {
+  const repo = settings.repoIndex;
+  const patch = (next: Partial<typeof repo>) => onSettingsChange({ ...settings, repoIndex: { ...repo, ...next } });
+  return (
+    <Card>
+      <CardHeader
+        icon={<Database size={16} />}
+        title="仓库索引"
+        desc="本地符号搜索 / 调用链 / Review 仓库上下文"
+        badge={repo.enabled ? { text: '已启用', color: 'success' } : undefined}
+      />
+      <CardBody>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>启用仓库索引</div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                把仓库文件缓存到浏览器 OPFS，构建符号表；GitLab REST 没有符号级 API
+              </div>
+            </div>
+            <Toggle checked={repo.enabled} onChange={(v) => patch({ enabled: v })} />
+          </div>
+          {repo.enabled && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field label="最大文件数" hint="超出部分不索引">
+                  <Input
+                    mono value={String(repo.maxFiles)}
+                    onChange={(v) => patch({ maxFiles: Math.max(10, Math.min(5000, Number(v.replace(/\D/g, '')) || repo.maxFiles)) })}
+                  />
+                </Field>
+                <Field label="体积上限 (MB)">
+                  <Input
+                    mono value={String(Math.round(repo.maxBytes / 1024 / 1024))}
+                    onChange={(v) => patch({ maxBytes: Math.max(1, Math.min(200, Number(v.replace(/\D/g, '')) || 12)) * 1024 * 1024 })}
+                  />
+                </Field>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Review 注入仓库上下文</div>
+                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                    把「变更文件定义了哪些符号、被 Diff 外谁调用」加入模型提示词
+                  </div>
+                </div>
+                <Toggle checked={settings.repoContext} onChange={(v) => onSettingsChange({ ...settings, repoContext: v })} />
+              </div>
+            </>
+          )}
         </div>
       </CardBody>
     </Card>

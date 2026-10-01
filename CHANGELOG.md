@@ -11,6 +11,9 @@
 - Rebuild the panel UI: 结果 / 对话 / 设置 / 调试 tabs, draggable + resizable panel, collapsible finding cards with code preview, batch publish bar, session resume and history, per-rule toggles.
 - Replace the assistant-ui chat with a self-contained streaming chat (markdown, attachments, tool trace) and drop tailwind/assistant-ui/ai-sdk runtime dependencies; userscript bundle 2.5 MB → 0.9 MB.
 - Fix markdown rendering (ordered lists, tables, blockquotes, safe URLs) and preserve multi-line comments through finding normalization.
+- Add a local repository index (opfs-worker OPFS cache with worker → main-thread → memory fallback): symbol search, heuristic call chains, `symbol_search` / `call_chain` agent tools, and "callers outside the diff" context injected into review prompts; same-ref caches restore without network.
+- Add a four-pane debugger (logs / network / prompts / state) backed by a framework-agnostic debug bus: every GitLab API, model, MCP and index request is recorded with status/latency/bytes; every model call records full system + messages, tools and token usage; console.warn/error are mirrored; logs survive reloads; one-click JSON debug bundle export with redacted settings.
+- Route model and MCP requests through GM.xmlHttpRequest to survive gitlab.com's `connect-src 'self'` CSP, with streaming fetch and automatic fallback.
 - Add `docs/10-opencodereview-gap-analysis.md` comparing this project with alibaba/open-code-review.
 
 - Add review hardening (M5): evidence sufficiency check, severity calibration, similar finding merge, effort-based budget filtering.
