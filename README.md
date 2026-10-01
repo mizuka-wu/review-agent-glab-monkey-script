@@ -1,6 +1,8 @@
+[English](README.en.md) | **简体中文**
+
 # Review Agent for GitLab
 
-[![Release](https://img.shields.io/github/v/release/mizuka-wu/review-agent-glab-monkey-script)](https://github.com/mizuka-wu/review-agent-glab-monkey-script/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/mizuka-wu/review-agent-glab-monkey-script/ci.yml?branch=main)](https://github.com/mizuka-wu/review-agent-glab-monkey-script/actions/workflows/ci.yml) [![Docs](https://img.shields.io/badge/docs-VitePress-blue)](https://mizuka-wu.github.io/review-agent-glab-monkey-script/)
+[![Release](https://img.shields.io/github/v/release/mizuka-wu/review-agent-glab-monkey-script)](https://github.com/mizuka-wu/review-agent-glab-monkey-script/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/mizuka-wu/review-agent-glab-monkey-script/ci.yml?branch=main)](https://github.com/mizuka-wu/review-agent-glab-monkey-script/actions/workflows/ci.yml) [![Docs](https://img.shields.io/badge/docs-VitePress-blue)](https://mizuka-wu.github.io/review-agent-glab-monkey-script/) [![DeepWiki](https://deepwiki.com/badge-maker?url=https%3A%2F%2Fdeepwiki.com%2Fmizuka-wu%2Freview-agent-glab-monkey-script)](https://deepwiki.com/mizuka-wu/review-agent-glab-monkey-script)
 
 一个面向 GitLab / 自部署 GitLab 的油猴脚本（Tampermonkey Userscript），在 MR / Diff / File 页面中提供代码评审能力。采用与 [OpenCodeReview](https://github.com/alibaba/open-code-review) 相同的**确定性规则 + LLM 混合架构**：规则检查永远在浏览器本地运行（无需 API Key、零 token），配置模型后叠加 AI 深度评审，两类结果分开标注、命中同一处问题时自动合并。支持划词提问、结构化 Finding 草稿、批量发布 GitLab Discussion。
 
