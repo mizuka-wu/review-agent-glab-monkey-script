@@ -1,6 +1,7 @@
 import { normalizeFileDiff } from './diff';
 import { projectApiIdentifier } from './gitlab-url';
 import { debugBus } from './debug-bus';
+import { httpRequest } from './http';
 import type {
   AdapterCapabilities,
   DiffRefs,
@@ -31,6 +32,21 @@ interface RequestOptions {
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * 默认传输走 httpRequest：Tampermonkey 沙箱里裸 fetch 的 origin 是扩展本身，
+ * 对自部署 GitLab 属于跨域会被 CORS 拦截；GM.xmlHttpRequest 带 Cookie 且不受
+ * CSP/CORS 限制，无 GM 环境（如 E2E 注入主世界）回退到 fetch。
+ */
+const defaultFetcher: FetchLike = async (input, init) => {
+  const result = await httpRequest(input, {
+    method: (init?.method ?? 'GET') as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'HEAD',
+    headers: init?.headers as Record<string, string> | undefined,
+    body: init?.body == null ? undefined : String(init.body),
+    signal: init?.signal ?? undefined,
+  });
+  return new Response(result.text, { status: result.status });
+};
 
 function csrfToken() {
   return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '';
@@ -83,7 +99,7 @@ export class GitLabAdapter {
   constructor(
     private readonly page: PageContext,
     private readonly gitlabToken = '',
-    private readonly fetcher: FetchLike = fetch.bind(globalThis),
+    private readonly fetcher: FetchLike = defaultFetcher,
   ) {}
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {

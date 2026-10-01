@@ -645,8 +645,11 @@ export default function App({ page }: AppProps) {
               : finding);
             if (matched > 0) setToast(`${matched} 个问题匹配到已有 Discussion，已标记为已发布`);
           }
-        } catch {
-          addLog('warn', 'review', '读取已有 Discussion 失败，跳过去重标记');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          addLog('warn', 'review', '读取已有 Discussion 失败，跳过去重标记', message);
+          setReviewWarnings((current) => [...current, `读取已有 Discussion 失败（${message}），已跳过去重标记；发布前请人工确认未重复评论。`]);
+          setToast('读取已有 Discussion 失败，已跳过去重标记');
         }
       }
 
