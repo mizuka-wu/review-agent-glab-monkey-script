@@ -1,6 +1,5 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
-import tailwindcss from '@tailwindcss/vite';
 import monkey from 'vite-plugin-monkey';
 import { resolve } from 'node:path';
 
@@ -13,7 +12,6 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    tailwindcss(),
     monkey({
       entry: 'src/main.tsx',
       userscript: {

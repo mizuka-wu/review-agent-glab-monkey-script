@@ -28,6 +28,17 @@ function normalizeText(value: unknown) {
   return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 }
 
+/** 保留段落与 Markdown 结构，只清理行尾空白和多余空行。 */
+function normalizeMultiline(value: unknown) {
+  if (typeof value !== 'string') return '';
+  return value
+    .split('\n')
+    .map((line) => line.replace(/[\t ]+$/, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function fingerprintFinding(input: {
   path: string;
   existingCode: string;
@@ -59,11 +70,13 @@ function cleanEvidence(value: unknown, fallbackPath: string): FindingEvidence[] 
   if (!Array.isArray(value)) return [];
   return value
     .map((item): FindingEvidence => {
-      const evidence = item as Partial<FindingEvidence>;
+      const evidence = item as Partial<FindingEvidence> & Record<string, unknown>;
+      const rawLines = evidence.lines ?? evidence.line ?? evidence.linesRange;
+      const rawQuote = evidence.quote ?? evidence.snippet ?? evidence.text ?? evidence.code;
       return {
         path: normalizeText(evidence.path) || fallbackPath,
-        lines: normalizeText(evidence.lines),
-        quote: normalizeText(evidence.quote),
+        lines: typeof rawLines === 'number' ? `L${rawLines}` : normalizeText(rawLines),
+        quote: normalizeText(rawQuote),
       };
     })
     .filter((item) => item.quote.length > 0)
@@ -86,7 +99,7 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
     const lineValue = Number(item.line ?? item.startLine);
     const line = Number.isInteger(lineValue) && lineValue >= 1 ? lineValue : 0;
     const title = normalizeText(item.title);
-    const content = normalizeText(item.content ?? item.description);
+    const content = normalizeMultiline(item.content ?? item.description);
     const existingCode = typeof item.existingCode === 'string' ? item.existingCode : '';
     const file = files.find((candidate) => candidate.newPath === path || candidate.oldPath === path);
 
@@ -124,9 +137,13 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
       evidence: cleanEvidence(item.evidence, path),
       existingCode,
       suggestionCode: typeof item.suggestionCode === 'string' ? item.suggestionCode : '',
-      comment: normalizeText(item.comment) || `${title}\n\n${content}`,
+      comment: normalizeMultiline(item.comment) || `${title}\n\n${content}`,
       source: item.source === 'rule' ? 'rule' : 'model',
       status: 'draft',
+      ruleId: typeof item.ruleId === 'string' ? item.ruleId : undefined,
+      rulePackId: typeof item.rulePackId === 'string' ? item.rulePackId : undefined,
+      rulePackName: typeof item.rulePackName === 'string' ? item.rulePackName : undefined,
+      occurrences: typeof item.occurrences === 'number' ? item.occurrences : undefined,
     });
   }
 

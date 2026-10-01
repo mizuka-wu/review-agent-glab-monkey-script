@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, type CSSProperties } from 'react';
-import { ChevronDown, Check, Search } from 'lucide-react';
+import { ChevronDown, Check, X } from 'lucide-react';
 
 // ─── Design tokens ───
 const C = {
@@ -14,10 +14,23 @@ const C = {
   shadowLg: '0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04)',
   radius: 8, radiusSm: 6, radiusLg: 12,
   transition: 'all 0.15s ease',
+  /** 确定性规则检查（本地，零 token） */
+  rule: '#0f766e', ruleBg: '#e6f4f2', ruleBorder: '#b7ddd8',
+  /** 模型评审（消耗 token） */
+  ai: '#6d28d9', aiBg: '#f1ebfe', aiBorder: '#d6c6f9',
+  info: '#245fc7', infoBg: '#e8f0fe',
+  headerBg: '#1b2233', headerText: '#f2f5f9', headerMuted: '#9fadbf',
+};
+
+export type SourceTone = 'rule' | 'model';
+
+export const sourceTone: Record<SourceTone, { label: string; fg: string; bg: string; border: string; hint: string }> = {
+  rule: { label: '规则', fg: C.rule, bg: C.ruleBg, border: C.ruleBorder, hint: '确定性规则命中 · 本地执行，不消耗 token' },
+  model: { label: 'AI', fg: C.ai, bg: C.aiBg, border: C.aiBorder, hint: '模型评审 · 消耗 token，需人工复核' },
 };
 
 // ─── Card ───
-export function Card({ children, style, hover }: { children: ReactNode; style?: CSSProperties; hover?: boolean }) {
+export function Card({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div style={{
       background: C.bg, borderRadius: C.radiusLg, border: `1px solid ${C.border}`,
@@ -60,10 +73,11 @@ export function Badge({ text, color, icon }: { text: string; color?: string; ico
 }
 
 // ─── Button ───
-export function Btn({ children, variant = 'secondary', size = 'md', icon, onClick, disabled, loading, style, fullWidth }: {
+export function Btn({ children, variant = 'secondary', size = 'md', icon, onClick, disabled, loading, style, fullWidth, title, ariaLabel }: {
   children?: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
   size?: 'sm' | 'md' | 'lg'; icon?: ReactNode; onClick?: () => void;
   disabled?: boolean; loading?: boolean; style?: CSSProperties; fullWidth?: boolean;
+  title?: string; ariaLabel?: string;
 }) {
   const [hover, setHover] = useState(false);
   const [active, setActive] = useState(false);
@@ -88,7 +102,7 @@ export function Btn({ children, variant = 'secondary', size = 'md', icon, onClic
   };
 
   return (
-    <button type="button" disabled={disabled || loading} onClick={onClick}
+    <button type="button" disabled={disabled || loading} onClick={onClick} title={title} aria-label={ariaLabel}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => { setHover(false); setActive(false); }}
       onMouseDown={() => setActive(true)} onMouseUp={() => setActive(false)}
       style={{ ...base, ...sizes[size], ...variants[variant], ...style }}>
@@ -278,6 +292,132 @@ export function Divider({ label, style }: { label?: string; style?: CSSPropertie
   );
 }
 
+// ─── Icon button ───
+export function IconButton({ icon, label, onClick, active, tone = 'light', disabled, badge }: {
+  icon: ReactNode; label: string; onClick?: () => void; active?: boolean; disabled?: boolean;
+  tone?: 'light' | 'dark'; badge?: boolean;
+}) {
+  const [hover, setHover] = useState(false);
+  const dark = tone === 'dark';
+  return (
+    <button
+      type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        position: 'relative', display: 'grid', placeItems: 'center', width: 28, height: 28,
+        borderRadius: C.radiusSm, border: 0, cursor: disabled ? 'not-allowed' : 'pointer',
+        background: active ? (dark ? 'rgba(255,255,255,0.16)' : C.primaryLight)
+          : hover ? (dark ? 'rgba(255,255,255,0.10)' : C.bgMuted) : 'transparent',
+        color: active ? (dark ? '#fff' : C.primary) : dark ? C.headerMuted : C.textSecondary,
+        transition: C.transition, opacity: disabled ? 0.4 : 1, padding: 0,
+      }}
+    >
+      {icon}
+      {badge && <span style={{ position: 'absolute', top: 3, right: 3, width: 6, height: 6, borderRadius: '50%', background: C.danger }} />}
+    </button>
+  );
+}
+
+// ─── Pill / count badge ───
+export function Pill({ children, tone, count }: { children: ReactNode; tone?: SourceTone | 'neutral' | 'danger' | 'warning' | 'success'; count?: number }) {
+  const palette = tone === 'rule' ? { fg: C.rule, bg: C.ruleBg }
+    : tone === 'model' ? { fg: C.ai, bg: C.aiBg }
+    : tone === 'danger' ? { fg: C.danger, bg: C.dangerBg }
+    : tone === 'warning' ? { fg: C.warning, bg: C.warningBg }
+    : tone === 'success' ? { fg: C.success, bg: C.successBg }
+    : { fg: C.textSecondary, bg: C.bgMuted };
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 20,
+      fontSize: 11, fontWeight: 600, lineHeight: '17px', background: palette.bg, color: palette.fg, whiteSpace: 'nowrap',
+    }}>
+      {children}
+      {typeof count === 'number' && <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>{count}</span>}
+    </span>
+  );
+}
+
+// ─── Banner ───
+export function Banner({ tone = 'info', title, children, action, onDismiss, icon }: {
+  tone?: 'info' | 'warning' | 'danger' | 'success'; title?: ReactNode; children?: ReactNode;
+  action?: ReactNode; onDismiss?: () => void; icon?: ReactNode;
+}) {
+  const palette = tone === 'warning' ? { fg: '#92400e', bg: C.warningBg, border: '#fcd9a0' }
+    : tone === 'danger' ? { fg: '#991b1b', bg: C.dangerBg, border: '#f6bcbc' }
+    : tone === 'success' ? { fg: '#166534', bg: C.successBg, border: '#b6e6c6' }
+    : { fg: '#1e40af', bg: C.infoBg, border: '#c3d7f8' };
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 11px',
+      background: palette.bg, border: `1px solid ${palette.border}`, borderRadius: C.radius,
+      color: palette.fg, fontSize: 12, lineHeight: 1.55,
+    }}>
+      {icon && <span style={{ display: 'flex', marginTop: 1, flexShrink: 0 }}>{icon}</span>}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {title && <div style={{ fontWeight: 700, marginBottom: children ? 2 : 0 }}>{title}</div>}
+        {children && <div style={{ opacity: 0.92 }}>{children}</div>}
+        {action && <div style={{ marginTop: 7 }}>{action}</div>}
+      </div>
+      {onDismiss && (
+        <button type="button" aria-label="关闭提示" onClick={onDismiss}
+          style={{ border: 0, background: 'transparent', cursor: 'pointer', color: palette.fg, opacity: 0.6, display: 'flex', padding: 0, marginTop: 1 }}>
+          <X size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Empty state ───
+export function EmptyState({ icon, title, children, action }: {
+  icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '28px 20px', textAlign: 'center' }}>
+      {icon && <div style={{ display: 'grid', placeItems: 'center', width: 40, height: 40, borderRadius: 20, background: C.bgMuted, color: C.textMuted }}>{icon}</div>}
+      <div style={{ fontSize: 13, fontWeight: 600, color: C.textSecondary }}>{title}</div>
+      {children && <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.6, maxWidth: 320 }}>{children}</div>}
+      {action}
+    </div>
+  );
+}
+
+// ─── Tabs ───
+export function Tabs<T extends string>({ value, onChange, items }: {
+  value: T; onChange: (v: T) => void;
+  items: { value: T; label: string; icon?: ReactNode; count?: number; dot?: boolean }[];
+}) {
+  return (
+    <div role="tablist" style={{ display: 'flex', gap: 2, padding: '0 8px', background: C.headerBg, borderBottom: `1px solid rgba(255,255,255,0.08)` }}>
+      {items.map((item) => {
+        const active = item.value === value;
+        return (
+          <button key={item.value} type="button" role="tab" aria-selected={active} onClick={() => onChange(item.value)}
+            style={{
+              position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '8px 10px 9px', border: 0, background: 'transparent', cursor: 'pointer',
+              fontSize: 12, fontWeight: active ? 700 : 500,
+              color: active ? '#fff' : C.headerMuted, transition: C.transition,
+            }}>
+            {item.icon}
+            {item.label}
+            {typeof item.count === 'number' && item.count > 0 && (
+              <span style={{
+                minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, fontSize: 10, fontWeight: 700,
+                display: 'inline-grid', placeItems: 'center', fontVariantNumeric: 'tabular-nums',
+                background: active ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.10)',
+                color: active ? '#fff' : C.headerMuted,
+              }}>{item.count}</span>
+            )}
+            {item.dot && <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.danger }} />}
+            {active && <span style={{ position: 'absolute', left: 8, right: 8, bottom: 0, height: 2, borderRadius: 2, background: '#5b9af0' }} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Keyframes injection ───
 export function InjectAnimations() {
   return (
@@ -285,6 +425,12 @@ export function InjectAnimations() {
       @keyframes ra-spin { to { transform: rotate(360deg); } }
       @keyframes ra-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
       .ra-select-option:hover { background: ${C.bgMuted}; }
+      .ra-spin { animation: ra-spin 0.9s linear infinite; }
+      .ra-scroll { scrollbar-width: thin; scrollbar-color: #c8cfd9 transparent; }
+      .ra-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+      .ra-scroll::-webkit-scrollbar-thumb { background: #c8cfd9; border-radius: 4px; }
+      .ra-scroll::-webkit-scrollbar-thumb:hover { background: #aab4c2; }
+      .ra-scroll::-webkit-scrollbar-track { background: transparent; }
     `}</style>
   );
 }

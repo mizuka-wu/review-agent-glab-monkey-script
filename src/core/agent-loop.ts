@@ -1,6 +1,6 @@
 import type { AgentMessage, ModelRuntime, ToolCallResponse } from './model-runtime';
 import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
-import { GITLAB_TOOLS, MAX_TOOL_ITERATIONS, CompositeToolExecutor } from './agent-tools';
+import { MAX_TOOL_ITERATIONS, CompositeToolExecutor } from './agent-tools';
 
 export interface AgentLoopEvent {
   type: 'tool_call' | 'tool_result' | 'text' | 'error' | 'max_iterations';

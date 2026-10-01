@@ -66,8 +66,11 @@ describe('ReviewEngine', () => {
     const result = await engine.run({ files: [file] });
 
     expect(runtime.review).toHaveBeenCalledOnce();
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].confidence).toBe('high');
+    const fromModel = result.findings.filter((finding) => finding.source === 'model');
+    expect(fromModel).toHaveLength(1);
+    expect(fromModel[0].confidence).toBe('high');
+    // 规则命中是确定性结果，不受审查强度影响
+    expect(result.findings.some((finding) => finding.source === 'rule')).toBe(true);
   });
 
   it('drops model findings whose existing code cannot be anchored', async () => {
@@ -78,7 +81,66 @@ describe('ReviewEngine', () => {
       }] })),
     };
     const engine = new ReviewEngine(runtime, settings);
-    expect((await engine.run({ files: [file] })).findings).toEqual([]);
+    const result = await engine.run({ files: [file] });
+    expect(result.findings.filter((finding) => finding.source === 'model')).toEqual([]);
+    expect(result.stages.model.ran).toBe(true);
+  });
+
+  it('runs deterministic rules without a configured model', async () => {
+    const runtime = { configured: false, review: vi.fn() };
+    const engine = new ReviewEngine(runtime, settings);
+    const result = await engine.run({ files: [file] });
+
+    expect(runtime.review).not.toHaveBeenCalled();
+    expect(result.source).toBe('rule');
+    expect(result.sources).toEqual(['rule']);
+    expect(result.stages.model).toEqual({ ran: false, findings: 0 });
+    expect(result.stages.rules.ran).toBe(true);
+    expect(result.stages.rules.rules).toBeGreaterThan(0);
+    expect(result.findings.length).toBeGreaterThan(0);
+    expect(result.findings.every((finding) => finding.source === 'rule' && finding.ruleId)).toBe(true);
+    expect(result.warnings.join(' ')).toContain('仅执行');
+  });
+
+  it('reports both sources in hybrid mode and tags rule provenance', async () => {
+    const runtime = {
+      configured: true,
+      review: vi.fn().mockResolvedValue(JSON.stringify({ findings: [{
+        path: 'src/a.ts', existingCode: 'return x;', category: 'bug', severity: 'high', confidence: 'high',
+        title: 'Unbounded return value', content: 'Detailed explanation of the returned value risk.',
+        evidence: [{ path: 'src/a.ts', lines: 'L3', quote: 'return x;' }],
+      }] })),
+    };
+    const engine = new ReviewEngine(runtime, settings);
+    const result = await engine.run({ files: [file] });
+
+    expect(result.sources).toEqual(['rule', 'model']);
+    expect(result.source).toBe('model');
+    expect(result.stages.rules.findings).toBeGreaterThan(0);
+    expect(result.stages.model.findings).toBe(1);
+    const ruleFinding = result.findings.find((finding) => finding.ruleId === 'builtin-console-log');
+    expect(ruleFinding).toMatchObject({ source: 'rule', rulePackId: 'built-in', rulePackName: '内置规则' });
+    expect(ruleFinding?.comment).toContain('规则检查 `builtin-console-log`');
+  });
+
+  it('keeps rule findings when the model call fails', async () => {
+    const runtime = { configured: true, review: vi.fn().mockRejectedValue(new Error('401 invalid api key')) };
+    const engine = new ReviewEngine(runtime, settings);
+    const result = await engine.run({ files: [file] });
+
+    expect(result.source).toBe('rule');
+    expect(result.stages.model.error).toContain('401');
+    expect(result.findings.length).toBeGreaterThan(0);
+    expect(result.warnings.join(' ')).toContain('AI 评审未产出结果');
+  });
+
+  it('can skip the rule stage', async () => {
+    const runtime = { configured: true, review: vi.fn().mockResolvedValue(JSON.stringify({ findings: [] })) };
+    const engine = new ReviewEngine(runtime, settings);
+    const result = await engine.run({ files: [file], rules: false });
+
+    expect(result.stages.rules).toEqual({ ran: false, findings: 0, rules: 0 });
+    expect(result.findings).toEqual([]);
   });
 
   it('loads full-file context and relocates unique evidence across files', async () => {

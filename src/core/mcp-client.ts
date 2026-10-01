@@ -11,6 +11,8 @@
  *   - http://127.0.0.1:3000/sse  (HTTP+SSE, message endpoint derived)
  */
 
+import type { ToolDefinition, ToolParameter, ToolResult } from './agent-tools';
+
 // --- MCP JSON-RPC types ---
 
 interface JsonRpcRequest {
@@ -117,7 +119,7 @@ export class McpClient {
   private readonly transport: McpTransport;
   private readonly endpoint: string;
 
-  constructor(private readonly config: McpServerConfig) {
+  constructor(config: McpServerConfig) {
     this.transport = detectTransport(config.url);
     this.endpoint = resolveEndpoint(config.url, this.transport);
   }
@@ -228,7 +230,7 @@ export class McpClient {
     const result = await this.rpc('tools/call', {
       name: mcpToolName,
       arguments: args,
-    }, signal) as McpToolCallResult;
+    }, signal) as unknown as McpToolCallResult;
 
     const content = (result.content ?? [])
       .filter((part) => part.type === 'text')

@@ -121,7 +121,7 @@ export function resolveFindingAnchor(
 
   const lineMatches = files.flatMap((file) => file.lines
     .filter((line) => finding.side === 'new' ? line.newLine === finding.line : line.oldLine === finding.line)
-    .map((line): AnchorMatch => ({
+    .map((): AnchorMatch => ({
       path: file.newPath === '/dev/null' ? file.oldPath : file.newPath,
       start: finding.line,
       end: finding.endLine || finding.line,

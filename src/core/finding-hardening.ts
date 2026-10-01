@@ -1,4 +1,4 @@
-import type { Finding, FindingConfidence, FindingSeverity, FileDiff } from './types';
+import type { FileDiff, Finding } from './types';
 
 // --- Evidence sufficiency ---
 
@@ -124,7 +124,8 @@ export function mergeSimilarFindings(findings: Finding[]): Finding[] {
       if (used.has(j)) continue;
       const candidate = findings[j];
 
-      // Must be on same file and line
+      // 规则命中和 AI 评审必须分开呈现，跨来源不合并
+      if (candidate.source !== best.source) continue;
       if (candidate.path !== best.path) continue;
       if (candidate.line !== best.line && candidate.endLine !== best.endLine) continue;
 
@@ -148,21 +149,73 @@ export function mergeSimilarFindings(findings: Finding[]): Finding[] {
 
 // --- Confidence adjustment based on effort ---
 
+/**
+ * 审查强度只作用于 AI 评审结果。规则命中是确定性检查，
+ * 不存在“置信度”概念，用户显式启用后就应该始终呈现。
+ */
 export function applyEffortBudget(findings: Finding[], effort: 'fast' | 'balanced' | 'thorough'): Finding[] {
+  const deterministic = findings.filter((f) => f.source === 'rule');
+  const fromModel = findings.filter((f) => f.source !== 'rule');
   switch (effort) {
     case 'fast':
-      // Only high confidence, high/critical severity
-      return findings.filter(
+      return [...deterministic, ...fromModel.filter(
         (f) => f.confidence === 'high' && (f.severity === 'high' || f.severity === 'critical'),
-      );
+      )];
     case 'thorough':
-      // Keep everything
       return findings;
     case 'balanced':
     default:
-      // Keep medium+ confidence
-      return findings.filter((f) => f.confidence !== 'low');
+      return [...deterministic, ...fromModel.filter((f) => f.confidence !== 'low')];
   }
+}
+
+// --- Cross-source corroboration ---
+
+const severityRank: Record<Finding['severity'], number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+function linesOverlap(a: Finding, b: Finding): boolean {
+  const aStart = Math.min(a.line, a.endLine || a.line);
+  const aEnd = Math.max(a.line, a.endLine || a.line);
+  const bStart = Math.min(b.line, b.endLine || b.line);
+  const bEnd = Math.max(b.line, b.endLine || b.line);
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+/**
+ * 规则和 AI 命中同一处问题时合并成一条，避免用户看到重复项；
+ * 同时保留双方来源，UI 可以标注“规则 + AI 一致”。
+ * 以 AI 结果为主体（说明更完整），补上规则溯源和更高的严重度。
+ */
+export function corroborateFindings(ruleFindings: Finding[], modelFindings: Finding[]): Finding[] {
+  const consumed = new Set<string>();
+  const merged: Finding[] = modelFindings.map((modelFinding): Finding => {
+    const match = ruleFindings.find((ruleFinding) =>
+      !consumed.has(ruleFinding.fingerprint)
+      && ruleFinding.path === modelFinding.path
+      && linesOverlap(ruleFinding, modelFinding)
+      && (ruleFinding.category === modelFinding.category || titleSimilarity(ruleFinding.title, modelFinding.title) >= 0.6));
+    if (!match) return modelFinding;
+    consumed.add(match.fingerprint);
+
+    const severity = severityRank[match.severity] < severityRank[modelFinding.severity]
+      ? match.severity
+      : modelFinding.severity;
+    const note = `\n\n规则 \`${match.ruleId ?? 'rule'}\` 独立命中了同一处问题，可视为已相互印证。`;
+    return {
+      ...modelFinding,
+      severity,
+      confidence: 'high' as const,
+      corroborated: 'rule' as const,
+      ruleId: match.ruleId,
+      rulePackId: match.rulePackId,
+      rulePackName: match.rulePackName,
+      content: modelFinding.content + note,
+      comment: `${modelFinding.comment}${note}`,
+      suggestionCode: modelFinding.suggestionCode || match.suggestionCode,
+    };
+  });
+
+  return [...ruleFindings.filter((finding) => !consumed.has(finding.fingerprint)), ...merged];
 }
 
 // --- Full hardening pipeline ---
@@ -180,19 +233,19 @@ export function hardenFindings(
   files: FileDiff[],
   effort: 'fast' | 'balanced' | 'thorough',
 ): HardeningResult {
-  const total = findings.length;
-
   // 1. Calibrate severity
   let severityAdjusted = 0;
   const calibrated = findings.map((f) => {
+    // 规则命中的严重度来自用户配置，不再二次校准
+    if (f.source === 'rule') return f;
     const result = calibrateSeverity(f);
     if (result.severity !== f.severity) severityAdjusted += 1;
     return result;
   });
 
-  // 2. Check evidence
+  // 2. Check evidence（规则命中的证据就是命中的那一行，直接通过）
   const evidenceChecks = calibrated.map((f) => checkEvidenceSufficiency(f, files));
-  const withEvidence = calibrated.filter((_, i) => evidenceChecks[i].passed);
+  const withEvidence = calibrated.filter((f, i) => f.source === 'rule' || evidenceChecks[i].passed);
 
   // 3. Merge similar
   const merged = mergeSimilarFindings(withEvidence);

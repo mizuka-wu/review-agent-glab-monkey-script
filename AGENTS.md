@@ -13,8 +13,8 @@
 
 ```bash
 pnpm typecheck        # TypeScript 类型检查
-pnpm test:unit        # 单元测试（151 个）
-pnpm test:e2e         # Playwright E2E（3 个）
+pnpm test:unit        # 单元测试（171 个）
+pnpm test:e2e         # Playwright E2E（mock 4 个 + 真实 GitLab 2 个，需环境变量）
 pnpm build            # 构建油猴脚本（含 typecheck）
 pnpm dev              # 开发模式（原型页面）
 EVAL_VERBOSE=1 npx vitest run tests/eval/  # 评测基准报告
@@ -38,31 +38,33 @@ src/
 │   ├── finding-edit.ts     # Finding 编辑
 │   ├── finding-hardening.ts# 证据检查、严重度校准、相似合并
 │   ├── finding-highlight.ts# 页内高亮
-│   ├── review-engine.ts    # Review 引擎主入口
+│   ├── review-engine.ts    # Review 引擎主入口（规则恒运行 + 模型可选）
 │   ├── rules.ts            # 规则模式入口（委托 rule-packs）
-│   ├── rule-packs.ts       # 规则包系统（schema、评估、存储）
+│   ├── rule-packs.ts       # 规则包系统（schema、语言/路径作用域、评估、存储）
 │   ├── selection.ts        # 代码选区捕获
 │   ├── session.ts          # Review 会话持久化
 │   ├── settings.ts         # 设置存储（含密钥混淆）
 │   ├── capabilities.ts     # 能力探测、DOM 降级、日志脱敏
 │   ├── usage.ts            # Token/成本统计
-│   ├── model-runtime.ts    # 统一模型接口 + 工厂
-│   ├── openai-runtime.ts   # OpenAI-compatible 运行时
-│   ├── anthropic-runtime.ts# Anthropic 运行时
-│   ├── gemini-runtime.ts   # Gemini 运行时
+│   ├── model-runtime.ts    # 统一模型接口 + 工厂（OpenAI-compatible）
+│   ├── openai-runtime.ts   # OpenAI-compatible 运行时（流式、重试、用量）
 │   ├── agent-tools.ts      # Agent 工具定义 + 执行器
 │   ├── agent-loop.ts       # Agent 工具循环编排
 │   └── mcp-client.ts       # MCP 客户端（Streamable HTTP）
 ├── components/
-│   ├── Markdown.tsx        # 轻量 Markdown 渲染器
+│   ├── Markdown.tsx        # 轻量 Markdown 渲染器（导出 renderMarkdown 供测试）
+│   ├── ChatThread.tsx      # 自包含流式聊天（附件、工具轨迹、未配置提示）
+│   ├── SettingsView.tsx    # 能力总览 + 模型/审查/GitLab/规则包/MCP 设置
+│   ├── DebugPanel.tsx      # 日志、诊断、工具事件
 │   ├── review/
-│   │   ├── FindingCard.tsx # Finding 卡片组件
-│   │   └── SelectionToolbar.tsx # 选区工具栏
-│   ├── assistant-ui/       # assistant-ui 组件（原型用）
-│   └── ui/                 # 基础 UI 组件
-├── App.tsx                 # 主应用组件（侧栏、聊天、Review、设置）
-├── main.tsx                # 油猴脚本入口
-└── index.css               # 全局样式
+│   │   ├── FindingCard.tsx     # Finding 卡片（来源徽标、编辑、发布）
+│   │   ├── FindingsPanel.tsx   # 结果列表（来源分组、筛选、批量发布条）
+│   │   ├── PublishDialog.tsx   # 单条 / 批量发布确认弹窗
+│   │   └── SelectionToolbar.tsx# 选区工具栏
+│   └── ui/modern.tsx       # 设计系统（Card/Btn/Banner/Tabs/Pill/Segmented…）
+├── App.tsx                 # 主应用组件（面板、标签页、Review/发布编排）
+├── main.tsx                # 油猴脚本入口（Shadow DOM 注入）
+└── index.css               # Shadow DOM 内的令牌与 Markdown/滚动条样式
 
 tests/
 ├── unit/                   # 单元测试（与 src/core/ 一一对应）
@@ -84,15 +86,20 @@ tests/
 
 ### Review 引擎流程
 ```
-Diff → Context Builder → Model/Rule Runner → Finding 归一化
-  → existingCode 锚定 → 证据检查/严重度校准/相似合并
-  → 去重 → 置信度过滤 → Draft → User Confirm → Publish
+Diff → Context Builder
+  → 规则阶段（恒运行，本地） → 模型阶段（可选，失败降级）
+  → 跨来源印证合并 → existingCode 锚定
+  → 严重度校准/证据检查/同源相似合并 → 强度过滤（仅 AI 结果）
+  → Draft → User Confirm → Publish
 ```
+
+Finding 的 `source`（rule/model）与 `corroborated` 决定 UI 的来源徽标与分组；
+规则 Finding 额外携带 `ruleId` / `rulePackId` / `rulePackName`，便于用户溯源和关闭噪声规则。
 
 ### Provider 抽象
 - `ModelRuntime` 接口：`configured` / `chat` / `review` / `testConnection` / `callWithTools`
-- `createModelRuntime(settings)` 工厂按 `settings.provider` 选择实现
-- 各 Provider 保持独立文件，API 差异不泄漏到业务层
+- 统一走 OpenAI-compatible 协议；`settings.provider` 只用于 Base URL / 模型预设
+- `configured` 由 `core/settings.ts#isModelConfigured` 判定：官方 OpenAI 端点强制 API Key，企业网关允许免鉴权
 
 ### 存储
 - Settings: `review-agent-settings-v1`（GM.getValue / localStorage）
@@ -107,7 +114,7 @@ Diff → Context Builder → Model/Rule Runner → Finding 归一化
 - 评测测试放在 `tests/eval/`
 - E2E 测试放在 `tests/e2e/`
 - 新功能必须有对应测试
-- 现有 151 个单元测试 + 3 个 E2E 不能减少
+- 现有 171 个单元测试 + 6 个 E2E 不能减少
 
 ### 代码风格
 - 不写注释（除非 WHY 不明显）
@@ -155,3 +162,4 @@ Diff → Context Builder → Model/Rule Runner → Finding 归一化
 | `docs/02-architecture.md` | 系统架构与数据模型 |
 | `docs/09-p0-review-engine-plan.md` | Review Engine 详细设计 |
 | `docs/07-security-privacy.md` | 安全与隐私设计 |
+| `docs/10-opencodereview-gap-analysis.md` | 与 OpenCodeReview 的差距分析与对齐记录 |

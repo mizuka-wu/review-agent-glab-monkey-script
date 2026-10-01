@@ -1,6 +1,7 @@
 import { diffContext } from './diff';
 import { planSystemPrompt } from './review-plan';
-import type { ToolCall, ToolDefinition, ToolResult } from './agent-tools';
+import { isModelConfigured } from './settings';
+import type { ToolCall, ToolDefinition } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
 import type {
   ChatMessage,
@@ -20,6 +21,10 @@ interface OpenAIToolCall {
 interface ChatCompletionResponse {
   choices?: { message?: { content?: string; tool_calls?: OpenAIToolCall[] } }[];
   error?: { message?: string };
+}
+
+interface StreamChunk {
+  choices?: { delta?: { content?: string }; message?: { content?: string } }[];
 }
 
 function endpoint(baseUrl: string, path: string) {
@@ -66,19 +71,7 @@ export class OpenAIRuntime {
   constructor(private readonly settings: RuntimeSettings) {}
 
   get configured() {
-    const isOfficialOpenAI = (() => {
-      try {
-        const url = new URL(this.settings.modelBaseUrl);
-        return url.hostname === 'api.openai.com';
-      } catch {
-        return false;
-      }
-    })();
-    return Boolean(
-      this.settings.modelBaseUrl &&
-        this.settings.model &&
-        (this.settings.apiKey || !isOfficialOpenAI),
-    );
+    return isModelConfigured(this.settings);
   }
 
   private headers() {
@@ -161,10 +154,9 @@ export class OpenAIRuntime {
               const data = line.slice(6).trim();
               if (data === '[DONE]') { done = true; break; }
               try {
-                const chunk = JSON.parse(data) as ChatCompletionResponse;
-                const delta = (chunk.choices?.[0]?.message as Record<string, unknown> | undefined)?.content
-                  ?? (chunk.choices?.[0] as Record<string, unknown> | undefined)?.delta?.content
-                  ?? '';
+                const chunk = JSON.parse(data) as StreamChunk;
+                const choice = chunk.choices?.[0];
+                const delta = choice?.delta?.content ?? choice?.message?.content ?? '';
                 if (delta) {
                   content += delta;
                   options.onToken?.(delta);

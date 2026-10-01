@@ -1,10 +1,5 @@
 import type { CodeSelection } from './types';
 
-function textFromNode(node: Node) {
-  const element = node instanceof Element ? node : node.parentElement;
-  return element?.closest<HTMLElement>('.ra-line-code, [data-line-number], .line_content')?.textContent ?? '';
-}
-
 function pathFrom(element: Element | null, fallback: string) {
   const file = element?.closest('.diff-file, [data-file-path], .file-holder');
   const explicit = file?.querySelector<HTMLElement>('[data-file-path]')?.dataset.filePath;

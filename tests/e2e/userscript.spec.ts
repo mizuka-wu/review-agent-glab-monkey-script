@@ -187,6 +187,33 @@ test.describe('mock mode', () => {
     expect(requests.some((path) => path.endsWith('/diffs'))).toBe(true);
   });
 
+  test('runs rule-only review without an API key and shows the setup hint', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN', reviewMode: 'hybrid',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+
+    // 未配置提示
+    await expect(page.getByText('未配置模型 API Key')).toBeVisible();
+    await expect(page.getByRole('button', { name: '先跑规则检查' })).toBeVisible();
+
+    await page.getByRole('button', { name: '开始 Review' }).click();
+
+    // 规则命中：硬编码密钥 + console.log + as any
+    await expect(page.locator('article[data-finding-source="rule"]').first()).toBeVisible();
+    await expect(page.getByText('代码中疑似硬编码敏感信息').first()).toBeVisible();
+    await expect(page.getByText('仅规则模式').first()).toBeVisible();
+
+    // 模型接口不应该被调用
+    expect(requests.some((path) => path.includes('chat/completions'))).toBe(false);
+
+    // 规则来源标签可见
+    await expect(page.getByRole('button', { name: /规则 \d+/ })).toBeVisible();
+  });
+
   test('captures selection and opens chat with attachment', async ({ page }) => {
     await routeGitLab(page);
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
@@ -257,7 +284,7 @@ test.describe('real GitLab mode', () => {
     await mountUserscript(page, realMrUrl);
     await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText(/已从 GitLab API 读取|当前页面没有可用/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/开始一次混合评审|当前页面没有可用的 MR Diff|正在读取 MR 数据/)).toBeVisible({ timeout: 15000 });
   });
 
   test('runs rule review on real MR diff', async ({ page }) => {
@@ -265,6 +292,6 @@ test.describe('real GitLab mode', () => {
     await mountUserscript(page, realMrUrl);
     await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
-    await expect(page.getByText(/Findings|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
   });
 });

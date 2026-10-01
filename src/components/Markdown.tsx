@@ -1,9 +1,10 @@
 import { memo } from 'react';
 
-// Lightweight markdown renderer for chat messages.
-// Handles: code blocks, inline code, bold, italic, links, lists, headers.
+// Lightweight, dependency-free Markdown renderer for chat messages.
+// Supports: fenced code, inline code, bold, italic, strikethrough, links,
+// headings, ordered/unordered lists, blockquotes, tables and rules.
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -11,43 +12,76 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function inlineMarkdown(text: string): string {
-  return text
-    // Inline code first
-    .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 rounded bg-muted text-destructive font-mono text-[11px]">$1</code>')
-    // Bold
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    // Italic
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+function safeUrl(url: string): string {
+  const trimmed = url.trim();
+  return /^(?:https?:|mailto:|#|\/)/i.test(trimmed) ? trimmed : '#';
 }
 
-function renderMarkdown(source: string): string {
+export function inlineMarkdown(text: string): string {
+  const placeholders: string[] = [];
+  const stash = (html: string) => {
+    placeholders.push(html);
+    return `\u0000${placeholders.length - 1}\u0000`;
+  };
+
+  let result = text
+    .replace(/`([^`]+)`/g, (_, code: string) => stash(`<code class="ra-md-code">${escapeHtml(code)}</code>`))
+    .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_, label: string, url: string) => stash(
+      `<a href="${escapeHtml(safeUrl(url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`,
+    ))
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+  result = result.replace(/\u0000(\d+)\u0000/g, (_, index: string) => placeholders[Number(index)]);
+  return result;
+}
+
+function splitRow(line: string): string[] {
+  return line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((cell) => cell.trim());
+}
+
+function isDividerRow(line: string): boolean {
+  return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+}
+
+export function renderMarkdown(source: string): string {
   const lines = source.split('\n');
   const output: string[] = [];
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
   let codeBlockLang = '';
-  let inList = false;
+  let listType: 'ul' | 'ol' | null = null;
 
   const closeList = () => {
-    if (inList) {
-      output.push('</ul>');
-      inList = false;
+    if (listType) {
+      output.push(`</${listType}>`);
+      listType = null;
     }
   };
+  const openList = (type: 'ul' | 'ol') => {
+    if (listType !== type) {
+      closeList();
+      output.push(`<${type} class="ra-md-list">`);
+      listType = type;
+    }
+  };
+  const flushCodeBlock = () => {
+    output.push(
+      `<pre class="ra-md-pre"><code class="ra-md-code-block${codeBlockLang ? ` language-${escapeHtml(codeBlockLang)}` : ''}">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
+    );
+    codeBlockContent = [];
+    codeBlockLang = '';
+    inCodeBlock = false;
+  };
 
-  for (const line of lines) {
-    // Code block start/end
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
     if (line.trimStart().startsWith('```')) {
       if (inCodeBlock) {
-        output.push(
-          `<pre class="m-0 mb-1.5re"><code class="px-1.5 py-0.5 rounded bg-muted text-destructive font-mono text-[11px]-block${codeBlockLang ? ` language-${escapeHtml(codeBlockLang)}` : ''}">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
-        );
-        codeBlockContent = [];
-        codeBlockLang = '';
-        inCodeBlock = false;
+        flushCodeBlock();
       } else {
         closeList();
         inCodeBlock = true;
@@ -55,62 +89,81 @@ function renderMarkdown(source: string): string {
       }
       continue;
     }
-
     if (inCodeBlock) {
       codeBlockContent.push(line);
       continue;
     }
 
-    // Headers
-    const headerMatch = line.match(/^(#{1,4})\s+(.+)/);
+    const headerMatch = line.match(/^(#{1,6})\s+(.+)/);
     if (headerMatch) {
       closeList();
       const level = headerMatch[1].length;
-      output.push(`<h${level} class="my-2 text-sm font-bold first:mt-0">${inlineMarkdown(escapeHtml(headerMatch[2]))}</h${level}>`);
+      output.push(`<h${level} class="ra-md-h">${inlineMarkdown(escapeHtml(headerMatch[2]))}</h${level}>`);
       continue;
     }
 
-    // Unordered list items
-    const listMatch = line.match(/^[-*+]\s+(.+)/);
-    if (listMatch) {
-      if (!inList) {
-        output.push('<ul class="my-1 pl-4">');
-        inList = true;
+    if (/^\s*(?:[-*_])\s*(?:[-*_]\s*){2,}$/.test(line)) {
+      closeList();
+      output.push('<hr class="ra-md-hr" />');
+      continue;
+    }
+
+    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+    if (quoteMatch) {
+      closeList();
+      output.push(`<blockquote class="ra-md-quote">${inlineMarkdown(escapeHtml(quoteMatch[1]))}</blockquote>`);
+      continue;
+    }
+
+    // Tables: header row followed by a divider row
+    if (line.includes('|') && isDividerRow(lines[index + 1] ?? '')) {
+      closeList();
+      const headers = splitRow(line);
+      index += 1;
+      const rows: string[][] = [];
+      while (index + 1 < lines.length && lines[index + 1].includes('|') && lines[index + 1].trim() !== '') {
+        index += 1;
+        rows.push(splitRow(lines[index]));
       }
-      output.push(`<li>${inlineMarkdown(escapeHtml(listMatch[1]))}</li>`);
+      output.push('<table class="ra-md-table"><thead><tr>');
+      for (const header of headers) output.push(`<th>${inlineMarkdown(escapeHtml(header))}</th>`);
+      output.push('</tr></thead><tbody>');
+      for (const row of rows) {
+        output.push('<tr>');
+        for (let cell = 0; cell < headers.length; cell += 1) {
+          output.push(`<td>${inlineMarkdown(escapeHtml(row[cell] ?? ''))}</td>`);
+        }
+        output.push('</tr>');
+      }
+      output.push('</tbody></table>');
       continue;
     }
 
-    // Ordered list items
-    const olMatch = line.match(/^\d+\.\s+(.+)/);
+    const ulMatch = line.match(/^\s*[-*+]\s+(.+)/);
+    if (ulMatch) {
+      openList('ul');
+      output.push(`<li>${inlineMarkdown(escapeHtml(ulMatch[1]))}</li>`);
+      continue;
+    }
+
+    const olMatch = line.match(/^\s*\d+[.)]\s+(.+)/);
     if (olMatch) {
-      if (!inList) {
-        output.push('<ul class="my-1 pl-4">');
-        inList = true;
-      }
+      openList('ol');
       output.push(`<li>${inlineMarkdown(escapeHtml(olMatch[1]))}</li>`);
       continue;
     }
 
-    // Empty line
     if (line.trim() === '') {
       closeList();
       continue;
     }
 
-    // Regular paragraph
     closeList();
-    output.push(`<p class="m-0 mb-1.5">${inlineMarkdown(escapeHtml(line))}</p>`);
+    output.push(`<p class="ra-md-p">${inlineMarkdown(escapeHtml(line))}</p>`);
   }
 
   closeList();
-
-  // Unclosed code block
-  if (inCodeBlock && codeBlockContent.length > 0) {
-    output.push(
-      `<pre class="m-0 mb-1.5re"><code class="px-1.5 py-0.5 rounded bg-muted text-destructive font-mono text-[11px]-block">${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`,
-    );
-  }
+  if (inCodeBlock && codeBlockContent.length > 0) flushCodeBlock();
 
   return output.join('\n');
 }
@@ -123,7 +176,7 @@ interface MarkdownProps {
 export const Markdown = memo(function Markdown({ content, className }: MarkdownProps) {
   return (
     <div
-      className={`leading-relaxed text-xs${className ? ` ${className}` : ''}`}
+      className={`ra-md${className ? ` ${className}` : ''}`}
       dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
     />
   );

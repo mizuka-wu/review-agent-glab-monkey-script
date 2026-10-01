@@ -1,12 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { GitLabAdapter } from './core/gitlab-adapter';
 import { isGitLabDocument, parseGitLabUrl } from './core/gitlab-url';
-import { loadSettings } from './core/settings';
 import css from './index.css?inline';
 
-async function mount() {
+function mount() {
   const page = parseGitLabUrl(window.location.href, document);
   const shouldMount = isGitLabDocument(document);
   if (!shouldMount || document.getElementById('review-agent-glab-root')) return;
@@ -27,10 +25,9 @@ async function mount() {
   const container = document.createElement('div');
   shadow.appendChild(container);
 
-  const settings = await loadSettings();
   ReactDOM.createRoot(container).render(
     <React.StrictMode>
-      <App page={page} adapter={new GitLabAdapter(page, settings.gitlabToken)} />
+      <App page={page} />
     </React.StrictMode>,
   );
 }

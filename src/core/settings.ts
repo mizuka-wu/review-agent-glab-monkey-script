@@ -35,6 +35,7 @@ export const defaultSettings: RuntimeSettings = {
   model: providerPresets.openai.defaultModel,
   gitlabToken: '',
   effort: 'balanced',
+  reviewMode: 'hybrid',
   language: 'zh-CN',
   mcp: { enabled: false, serverUrl: 'http://127.0.0.1:3000/mcp' },
   auth: {
@@ -46,6 +47,62 @@ export const defaultSettings: RuntimeSettings = {
 };
 
 const STORAGE_KEY = 'review-agent-settings-v1';
+
+// --- Configuration readiness ---
+
+export type ConfigurationField = 'apiKey' | 'modelBaseUrl' | 'model';
+
+export interface ConfigurationIssue {
+  field: ConfigurationField;
+  label: string;
+  hint: string;
+}
+
+export interface ConfigurationState {
+  /** 模型可用：能跑 AI 评审和对话。 */
+  modelReady: boolean;
+  issues: ConfigurationIssue[];
+  hasGitLabToken: boolean;
+}
+
+export function isOfficialOpenAIEndpoint(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 只有官方 OpenAI 端点强制要求 API Key；企业网关 / 本地代理常常免鉴权，
+ * 未填 Key 也应该允许直接连。
+ */
+export function modelConfigurationIssues(settings: RuntimeSettings): ConfigurationIssue[] {
+  const issues: ConfigurationIssue[] = [];
+  if (!settings.modelBaseUrl.trim()) {
+    issues.push({ field: 'modelBaseUrl', label: 'Base URL', hint: '例如 https://api.openai.com/v1 或企业网关地址' });
+  }
+  if (!settings.model.trim()) {
+    issues.push({ field: 'model', label: '模型', hint: '例如 gpt-4o-mini' });
+  }
+  if (!settings.apiKey.trim() && isOfficialOpenAIEndpoint(settings.modelBaseUrl)) {
+    issues.push({ field: 'apiKey', label: 'API Key', hint: '官方 OpenAI 端点必须填写' });
+  }
+  return issues;
+}
+
+export function isModelConfigured(settings: RuntimeSettings): boolean {
+  return modelConfigurationIssues(settings).length === 0
+    && Boolean(settings.modelBaseUrl && settings.model);
+}
+
+export function inspectConfiguration(settings: RuntimeSettings): ConfigurationState {
+  return {
+    modelReady: isModelConfigured(settings),
+    issues: modelConfigurationIssues(settings),
+    hasGitLabToken: Boolean(settings.gitlabToken.trim()),
+  };
+}
 
 // --- Secure key obfuscation ---
 // XOR + base64: not real encryption, but prevents casual plaintext exposure in devtools.

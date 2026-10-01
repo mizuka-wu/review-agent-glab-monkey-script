@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import {
-  Cpu, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff,
+  Cpu, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
   RefreshCw, Check, Save, Download, Upload, ChevronDown, ChevronRight,
 } from 'lucide-react';
-import type { RuntimeSettings, RulePack } from '../core/types';
+import type { RuntimeSettings } from '../core/types';
 import type { UsageSummary } from '../core/usage';
 import { formatTokenCount, formatCost } from '../core/usage';
-import { BUILT_IN_PACK } from '../core/rule-packs';
+import { BUILT_IN_PACK, countEnabledRules, type RulePack } from '../core/rule-packs';
+import { modelConfigurationIssues } from '../core/settings';
 import {
   Card, CardHeader, CardBody, Btn, Input, Select, Segmented, Toggle,
-  Field, Badge, Divider, Spinner, tokens as C,
+  Field, Badge, Banner, Divider, Spinner, tokens as C,
 } from './ui/modern';
 
 interface SettingsViewProps {
@@ -24,6 +25,8 @@ interface SettingsViewProps {
   onImportRulePack: (json: string) => void;
   onExportRulePack: (id: string) => void;
   onUpdateRulePack: (id: string, patch: Partial<RulePack>) => void;
+  onToggleRule: (packId: string, ruleId: string) => void;
+  onNewRulePack: () => void;
   importError: string;
   usageSummary: UsageSummary | null;
   onClearUsage: () => void;
@@ -36,6 +39,7 @@ interface SettingsViewProps {
 export function SettingsView(props: SettingsViewProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 12, paddingBottom: 32 }}>
+      <StatusSection {...props} />
       <ModelSection {...props} />
       <ReviewSection {...props} />
       <GitLabSection {...props} />
@@ -46,13 +50,73 @@ export function SettingsView(props: SettingsViewProps) {
   );
 }
 
+// ─── Readiness overview ───
+function StatusSection({ settings, rulePacks }: SettingsViewProps) {
+  const issues = modelConfigurationIssues(settings);
+  const modelReady = issues.length === 0;
+  const ruleCount = countEnabledRules(rulePacks);
+
+  return (
+    <Card>
+      <CardHeader
+        icon={modelReady ? <ShieldCheck size={16} /> : <Shield size={16} />}
+        title="当前能力"
+        badge={modelReady ? { text: '规则 + AI', color: 'success' } : { text: '仅规则', color: 'warning' }}
+      />
+      <CardBody>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Capability
+            ok
+            name="确定性规则检查"
+            detail={`${ruleCount} 条规则已启用 · 浏览器本地执行，不联网、不消耗 token`}
+          />
+          <Capability
+            ok={Boolean(settings.gitlabToken) || true}
+            name="读取 MR / Diff"
+            detail={settings.gitlabToken ? '使用 Personal Access Token 调用 REST API' : '使用当前 GitLab 登录态（同源 Cookie）调用 REST API'}
+          />
+          <Capability
+            ok={modelReady}
+            name="AI 深度评审与对话"
+            detail={modelReady
+              ? `${settings.model} · ${settings.modelBaseUrl}`
+              : issues.length > 0 ? `缺少：${issues.map((issue) => issue.label).join('、')}` : '未配置'}
+          />
+          {!modelReady && (
+            <Banner tone="warning" title="未配置模型也能用">
+              规则检查、划词定位、Finding 编辑、复制评论草稿都不依赖模型。填写 API Key 后即可叠加 AI 评审与对话。
+            </Banner>
+          )}
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function Capability({ ok, name, detail }: { ok: boolean; name: string; detail: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+      <span style={{
+        display: 'grid', placeItems: 'center', width: 16, height: 16, borderRadius: 8, marginTop: 1, flexShrink: 0,
+        background: ok ? C.successBg : C.warningBg, color: ok ? C.success : C.warning,
+      }}>
+        {ok ? <Check size={11} /> : <X size={11} />}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: ok ? C.text : C.textSecondary }}>{name}</div>
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 1, wordBreak: 'break-all' }}>{detail}</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Model Config ───
 function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClearApiKey, testing }: SettingsViewProps) {
   const [showKey, setShowKey] = useState(false);
 
   return (
     <Card>
-      <CardHeader icon={<Cpu size={16} />} title="模型配置" desc="OpenAI 兼容接口，填入 API Key 即可使用" />
+      <CardHeader icon={<Cpu size={16} />} title="模型配置" desc="OpenAI 兼容接口；不配置也能使用规则检查" />
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Field label="API Key" required hint="唯一必填项">
@@ -157,10 +221,22 @@ function ModelPicker({ value, baseUrl, apiKey, onChange }: {
 function ReviewSection({ settings, onSettingsChange }: SettingsViewProps) {
   return (
     <Card>
-      <CardHeader icon={<Shield size={16} />} title="审查设置" />
+      <CardHeader icon={<Shield size={16} />} title="审查设置" desc="规则阶段始终在本地执行，不消耗 token" />
       <CardBody>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="审查强度">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Field label="评审模式" hint={settings.reviewMode === 'rules' ? '不调用模型' : settings.reviewMode === 'ai' ? '跳过规则检查' : '规则命中与 AI 结果分开标注'}>
+            <Segmented
+              value={settings.reviewMode}
+              onChange={v => onSettingsChange({ ...settings, reviewMode: v as RuntimeSettings['reviewMode'] })}
+              options={[
+                { value: 'hybrid', label: '规则 + AI' },
+                { value: 'rules', label: '仅规则' },
+                { value: 'ai', label: '仅 AI' },
+              ]}
+            />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="审查强度" hint="只影响 AI 结果">
             <Select
               value={settings.effort}
               onChange={v => onSettingsChange({ ...settings, effort: v as RuntimeSettings['effort'] })}
@@ -181,6 +257,7 @@ function ReviewSection({ settings, onSettingsChange }: SettingsViewProps) {
               ]}
             />
           </Field>
+          </div>
         </div>
       </CardBody>
     </Card>
@@ -259,13 +336,13 @@ function UsageSection({ usageSummary, onClearUsage }: SettingsViewProps) {
 }
 
 // ─── Rule Packs ───
-function RulePackSection({ rulePacks, onToggleRulePack, onDeleteRulePack, onImportRulePack, onExportRulePack, onUpdateRulePack, importError, onExportSiteConfig }: SettingsViewProps) {
+function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRulePack, onDeleteRulePack, onImportRulePack, onExportRulePack, onUpdateRulePack, importError, onExportSiteConfig }: SettingsViewProps) {
   const [importText, setImportText] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
     <Card>
-      <CardHeader icon={<Package size={16} />} title="规则包" desc="未配置模型时使用已启用的规则包" />
+      <CardHeader icon={<Package size={16} />} title="规则包" desc={`始终参与的确定性检查，当前启用 ${countEnabledRules(rulePacks)} 条规则`} />
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rulePacks.map(pack => {
@@ -311,10 +388,18 @@ function RulePackSection({ rulePacks, onToggleRulePack, onDeleteRulePack, onImpo
                       <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary, marginBottom: 6 }}>规则列表</div>
                       {pack.rules.map((rule, i) => (
                         <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: i > 0 ? `1px solid ${C.border}` : 'none', fontSize: 11 }}>
+                          <input
+                            type="checkbox" checked={rule.enabled} aria-label={`启用规则 ${rule.title}`}
+                            onChange={() => onToggleRule(pack.id, rule.id)}
+                            style={{ width: 13, height: 13, accentColor: C.primary, cursor: 'pointer', flexShrink: 0 }}
+                          />
                           <Badge text={rule.category} color={rule.category === 'security' ? 'danger' : rule.category === 'bug' ? 'warning' : undefined} />
                           <Badge text={rule.severity} color={rule.severity === 'critical' || rule.severity === 'high' ? 'danger' : rule.severity === 'medium' ? 'warning' : undefined} />
-                          <span style={{ flex: 1, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rule.title}</span>
-                          <span style={{ color: C.textMuted, fontSize: 10 }}>{rule.patterns.length} patterns</span>
+                          <span title={rule.content} style={{ flex: 1, color: rule.enabled ? C.text : C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rule.title}</span>
+                          {rule.languages && rule.languages.length > 0 && (
+                            <span style={{ color: C.textMuted, fontSize: 10, flexShrink: 0 }}>{rule.languages.join('/')}</span>
+                          )}
+                          <span style={{ color: C.textMuted, fontSize: 10, flexShrink: 0 }}>{rule.fileLevel ? '文件级' : `${rule.matchPatterns.length} 模式`}</span>
                         </div>
                       ))}
                     </div>
@@ -324,6 +409,9 @@ function RulePackSection({ rulePacks, onToggleRulePack, onDeleteRulePack, onImpo
             );
           })}
 
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="outline" size="sm" icon={<Package size={13} />} onClick={onNewRulePack}>新建规则包</Btn>
+          </div>
           <Divider label="导入" />
           <Field label="规则包 JSON">
             <textarea

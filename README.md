@@ -1,22 +1,27 @@
 # Review Agent for GitLab
 
-一个面向 GitLab / 自部署 GitLab 的油猴脚本（Tampermonkey Userscript），在 MR / Diff / File 页面中提供 AI 代码评审能力。支持划词提问、规则/模型 Review、结构化 Finding 草稿、批量发布 GitLab Discussion。
+一个面向 GitLab / 自部署 GitLab 的油猴脚本（Tampermonkey Userscript），在 MR / Diff / File 页面中提供代码评审能力。采用与 [OpenCodeReview](https://github.com/alibaba/open-code-review) 相同的**确定性规则 + LLM 混合架构**：规则检查永远在浏览器本地运行（无需 API Key、零 token），配置模型后叠加 AI 深度评审，两类结果分开标注、命中同一处问题时自动合并。支持划词提问、结构化 Finding 草稿、批量发布 GitLab Discussion。
 
 ## 核心特性
 
+### 🧩 混合评审（无需 API Key 也能用）
+- **规则阶段恒运行**：24 条内置确定性规则在浏览器本地执行，不联网、不消耗 token；未配置模型时 Review 依然可用
+- **模型阶段可选**：`规则 + AI` / `仅规则` / `仅 AI` 三种模式；模型调用失败自动降级为规则结果
+- **来源可区分**：每条 Finding 标注 `规则` / `AI` / `规则 + AI`（相互印证），可按来源筛选、分组查看，并展示命中的规则 id
+- **未配置提示**：侧栏与设置页明确列出当前可用能力和缺少项，一键跳转配置
+
 ### 🤖 模型 Review
-- **多 Provider**：OpenAI-compatible、Anthropic、Google Gemini，一键切换
-- **企业网关认证**：Bearer Token、API Key Header、Query Parameter、自定义 Header 四种模式
+- **OpenAI 兼容接口**：官方端点、企业网关、本地代理均可；Bearer Token、API Key Header、Query Parameter、自定义 Header 四种认证模式（网关免鉴权时可不填 Key）
 - **Agent 工具循环**：模型可主动调用 `file_read`、`search_code`、`git_log` 工具获取仓库上下文
 - **MCP 扩展**：通过 Streamable HTTP 连接本地 MCP server，扩展工具能力
 - **SSE 流式输出**：聊天逐 token 流式渲染
 - **三档审查强度**：fast（仅高置信）、balanced（默认）、thorough（全面）
 
 ### 📋 Review 引擎
-- **规则包系统**：内置 5 条规则（硬编码密钥、调试日志、弱类型、TODO、缺少测试），支持自定义规则包（regex 匹配、glob 路径作用域、JSON 导入导出）
+- **规则包系统**：内置 24 条多语言规则（硬编码密钥、URL 凭据、SQL 注入、XSS、命令注入、TLS 校验关闭、弱哈希、可预测随机数、静态可变共享状态、Java `equals`、Kotlin `!!`、TS 非空断言、弱类型、吞异常、Go 丢弃 error、阻塞 sleep、跳过测试、调试输出、内网地址、TODO、冲突标记、缺少测试），按语言与 glob 路径作用域匹配、跳过注释行、单文件命中上限；支持自定义规则包（regex、作用域、语言、JSON 导入导出、逐条开关）
 - **Context Builder**：Diff 文件过滤（lockfile/生成文件/密钥/二进制排除）、字符预算截断、省略原因记录
 - **Finding 锚定**：`existingCode` 多行精确匹配、旧/新侧行号推断、跨文件重定位
-- **Review 硬化**：证据充分度检查、严重度校准、相似 Finding 合并、置信度过滤
+- **Review 硬化**：证据充分度检查、严重度校准、同源相似 Finding 合并、跨来源印证合并、置信度过滤（仅作用于 AI 结果）
 - **幂等发布**：指纹去重、`head_sha` 校验、`stale_diff_refs` 检测、Discussion 同步
 - **评测基准**：8 个 fixture，检测率 ≥ 80%、精确率 ≥ 70%、安全类 100%、干净代码 0 误报
 
@@ -24,7 +29,7 @@
 - **完整生命周期**：草稿 → 编辑 → 定位 → 复制 → 发布 / 忽略
 - **页内高亮**：在 GitLab Diff 页面上标注 Finding 位置，severity 色标
 - **批量发布**：复选框多选 → 预览确认 → 逐条创建 Discussion
-- **筛选排序**：按严重度/分类/状态过滤，按严重度/行号/文件排序
+- **筛选排序**：按来源/严重度/分类/状态过滤，按严重度/来源/文件排序
 - **Session/Resume**：刷新页面后恢复上次 Review 会话
 
 ### 🛠 自部署兼容
@@ -36,7 +41,8 @@
 
 ### ⚡ 性能
 - **并行加载**：Diff 分页并发请求（3 路并发）、完整文件并发读取（5 路并发）
-- **窗口化渲染**：Finding 列表分批加载（每批 20 条）
+- **分批渲染**：Finding 列表分批加载（每批 30 条）
+- **轻量产物**：运行时仅依赖 React + lucide，油猴脚本约 0.9 MB（gzip 190 KB），Shadow DOM 隔离不污染 GitLab 样式
 - **大 MR 支持**：500 文件 / 20k 行不阻塞 GitLab 页面
 
 ### 🔒 安全
@@ -45,7 +51,7 @@
 - **Token 用量统计**：自动解析 API 响应 `usage`，按模型展示用量和费用估算
 
 ### 💬 交互体验
-- **Markdown 渲染**：代码块、粗体、斜体、列表、链接，XSS 安全
+- **Markdown 渲染**：代码块、表格、引用、有序/无序列表、行内代码、链接，XSS 安全
 - **聊天持久化**：对话记录自动保存，刷新后恢复
 - **键盘快捷键**：`Esc` 关闭弹窗、`Ctrl+Enter` 开始 Review、`Ctrl+K` 切换 Tab
 - **离线检测**：网络断开时显示状态提示
@@ -58,6 +64,9 @@
 2. 打开 `dist/review-agent-glab-monkey-script.user.js` 或从 [Release](../../releases) 下载
 3. 在 Tampermonkey 中导入安装
 4. 打开任意 GitLab MR 页面，点击右下角浮动按钮打开 Review Agent
+
+不配置 API Key 也可以直接使用规则检查、划词定位、Finding 编辑和评论草稿复制；
+在「设置」中填写 OpenAI 兼容的 Base URL / 模型 / API Key 后即可叠加 AI 评审与对话。
 
 ## 开发
 

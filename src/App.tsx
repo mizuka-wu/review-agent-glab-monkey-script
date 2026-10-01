@@ -1,293 +1,246 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bot, Bug, Check, Download, ExternalLink, FileText, LoaderCircle, MessageSquare, Package,
-  Play, Plus, RefreshCw, Send, Settings, Sparkles, Square, Trash2, Upload, X,
+  Bug, CheckSquare, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare,
+  Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X,
 } from 'lucide-react';
-import { Button } from './components/ui/button';
-import { FindingCard } from './components/review/FindingCard';
 import { ChatThread } from './components/ChatThread';
+import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
+import { FindingsPanel } from './components/review/FindingsPanel';
+import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { SettingsView } from './components/SettingsView';
-import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
-import { Markdown } from './components/Markdown';
-import { highlightFindingOnPage, clearHighlights, injectHighlightStyles } from './core/finding-highlight';
-import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
-import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
-import { createModelRuntime, type ModelRuntime, type AgentMessage } from './core/model-runtime';
+import {
+  Banner, Btn, IconButton, InjectAnimations, Pill, Segmented, Tabs, tokens as C,
+} from './components/ui/modern';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
 import { CompositeToolExecutor, GitLabToolExecutor } from './core/agent-tools';
+import { clearHighlights, highlightFindingOnPage, injectHighlightStyles } from './core/finding-highlight';
+import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
+import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
+import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
 import { McpClient } from './core/mcp-client';
-import { probeCapabilities, exportSiteConfig, type ExtendedCapabilities, type DiagnosticEntry } from './core/capabilities';
-import { providerPresets } from './core/settings';
-import { getUsageSummary, clearUsage, formatTokenCount, formatCost, type UsageSummary } from './core/usage';
+import { createModelRuntime, type AgentMessage, type ModelRuntime } from './core/model-runtime';
 import { ReviewEngine } from './core/review-engine';
 import {
-  addRulePack,
-  BUILT_IN_PACK,
-  exportRulePack,
-  generateRuleId,
-  generateRulePackId,
-  importRulePack,
-  loadRulePacks,
-  removeRulePack,
-  saveRulePacks,
-  type RuleDef,
-  type RulePack,
+  addRulePack, BUILT_IN_PACK, countEnabledRules, exportRulePack, generateRuleId,
+  generateRulePackId, importRulePack, loadRulePacks, removeRulePack, saveRulePacks,
+  type RuleDef, type RulePack,
 } from './core/rule-packs';
+import { captureCodeSelection } from './core/selection';
 import {
-  createReviewSession,
-  loadLatestReviewSession,
-  resumeReviewSession,
-  reviewSessionKey,
-  saveReviewSession,
-  summarizeReviewContext,
-  toSessionFinding,
-  updateReviewSession,
+  createReviewSession, loadLatestReviewSession, resumeReviewSession, reviewSessionKey,
+  saveReviewSession, summarizeReviewContext, toSessionFinding, updateReviewSession,
   type ReviewSessionManifest,
 } from './core/session';
-import { captureCodeSelection } from './core/selection';
-import { clearSensitiveSettings, defaultSettings, loadSettings, saveSettings } from './core/settings';
+import { clearSensitiveSettings, defaultSettings, loadSettings, inspectConfiguration, saveSettings } from './core/settings';
+import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
 import type {
-  ChatMessage, CodeSelection, FileDiff, Finding, MergeRequestContext,
-  PageContext, RuntimeSettings,
+  ChatMessage, CodeSelection, FileDiff, Finding, MergeRequestContext, PageContext,
+  ReviewStageReport, RuntimeSettings,
 } from './core/types';
 
-type ReviewStatus = 'idle' | 'preparing' | 'running' | 'normalizing' | 'completed' | 'cancelled' | 'failed';
+type Tab = 'review' | 'chat' | 'settings' | 'debug';
+type ReviewStatus = 'idle' | 'preparing' | 'running' | 'completed' | 'cancelled' | 'failed';
 
 interface AppProps {
   page: PageContext;
-  adapter: GitLabAdapter;
 }
 
-const suggestions = ['解释这段变更的失败路径', '检查并发与幂等性', '补充可执行的测试建议'];
 const CHAT_STORAGE_KEY = 'review-agent-chat-v1';
+const UI_STORAGE_KEY = 'review-agent-ui-v1';
+const SESSION_STORAGE_KEY = 'review-agent-review-sessions-v1';
+const MIN_WIDTH = 380;
+const MAX_WIDTH = 780;
 
-export default function App({ page, adapter }: AppProps) {
+const suggestions = ['解释这段变更的失败路径', '检查并发与幂等性', '补充可执行的测试建议'];
+
+interface UiPrefs {
+  width: number;
+  top: number;
+  right: number;
+  open: boolean;
+  hintDismissed: boolean;
+}
+
+const defaultUiPrefs: UiPrefs = { width: 460, top: 72, right: 16, open: false, hintDismissed: false };
+
+function loadUiPrefs(): UiPrefs {
+  try {
+    return { ...defaultUiPrefs, ...JSON.parse(localStorage.getItem(UI_STORAGE_KEY) ?? '{}') as Partial<UiPrefs> };
+  } catch {
+    return defaultUiPrefs;
+  }
+}
+
+export default function App({ page }: AppProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const reviewAbort = useRef<AbortController | undefined>(undefined);
+  const chatAbort = useRef<AbortController | undefined>(undefined);
   const currentSessionRef = useRef<ReviewSessionManifest | undefined>(undefined);
+  const dragState = useRef<{ startX: number; startY: number; startTop: number; startRight: number } | null>(null);
+  const resizeState = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const initialPrefs = useRef<UiPrefs>(loadUiPrefs());
+  const [ui, setUi] = useState<UiPrefs>(initialPrefs.current);
+
   const [settings, setSettings] = useState<RuntimeSettings>(defaultSettings);
-  const [draft, setDraft] = useState('');
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [rulePacks, setRulePacks] = useState<RulePack[]>([BUILT_IN_PACK]);
+  const [importError, setImportError] = useState('');
+
+  const [tab, setTab] = useState<Tab>('review');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState('');
   const [attachment, setAttachment] = useState<CodeSelection | undefined>(undefined);
   const [selection, setSelection] = useState<CodeSelection | null>(null);
   const [responding, setResponding] = useState(false);
+  const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
+
   const [mrContext, setMrContext] = useState<MergeRequestContext | undefined>(undefined);
   const [files, setFiles] = useState<FileDiff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [activeTab, setActiveTab] = useState<'chat' | 'config' | 'debug'>('chat');
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('idle');
   const [reviewError, setReviewError] = useState('');
+  const [reviewWarnings, setReviewWarnings] = useState<string[]>([]);
+  const [stages, setStages] = useState<{ rules: ReviewStageReport; model: ReviewStageReport } | undefined>(undefined);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [expandedFinding, setExpandedFinding] = useState('');
+  const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
+
   const [publishFinding, setPublishFinding] = useState<Finding | undefined>(undefined);
   const [publishBody, setPublishBody] = useState('');
   const [publishing, setPublishing] = useState(false);
+  const [batchConfirm, setBatchConfirm] = useState(false);
+  const [batchPublishing, setBatchPublishing] = useState(false);
+
   const [savedSession, setSavedSession] = useState<ReviewSessionManifest | undefined>(undefined);
-  const [toast, setToast] = useState('');
-  const [rulePacks, setRulePacks] = useState<RulePack[]>([BUILT_IN_PACK]);
-  const [editingPackId, setEditingPackId] = useState<string | null>(null);
-  const [importText, setImportText] = useState('');
-  const [importError, setImportError] = useState('');
-  const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
   const [capabilities, setCapabilities] = useState<ExtendedCapabilities | undefined>(undefined);
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
-  const [visibleFindingCount, setVisibleFindingCount] = useState(20);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
-  const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
-  const [batchPublishing, setBatchPublishing] = useState(false);
-  const [showBatchConfirm, setShowBatchConfirm] = useState(false);
-  const [filterSeverity, setFilterSeverity] = useState<string>('all');
-  const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'severity' | 'line' | 'path'>('severity');
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
-  const [showFindings, setShowFindings] = useState(true);
+  const [testing, setTesting] = useState(false);
+
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   const [debugFilter, setDebugFilter] = useState<'all' | 'info' | 'warn' | 'error' | 'debug'>('all');
+  const [toast, setToast] = useState('');
 
-  // Panel drag state
-  const addLog = (level: DebugLogEntry['level'], source: string, message: string, detail?: string) => {
-    setDebugLogs(prev => [...prev.slice(-499), {
+  const addLog = useCallback((level: DebugLogEntry['level'], source: string, message: string, detail?: string) => {
+    setDebugLogs((prev) => [...prev.slice(-499), {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: new Date().toISOString(),
-      level, source, message, detail,
+      timestamp: new Date().toISOString(), level, source, message, detail,
     }]);
-  };
-  const panelRef = useRef<HTMLElement>(null);
-  const dragState = useRef<{ startX: number; startY: number; startTop: number; startRight: number } | null>(null);
+  }, []);
 
-  const handleDragStart = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('button')) return;
-    const panel = panelRef.current;
-    if (!panel) return;
-    const rect = panel.getBoundingClientRect();
-    dragState.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startTop: rect.top,
-      startRight: window.innerWidth - rect.right,
-    };
-    const onMove = (me: MouseEvent) => {
-      const ds = dragState.current;
-      if (!ds) return;
-      const dx = me.clientX - ds.startX;
-      const dy = me.clientY - ds.startY;
-      panel.style.top = `${Math.max(0, ds.startTop + dy)}px`;
-      panel.style.right = `${Math.max(0, ds.startRight - dx)}px`;
-    };
-    const onUp = () => {
-      dragState.current = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
+  const api = useMemo(() => new GitLabAdapter(page, settings.gitlabToken), [page, settings.gitlabToken]);
+  const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
+  const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
+  const mergeRequestRef = useMemo(() => mergeRequestRefFromPage(page), [page]);
+  const config = useMemo(() => inspectConfiguration(settings), [settings]);
+  const modelReady = config.modelReady;
+  const enabledRuleCount = useMemo(() => countEnabledRules(rulePacks), [rulePacks]);
+  const canPublish = Boolean(mergeRequestRef && mrContext && (capabilities?.canCreateDiscussions !== false));
 
-  // Keep panel in viewport on window resize
+  const persistUi = useCallback((next: UiPrefs) => {
+    setUi(next);
+    try { localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(next)); } catch { /* 忽略存储失败 */ }
+  }, []);
+
+  // --- Bootstrap ---
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const [loaded, packs, summary, stored] = await Promise.all([
+        loadSettings(),
+        loadRulePacks(),
+        getUsageSummary().catch(() => null),
+        Promise.resolve(localStorage.getItem(CHAT_STORAGE_KEY)),
+      ]);
+      if (!active) return;
+      setSettings(loaded);
+      setSettingsLoaded(true);
+      setRulePacks(packs);
+      if (summary && summary.callCount > 0) setUsageSummary(summary);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as ChatMessage[];
+          if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed.slice(-50));
+        } catch { /* 忽略损坏的历史记录 */ }
+      }
+      addLog('info', 'settings', `模型${inspectConfiguration(loaded).modelReady ? '已配置' : '未配置'} · 规则 ${countEnabledRules(packs)} 条`);
+    })();
+    return () => { active = false; };
+  }, [addLog]);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    try { localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-50))); } catch { /* 忽略存储失败 */ }
+  }, [messages]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!mergeRequestRef) {
+      setLoading(false);
+      addLog('info', 'gitlab', '当前页面不是 MR，仅支持划词提问');
+      return () => controller.abort();
+    }
+    addLog('debug', 'gitlab', `读取 ${page.projectPath} !${mergeRequestRef.mergeRequestIid}`);
+    void Promise.all([
+      api.getMergeRequest(mergeRequestRef),
+      page.route === 'commit' && page.commitSha
+        ? api.listCommitDiffs(page.commitSha)
+        : api.listDiffs(mergeRequestRef, { signal: controller.signal }),
+    ]).then(([context, diffs]) => {
+      if (controller.signal.aborted) return;
+      setMrContext(context);
+      setFiles(diffs);
+      setLoading(false);
+      addLog('info', 'gitlab', `已从 GitLab API 读取 ${diffs.length} 个变更文件`, `head ${context.diffRefs.headSha.slice(0, 8)}`);
+      void loadLatestReviewSession(reviewSessionKey(mergeRequestRef, context.diffRefs.headSha))
+        .then((session) => { if (!controller.signal.aborted) setSavedSession(session); })
+        .catch(() => undefined);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setLoadError(message);
+      setLoading(false);
+      addLog('error', 'gitlab', '读取 MR 数据失败', message);
+    });
+    return () => controller.abort();
+  }, [api, mergeRequestRef, page.projectPath, page.route, page.commitSha, addLog]);
+
   useEffect(() => {
     const onResize = () => {
       const panel = panelRef.current;
       if (!panel) return;
       const rect = panel.getBoundingClientRect();
-      if (rect.right > window.innerWidth) {
-        panel.style.right = '16px';
-        panel.style.top = '72px';
-      }
-      if (rect.bottom > window.innerHeight) {
-        panel.style.top = `${Math.max(0, window.innerHeight - rect.height - 16)}px`;
-      }
+      const next = { ...ui };
+      let changed = false;
+      if (rect.right > window.innerWidth) { next.right = 16; changed = true; }
+      if (rect.bottom > window.innerHeight) { next.top = Math.max(8, window.innerHeight - rect.height - 16); changed = true; }
+      if (next.width > window.innerWidth - 32) { next.width = Math.max(MIN_WIDTH, window.innerWidth - 32); changed = true; }
+      if (changed) persistUi(next);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, []);
+  }, [ui, persistUi]);
 
   useEffect(() => {
-    // Restore chat history
-    try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as ChatMessage[];
-        if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed.slice(-50));
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    // Save chat history when messages change
-    if (messages.length > 0) {
-      try {
-        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-50)));
-      } catch { /* ignore */ }
-    }
-  }, [messages]);
-
-  const runtime: ModelRuntime = useMemo(() => createModelRuntime(settings), [settings]);
-  const reviewEngine = useMemo(() => new ReviewEngine(runtime, settings, rulePacks), [runtime, settings, rulePacks]);
-  const mergeRequestRef = useMemo(() => mergeRequestRefFromPage(page), [page]);
-  const runtimeConfigured = runtime.configured;
-
-  // Filter and sort findings
-  const filteredFindings = useMemo(() => {
-    let result = [...findings];
-    if (filterSeverity !== 'all') result = result.filter((f) => f.severity === filterSeverity);
-    if (filterCategory !== 'all') result = result.filter((f) => f.category === filterCategory);
-    if (filterStatus !== 'all') result = result.filter((f) => f.status === filterStatus);
-
-    const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-    result.sort((a, b) => {
-      if (sortBy === 'severity') return severityOrder[a.severity] - severityOrder[b.severity];
-      if (sortBy === 'line') return a.line - b.line;
-      return (a.path ?? '').localeCompare(b.path ?? '');
-    });
-    return result;
-  }, [findings, filterSeverity, filterCategory, filterStatus, sortBy]);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (publishFinding) setPublishFinding(undefined);
-        else if (showBatchConfirm) setShowBatchConfirm(false);
-        else if (editingPackId) setEditingPackId(null);
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        if (!reviewStatus || reviewStatus === 'idle' || reviewStatus === 'cancelled' || reviewStatus === 'failed') {
-          void startReview(attachment ? 'selection' : 'all');
-        }
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        setActiveTab((current) => current === 'chat' ? 'config' : 'chat');
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [publishFinding, showBatchConfirm, editingPackId, reviewStatus, attachment]);
-
-  // Online/offline detection
-  useEffect(() => {
-    const goOnline = () => setIsOnline(true);
-    const goOffline = () => setIsOnline(false);
+    const goOnline = () => { setIsOnline(true); addLog('info', 'network', '网络已恢复'); };
+    const goOffline = () => { setIsOnline(false); addLog('warn', 'network', '网络已断开'); };
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
     return () => {
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);
     };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    void loadSettings().then((loaded) => {
-      if (active) setSettings(loaded);
-    });
-    void loadRulePacks().then((loaded) => {
-      if (active) setRulePacks(loaded);
-    });
-    void getUsageSummary().then((summary) => {
-      if (active && summary.callCount > 0) setUsageSummary(summary);
-    }).catch(() => {});
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    if (!mergeRequestRef) {
-      setLoading(false);
-      return () => controller.abort();
-    }
-    void Promise.all([
-      mergeRequestRef ? adapter.getMergeRequest(mergeRequestRef) : Promise.resolve(undefined),
-      page.route === 'commit' && page.commitSha
-        ? adapter.listCommitDiffs(page.commitSha)
-        : mergeRequestRef
-          ? adapter.listDiffs(mergeRequestRef)
-          : Promise.resolve([]),
-    ]).then(([context, diffs]) => {
-      if (controller.signal.aborted) return;
-      setMrContext(context);
-      setFiles(diffs);
-      setLoading(false);
-      if (mergeRequestRef && context) {
-        void loadLatestReviewSession(reviewSessionKey(mergeRequestRef, context.diffRefs.headSha))
-          .then((session) => {
-            if (!controller.signal.aborted) setSavedSession(session);
-          }).catch(() => {});
-      }
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) {
-        setLoadError(error instanceof Error ? error.message : String(error));
-        setLoading(false);
-      }
-    });
-    return () => controller.abort();
-  }, [adapter, mergeRequestRef]);
+  }, [addLog]);
 
   useEffect(() => {
     const handleMouseUp = () => {
@@ -304,179 +257,242 @@ export default function App({ page, adapter }: AppProps) {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 3500);
+    const timer = window.setTimeout(() => setToast(''), 3600);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // Probe GitLab capabilities once page context is available (debounced)
   useEffect(() => {
-    if (!page.origin) return;
     let active = true;
     const timer = window.setTimeout(() => {
       void probeCapabilities(page.origin, settings.gitlabToken).then(({ capabilities: caps, diagnostics: diags }) => {
-        if (active) {
-          setCapabilities(caps);
-          setDiagnostics(diags);
-        }
-      }).catch(() => {});
-    }, 500);
+        if (!active) return;
+        setCapabilities(caps);
+        setDiagnostics(diags);
+        addLog('info', 'capabilities', `认证 ${caps.authMode} · MR ${caps.canReadMergeRequests ? '可读' : '不可读'} · Discussion ${caps.canCreateDiscussions ? '可写' : '不可写'}`);
+      }).catch(() => undefined);
+    }, 400);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [page.origin, settings.gitlabToken]);
+  }, [page.origin, settings.gitlabToken, addLog]);
 
-  // Load session history for the session browser
   useEffect(() => {
-    if (activeTab !== 'settings') return;
+    if (tab !== 'settings') return;
     let active = true;
     void (async () => {
-      const storage = (globalThis as typeof globalThis & { GM?: { getValue: (k: string, fb: unknown) => Promise<unknown> } }).GM;
-      const raw = storage
-        ? await storage.getValue('review-agent-review-sessions-v1', {})
-        : JSON.parse(localStorage.getItem('review-agent-review-sessions-v1') ?? '{}');
-      const sessions = Object.values(raw ?? {}) as ReviewSessionManifest[];
-      if (active) setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
+      const gm = (globalThis as typeof globalThis & { GM?: { getValue: (k: string, fb: unknown) => Promise<unknown> } }).GM;
+      const raw = gm
+        ? await gm.getValue(SESSION_STORAGE_KEY, {})
+        : JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}');
+      const sessions = Object.values((raw ?? {}) as Record<string, ReviewSessionManifest>);
+      if (active) {
+        setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
+      }
     })();
     return () => { active = false; };
-  }, [activeTab]);
+  }, [tab]);
 
-  const sendChat = async (event: FormEvent) => {
+  // --- Panel drag & resize ---
+
+  const handleDragStart = (event: React.MouseEvent) => {
+    if ((event.target as HTMLElement).closest('button')) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragState.current = { startX: event.clientX, startY: event.clientY, startTop: rect.top, startRight: window.innerWidth - rect.right };
+    const onMove = (move: MouseEvent) => {
+      const state = dragState.current;
+      if (!state || !panelRef.current) return;
+      panelRef.current.style.top = `${Math.max(0, state.startTop + move.clientY - state.startY)}px`;
+      panelRef.current.style.right = `${Math.max(0, state.startRight - (move.clientX - state.startX))}px`;
+    };
+    const onUp = () => {
+      dragState.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (rect) persistUi({ ...ui, top: rect.top, right: window.innerWidth - rect.right });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const handleResizeStart = (event: React.MouseEvent) => {
     event.preventDefault();
-    const content = draft.trim();
+    resizeState.current = { startX: event.clientX, startWidth: ui.width };
+    const onMove = (move: MouseEvent) => {
+      const state = resizeState.current;
+      if (!state || !panelRef.current) return;
+      const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, state.startWidth + (state.startX - move.clientX)));
+      panelRef.current.style.width = `${width}px`;
+    };
+    const onUp = () => {
+      resizeState.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (rect) persistUi({ ...ui, width: Math.round(rect.width) });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // --- Chat ---
+
+  const sendMessage = useCallback(async (text: string) => {
+    const content = text.trim();
     if (!content || responding) return;
     const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content, attachment };
     const history = [...messages, userMessage];
     setMessages(history);
     setDraft('');
     setAttachment(undefined);
-    if (!runtimeConfigured) {
+    setTab('chat');
+
+    if (!modelReady) {
       setMessages([...history, {
-        id: `error-${Date.now()}`, role: 'assistant', error: true,
-        content: '尚未配置可用的 OpenAI-compatible 模型。请在“设置”中填写 Base URL、模型和 API Key。',
+        id: `notice-${Date.now()}`, role: 'assistant', error: true,
+        content: `对话需要配置模型。当前缺少：${config.issues.map((issue) => issue.label).join('、') || 'API Key'}。\n规则检查不需要模型，可以直接在「结果」页运行。`,
       }]);
-      setActiveTab('config');
+      addLog('warn', 'chat', '模型未配置，已拒绝对话请求');
       return;
     }
+
+    const controller = new AbortController();
+    chatAbort.current = controller;
     setResponding(true);
     setToolEvents([]);
+    addLog('debug', 'chat', `发送对话请求（${content.length} 字）`);
     try {
       if (mergeRequestRef && mrContext) {
-        // Use agent loop with GitLab + MCP tools when on an MR page
-        const gitlabExecutor = new GitLabToolExecutor(adapter, mrContext.diffRefs.headSha);
-        let compositeExecutor = new CompositeToolExecutor(gitlabExecutor);
-
-        // Initialize MCP client if enabled
+        const gitlabExecutor = new GitLabToolExecutor(api, mrContext.diffRefs.headSha);
+        let executor = new CompositeToolExecutor(gitlabExecutor);
         if (settings.mcp?.enabled && settings.mcp.serverUrl) {
           try {
             const mcpClient = new McpClient({ url: settings.mcp.serverUrl, enabled: true });
             await mcpClient.initialize();
             if (mcpClient.availableTools.length > 0) {
-              compositeExecutor = new CompositeToolExecutor(gitlabExecutor, mcpClient);
+              executor = new CompositeToolExecutor(gitlabExecutor, mcpClient);
+              addLog('info', 'mcp', `已接入 ${mcpClient.availableTools.length} 个 MCP 工具`);
             }
-          } catch (mcpError) {
-            console.warn('MCP 连接失败，仅使用 GitLab 工具:', mcpError);
+          } catch (error) {
+            addLog('warn', 'mcp', 'MCP 连接失败，仅使用 GitLab 工具', String(error));
           }
         }
-
-        const agentMessages: AgentMessage[] = [
-          ...history.filter((m) => m.role !== 'system' && !m.error).map((m) => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.attachment
-              ? `${m.content}\n\n[代码选区: ${m.attachment.filePath}:L${m.attachment.startLine}-${m.attachment.endLine}]\n\`\`\`\n${m.attachment.text}\n\`\`\``
-              : m.content,
-          })),
-        ];
-        const result = await runAgentLoop(runtime, compositeExecutor, agentMessages, {
+        const agentMessages: AgentMessage[] = history
+          .filter((message) => message.role !== 'system' && !message.error)
+          .map((message) => ({
+            role: message.role as 'user' | 'assistant',
+            content: message.attachment
+              ? `${message.content}\n\n[代码选区: ${message.attachment.filePath}:L${message.attachment.startLine}-${message.attachment.endLine}]\n\`\`\`\n${message.attachment.text}\n\`\`\``
+              : message.content,
+          }));
+        const result = await runAgentLoop(runtime, executor, agentMessages, {
           onEvent: (event) => setToolEvents((prev) => [...prev, event]),
           language: settings.language,
+          signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
         setMessages((current) => [...current, {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
+          id: `assistant-${Date.now()}`, role: 'assistant',
           content: result.text + (result.toolCalls.length > 0
-            ? `\n\n---\n🔧 调用了 ${result.toolCalls.length} 次工具，${result.iterations} 轮推理`
+            ? `\n\n---\n调用了 ${result.toolCalls.length} 次工具，${result.iterations} 轮推理`
             : ''),
         }]);
+        addLog('info', 'chat', `对话完成（${result.iterations} 轮，${result.toolCalls.length} 次工具调用）`);
       } else {
-        // Stream tokens to UI progressively
         const streamId = `stream-${Date.now()}`;
         setMessages((current) => [...current, { id: streamId, role: 'assistant', content: '' }]);
         let streamed = '';
-        const answer = await runtime.chat(history, attachment, undefined, (token) => {
+        const answer = await runtime.chat(history, attachment, controller.signal, (token) => {
           streamed += token;
-          setMessages((current) => current.map((m) => m.id === streamId ? { ...m, content: streamed } : m));
+          setMessages((current) => current.map((message) => message.id === streamId ? { ...message, content: streamed } : message));
         });
-        setMessages((current) => current.map((m) => m.id === streamId ? { ...m, content: answer } : m));
+        if (controller.signal.aborted) return;
+        setMessages((current) => current.map((message) => message.id === streamId ? { ...message, content: answer } : message));
+        addLog('info', 'chat', '对话完成');
       }
     } catch (error) {
-      setMessages((current) => [...current, {
-        id: `error-${Date.now()}`, role: 'assistant', error: true,
-        content: `模型调用失败：${String(error)}`,
-      }]);
+      if (controller.signal.aborted || (error as Error).name === 'AbortError') return;
+      const message = error instanceof Error ? error.message : String(error);
+      setMessages((current) => [...current, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: `模型调用失败：${message}` }]);
+      addLog('error', 'chat', '模型调用失败', message);
     } finally {
       setResponding(false);
+      chatAbort.current = undefined;
     }
+  }, [responding, attachment, messages, modelReady, config.issues, mergeRequestRef, mrContext, api, settings, runtime, addLog]);
+
+  const stopChat = () => {
+    chatAbort.current?.abort();
+    setResponding(false);
+    addLog('warn', 'chat', '用户中断了对话');
   };
 
-  const [testing, setTesting] = useState(false);
   const testModelConnection = async () => {
-    if (!settings.apiKey && settings.modelBaseUrl.includes('api.openai.com')) {
-      setToast('请先填写 API Key');
-      return;
-    }
+    if (!settings.modelBaseUrl) { setToast('请先填写 Base URL'); return; }
     setTesting(true);
-    const startTime = Date.now();
+    const startedAt = Date.now();
+    addLog('debug', 'model', `测试连接 ${settings.modelBaseUrl}`);
     try {
-      // Send a minimal chat completion request to verify the model works
-      const url = settings.modelBaseUrl.replace(/\/$/, '') + '/chat/completions';
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (settings.apiKey) headers['Authorization'] = `Bearer ${settings.apiKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: settings.model || 'gpt-4o-mini',
-          messages: [{ role: 'user', content: 'hi' }],
-          max_tokens: 1,
-        }),
-      });
-      const elapsed = Date.now() - startTime;
-      if (!res.ok) {
-        const err = await res.text().catch(() => '');
-        setToast(`连接失败：HTTP ${res.status} ${err.slice(0, 80)}`);
-        return;
+      const ok = await runtime.testConnection();
+      const elapsed = Date.now() - startedAt;
+      if (ok) {
+        setToast(`✓ 连接成功（${elapsed}ms）· ${settings.model}`);
+        addLog('info', 'model', `连接成功（${elapsed}ms）`);
+      } else {
+        setToast('连接失败：模型服务没有返回可用响应');
+        addLog('error', 'model', '连接失败');
       }
-      const data = await res.json() as { model?: string; usage?: { total_tokens?: number } };
-      setToast(`✓ 连接成功（${elapsed}ms）· ${data.model ?? settings.model}`);
-    } catch (e) {
-      setToast(`连接失败：${e instanceof Error ? e.message : '网络错误'}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setToast(`连接失败：${message}`);
+      addLog('error', 'model', '连接异常', message);
     } finally {
       setTesting(false);
     }
   };
 
+  // --- Review ---
+
   const startReview = async (scope: 'all' | 'selection') => {
-    if (!runtimeConfigured) {
-      setToast('请先在设置中配置模型（API Key）');
-      setActiveTab('config');
+    const selected = scope === 'selection' ? (attachment ?? selection ?? undefined) : attachment;
+    const scopedFiles = scope === 'selection' && selected
+      ? files.filter((file) => file.newPath === selected.filePath || file.oldPath === selected.filePath)
+      : files;
+
+    if (scopedFiles.length === 0 && !selected) {
+      setReviewError('没有可用的 MR Diff：请在 MR 的 Changes 页面打开侧栏，或先划选一段代码再针对选区 Review。');
+      setReviewStatus('failed');
+      setTab('review');
       return;
     }
+    const runRules = settings.reviewMode !== 'ai';
+    const runModel = settings.reviewMode !== 'rules';
+    if (!runRules && !modelReady) {
+      setReviewError('「仅 AI」模式需要配置模型。请补全模型配置，或切换到「规则 + AI」/「仅规则」。');
+      setReviewStatus('failed');
+      setTab('settings');
+      return;
+    }
+
     reviewAbort.current?.abort();
     const controller = new AbortController();
     reviewAbort.current = controller;
-    setActiveTab('chat');
+    setTab('review');
     setReviewStatus('preparing');
     setReviewError('');
+    setReviewWarnings([]);
+    setStages(undefined);
     setFindings([]);
-    const selected = attachment ?? selection ?? undefined;
-    const scopedFiles = scope === 'selection'
-      ? files.filter((file) => file.newPath === selected?.filePath)
-      : files;
+    setSelectedFindings(new Set());
+    addLog('info', 'review', `开始 Review（${scope === 'selection' ? '选区' : '整个 MR'} · ${settings.reviewMode}）`, `${scopedFiles.length} 个文件`);
+
     const session = mergeRequestRef && mrContext
       ? createReviewSession({
         ref: mergeRequestRef,
         headSha: mrContext.diffRefs.headSha,
         title: mrContext.title,
         scope,
-        source: 'model',
+        source: runModel && modelReady ? 'model' : 'rule',
         settings,
       })
       : undefined;
@@ -492,46 +508,63 @@ export default function App({ page, adapter }: AppProps) {
         files: scopedFiles,
         selection: selected,
         signal: controller.signal,
-        loadFile: (path, ref, signal) => adapter.getFile(path, ref),
+        rules: runRules,
+        model: runModel,
+        loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
       });
       if (controller.signal.aborted) return;
-      // Sync with existing GitLab discussions to mark already-published findings
-      let syncedFindings = result.findings;
+
+      let synced = result.findings;
       if (mergeRequestRef) {
         try {
-          const existingBodies = await adapter.getExistingCommentBodies(mergeRequestRef);
-          if (existingBodies.size > 0) {
-            syncedFindings = result.findings.map((finding) => {
-              const alreadyPublished = existingBodies.has(finding.comment.trim());
-              return alreadyPublished ? { ...finding, status: 'published' as const } : finding;
-            });
-            const syncedCount = syncedFindings.filter((f) => f.status === 'published').length;
-            if (syncedCount > 0) {
-              setToast(`${syncedCount} 个 Finding 匹配到已有 Discussion，已标记为已发布`);
-            }
+          const existing = await api.getExistingCommentBodies(mergeRequestRef);
+          if (existing.size > 0) {
+            const matched = synced.filter((finding) => existing.has(finding.comment.trim())).length;
+            synced = synced.map((finding) => existing.has(finding.comment.trim())
+              ? { ...finding, status: 'published' as const }
+              : finding);
+            if (matched > 0) setToast(`${matched} 个问题匹配到已有 Discussion，已标记为已发布`);
           }
         } catch {
-          // Discussion sync is best-effort, don't block review results
+          addLog('warn', 'review', '读取已有 Discussion 失败，跳过去重标记');
         }
       }
 
-      setFindings(syncedFindings);
-      setExpandedFinding(result.findings[0]?.id ?? '');
+      setFindings(synced);
+      setStages(result.stages);
+      setReviewWarnings(result.warnings);
+      setExpandedFinding(synced[0]?.id ?? '');
       setReviewStatus('completed');
-      // Push review result as assistant chat message
-      const highCount = syncedFindings.filter(f => f.severity === 'high' || f.severity === 'critical').length;
-      setMessages(prev => [...prev, {
+      addLog('info', 'review',
+        `Review 完成：规则 ${result.stages.rules.findings} 条 · AI ${result.stages.model.findings} 条`,
+        result.warnings.join(' | '));
+
+      const ruleCount = synced.filter((finding) => finding.source === 'rule').length;
+      const modelCount = synced.filter((finding) => finding.source === 'model').length;
+      const corroborated = synced.filter((finding) => finding.corroborated).length;
+      const high = synced.filter((finding) => finding.severity === 'critical' || finding.severity === 'high').length;
+      setMessages((prev) => [...prev, {
         id: `review-${Date.now()}`,
         role: 'assistant',
-        content: `Review 完成（${result.source === 'model' ? '模型分析' : '规则检查'}），共发现 ${syncedFindings.length} 个问题${highCount > 0 ? `，其中 ${highCount} 个高危` : ''}。结果已在下方展示，可逐条确认后发布到 GitLab。`,
-        findings: syncedFindings,
+        content: synced.length === 0
+          ? 'Review 完成，没有发现需要处理的问题。'
+          : [
+            `**Review 完成**：共 ${synced.length} 个问题${high > 0 ? `，其中 ${high} 个高危` : ''}。`,
+            `- 规则命中：${ruleCount} 条（确定性检查，本地执行）`,
+            `- AI 评审：${modelCount} 条${corroborated > 0 ? `，其中 ${corroborated} 条与规则相互印证` : ''}`,
+            result.stages.model.ran ? '' : `- AI 评审未运行：${modelReady ? '当前为仅规则模式' : '未配置模型'}`,
+            '',
+            '结果已列在「结果」页，可逐条编辑、定位、忽略，确认后发布到 GitLab。',
+          ].filter((line) => line !== '').join('\n'),
+        findings: synced,
       }]);
+
       if (session) {
         const completed = updateReviewSession(session, {
           status: 'completed',
           source: result.source,
-          findings: result.findings.map(toSessionFinding),
+          findings: synced.map(toSessionFinding),
           warnings: result.warnings,
           context: summarizeReviewContext(result.context),
         });
@@ -539,12 +572,12 @@ export default function App({ page, adapter }: AppProps) {
         setSavedSession(completed);
         void saveReviewSession(completed);
       }
-      if (result.warnings.length > 0) setToast(result.warnings[0]);
     } catch (error) {
       if (controller.signal.aborted || (error as Error).name === 'AbortError') return;
       const message = error instanceof Error ? error.message : String(error);
       setReviewError(message);
       setReviewStatus('failed');
+      addLog('error', 'review', 'Review 失败', message);
       if (session) {
         const failed = updateReviewSession(session, { status: 'failed', error: message });
         currentSessionRef.current = failed;
@@ -557,13 +590,11 @@ export default function App({ page, adapter }: AppProps) {
   const cancelReview = () => {
     reviewAbort.current?.abort();
     setReviewStatus('cancelled');
-    setReviewError('运行已取消。未完成结果不会进入发布队列。');
+    setReviewError('运行已取消，未完成的结果不会进入发布队列。');
+    addLog('warn', 'review', '用户取消了 Review');
     const session = currentSessionRef.current;
     if (session) {
-      const cancelled = updateReviewSession(session, {
-        status: 'cancelled',
-        error: '运行已取消。未完成结果不会进入发布队列。',
-      });
+      const cancelled = updateReviewSession(session, { status: 'cancelled', error: '运行已取消。' });
       currentSessionRef.current = cancelled;
       setSavedSession(cancelled);
       void saveReviewSession(cancelled);
@@ -571,6 +602,7 @@ export default function App({ page, adapter }: AppProps) {
   };
 
   const persistFindings = (next: Finding[]) => {
+    setFindings(next);
     const session = currentSessionRef.current;
     if (!session) return;
     const updated = updateReviewSession(session, { findings: next.map(toSessionFinding) });
@@ -580,16 +612,28 @@ export default function App({ page, adapter }: AppProps) {
   };
 
   const editFinding = (id: string, edit: FindingEdit) => {
-    const next = findings.map((finding) => finding.id === id ? applyFindingEdit(finding, edit) : finding);
-    setFindings(next);
-    persistFindings(next);
+    persistFindings(findings.map((finding) => finding.id === id ? applyFindingEdit(finding, edit) : finding));
+    addLog('info', 'finding', `已编辑 Finding ${id}`);
     setToast('Finding 修改已保存');
   };
 
   const ignoreFinding = (id: string) => {
-    const next = findings.map((item) => item.id === id ? { ...item, status: 'ignored' as const } : item);
-    setFindings(next);
-    persistFindings(next);
+    persistFindings(findings.map((finding) => finding.id === id ? { ...finding, status: 'ignored' as const } : finding));
+    setSelectedFindings((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  };
+
+  const locateFinding = (finding: Finding) => {
+    injectHighlightStyles();
+    const highlighted = highlightFindingOnPage(finding);
+    setToast(highlighted.length > 0
+      ? `已高亮 ${finding.path.replace(/^.*\//, '')}:${finding.line}（${highlighted.length} 行）`
+      : '当前页面找不到对应 Diff 行，请切换到 Changes 视图');
+    addLog('debug', 'finding', `定位 ${finding.path}:${finding.line} → ${highlighted.length} 行`);
+  };
+
+  const copyFinding = (finding: Finding) => {
+    void navigator.clipboard?.writeText(finding.comment);
+    setToast('评论草稿已复制，可直接粘贴到 GitLab');
   };
 
   const resumeSession = async () => {
@@ -598,427 +642,486 @@ export default function App({ page, adapter }: AppProps) {
     currentSessionRef.current = resumed.session;
     setSavedSession(resumed.session);
     setFindings(resumed.findings);
+    setStages(undefined);
     setExpandedFinding(resumed.findings[0]?.id ?? '');
     setReviewStatus(resumed.status);
     setReviewError(resumed.error ?? '');
+    setTab('review');
     await saveReviewSession(resumed.session);
-    setToast('已恢复上次 Review 会话');
+    setToast(`已恢复上次 Review（${resumed.findings.length} 个问题）`);
+    addLog('info', 'session', `恢复会话 ${resumed.session.id}`);
   };
 
-  // --- Rule Pack Management ---
+  // --- Rule packs ---
 
-  const toggleRulePack = async (packId: string) => {
-    const next = rulePacks.map((pack) => pack.id === packId ? { ...pack, enabled: !pack.enabled } : pack);
+  const updatePacks = async (next: RulePack[]) => {
     setRulePacks(next);
     await saveRulePacks(next);
-    setToast('规则包状态已更新');
+  };
+
+  const toggleRulePack = async (packId: string, enabled: boolean) => {
+    await updatePacks(rulePacks.map((pack) => pack.id === packId ? { ...pack, enabled } : pack));
+    setToast(enabled ? '规则包已启用' : '规则包已停用');
   };
 
   const toggleRule = async (packId: string, ruleId: string) => {
-    const next = rulePacks.map((pack) => {
-      if (pack.id !== packId) return pack;
-      return {
-        ...pack,
-        rules: pack.rules.map((rule) => rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule),
-      };
-    });
-    setRulePacks(next);
-    await saveRulePacks(next);
+    await updatePacks(rulePacks.map((pack) => pack.id !== packId ? pack : {
+      ...pack,
+      rules: pack.rules.map((rule) => rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule),
+    }));
   };
 
   const deleteRulePack = async (packId: string) => {
     const next = await removeRulePack(packId);
     setRulePacks(next);
-    if (editingPackId === packId) setEditingPackId(null);
     setToast('规则包已删除');
   };
 
   const createNewPack = async () => {
-    const newPack: RulePack = {
-      id: generateRulePackId(),
-      name: '自定义规则包',
-      version: '1.0.0',
-      description: '',
-      enabled: true,
-      builtIn: false,
-      rules: [],
+    const pack: RulePack = {
+      id: generateRulePackId(), name: '自定义规则包', version: '1.0.0', description: '',
+      enabled: true, builtIn: false,
+      rules: [{
+        id: generateRuleId(), enabled: true, severity: 'medium', category: 'maintainability',
+        title: '新规则', content: '说明这条规则为什么重要。', matchPatterns: [{ type: 'regex', pattern: '' }],
+      } satisfies RuleDef],
     };
-    const next = await addRulePack(newPack);
+    const next = await addRulePack(pack);
     setRulePacks(next);
-    setEditingPackId(newPack.id);
-    setToast('已创建新规则包');
+    setToast('已创建规则包');
   };
 
-  const updatePack = async (updated: RulePack) => {
-    const next = rulePacks.map((pack) => pack.id === updated.id ? updated : pack);
-    setRulePacks(next);
-    await saveRulePacks(next);
-  };
-
-  const addRuleToPack = async (packId: string) => {
-    const newRule: RuleDef = {
-      id: generateRuleId(),
-      enabled: true,
-      severity: 'medium',
-      category: 'maintainability',
-      title: '新规则',
-      content: '',
-      matchPatterns: [{ type: 'regex', pattern: '' }],
-    };
-    const next = rulePacks.map((pack) => {
-      if (pack.id !== packId) return pack;
-      return { ...pack, rules: [...pack.rules, newRule] };
-    });
-    setRulePacks(next);
-    await saveRulePacks(next);
-  };
-
-  const removeRuleFromPack = async (packId: string, ruleId: string) => {
-    const next = rulePacks.map((pack) => {
-      if (pack.id !== packId) return pack;
-      return { ...pack, rules: pack.rules.filter((rule) => rule.id !== ruleId) };
-    });
-    setRulePacks(next);
-    await saveRulePacks(next);
-  };
-
-  const handleImportPack = async () => {
-    setImportError('');
-    const result = importRulePack(importText);
-    if (result.errors.length > 0) {
-      setImportError(result.errors.join('; '));
+  const handleImportPack = (json: string) => {
+    const result = importRulePack(json);
+    if (result.errors.length > 0 || !result.pack) {
+      setImportError(result.errors.join('; ') || '导入失败');
+      setToast('规则包导入失败');
       return;
     }
-    if (result.pack) {
-      const next = await addRulePack(result.pack);
+    setImportError('');
+    void addRulePack(result.pack).then((next) => {
       setRulePacks(next);
-      setImportText('');
-      setEditingPackId(result.pack.id);
-      setToast('规则包已导入');
-    }
+      setToast(`规则包「${result.pack?.name}」已导入`);
+    });
   };
 
-  const handleExportPack = (pack: RulePack) => {
-    const json = exportRulePack(pack);
-    void navigator.clipboard?.writeText(json);
+  const handleExportPack = (packId: string) => {
+    const pack = rulePacks.find((item) => item.id === packId);
+    if (!pack) return;
+    void navigator.clipboard?.writeText(exportRulePack(pack));
     setToast('规则包 JSON 已复制到剪贴板');
   };
 
-  const editingPack = rulePacks.find((pack) => pack.id === editingPackId);
+  // --- Publishing ---
 
-  const locateFinding = (finding: Finding) => {
-    injectHighlightStyles();
-    const highlighted = highlightFindingOnPage(finding);
-    setToast(highlighted.length > 0
-      ? `已高亮定位 ${finding.path}:${finding.line}（${highlighted.length} 行）`
-      : '当前页面找不到对应 Diff 行');
-  };
-
-  // --- Batch publish ---
-
-  const toggleFindingSelection = (id: string) => {
-    setSelectedFindings((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const selectAllPublishable = () => {
-    const publishable = findings.filter((f) => f.status === 'draft' && f.anchor?.publishable !== false);
-    setSelectedFindings(new Set(publishable.map((f) => f.id)));
-  };
-
-  const clearSelection = () => setSelectedFindings(new Set());
-
-  const batchConfirmPublish = async () => {
-    const toPublish = findings.filter((f) => selectedFindings.has(f.id) && f.status === 'draft');
-    if (toPublish.length === 0 || !mergeRequestRef || !mrContext) return;
-
-    setBatchPublishing(true);
-    let successCount = 0;
-    let failCount = 0;
-    const succeededIds = new Set<string>();
-
-    for (const finding of toPublish) {
-      try {
-        await adapter.createDiscussion(mergeRequestRef, {
-          body: finding.comment,
-          path: finding.path,
-          oldPath: finding.oldPath ?? finding.path,
-          newPath: finding.newPath ?? finding.path,
-          startLine: finding.line,
-          endLine: finding.endLine,
-          side: finding.side,
-          newFile: finding.newFile,
-          deletedFile: finding.deletedFile,
-          diffRefs: mrContext.diffRefs,
-        });
-        successCount += 1;
-        succeededIds.add(finding.id);
-      } catch {
-        failCount += 1;
-      }
-    }
-
-    const next = findings.map((f) =>
-      succeededIds.has(f.id) ? { ...f, status: 'published' as const } : f,
-    );
-    setFindings(next);
-    persistFindings(next);
-    setSelectedFindings(new Set());
-    setShowBatchConfirm(false);
-    setToast(`批量发布完成：${successCount} 成功${failCount > 0 ? `，${failCount} 失败` : ''}`);
-    setBatchPublishing(false);
-  };
+  const buildDraft = (finding: Finding, body: string) => ({
+    body,
+    path: finding.path,
+    oldPath: finding.oldPath ?? finding.path,
+    newPath: finding.newPath ?? finding.path,
+    startLine: finding.line,
+    endLine: finding.endLine,
+    side: finding.side,
+    newFile: finding.newFile,
+    deletedFile: finding.deletedFile,
+    diffRefs: mrContext!.diffRefs,
+  });
 
   const confirmPublish = async () => {
     if (!publishFinding || !mergeRequestRef || !mrContext) return;
     setPublishing(true);
     try {
-      await adapter.createDiscussion(mergeRequestRef, {
-        body: publishBody,
-        path: publishFinding.path,
-        oldPath: publishFinding.oldPath ?? publishFinding.path,
-        newPath: publishFinding.newPath ?? publishFinding.path,
-        startLine: publishFinding.line,
-        endLine: publishFinding.endLine,
-        side: publishFinding.side,
-        newFile: publishFinding.newFile,
-        deletedFile: publishFinding.deletedFile,
-        diffRefs: mrContext.diffRefs,
-      });
-      const next = findings.map((finding) =>
-        finding.id === publishFinding.id ? { ...finding, status: 'published' } : finding,
-      );
-      setFindings(next);
-      persistFindings(next);
+      await api.createDiscussion(mergeRequestRef, buildDraft(publishFinding, publishBody));
+      persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'published' as const, comment: publishBody } : finding));
       setPublishFinding(undefined);
       setToast('行级 Discussion 已发布');
+      addLog('info', 'publish', `已发布 ${publishFinding.path}:${publishFinding.line}`);
     } catch (error) {
       const code = error instanceof GitLabApiError ? `${error.code}: ` : '';
-      setToast(`发布失败 ${code}${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      setToast(`发布失败 ${code}${message}`);
+      addLog('error', 'publish', '发布失败', `${code}${message}`);
+      persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'failed' as const } : finding));
     } finally {
       setPublishing(false);
     }
   };
 
-  const compactSelect: React.CSSProperties = {
-    padding: '4px 8px', borderRadius: 6, border: '1px solid #d4dae3',
-    fontSize: 11, color: '#2d3748', background: '#ffffff', cursor: 'pointer',
+  const publishableSelected = findings.filter((finding) => selectedFindings.has(finding.id) && finding.status === 'draft');
+
+  const selectAllPublishable = () => {
+    setSelectedFindings(new Set(findings
+      .filter((finding) => finding.status === 'draft' && finding.anchor?.publishable !== false)
+      .map((finding) => finding.id)));
   };
 
+  const toggleFindingSelection = (id: string) => {
+    setSelectedFindings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const batchConfirmPublish = async () => {
+    if (publishableSelected.length === 0 || !mergeRequestRef || !mrContext) return;
+    setBatchPublishing(true);
+    const succeeded = new Set<string>();
+    let failed = 0;
+    for (const finding of publishableSelected) {
+      try {
+        await api.createDiscussion(mergeRequestRef, buildDraft(finding, finding.comment));
+        succeeded.add(finding.id);
+      } catch (error) {
+        failed += 1;
+        addLog('error', 'publish', `批量发布失败 ${finding.path}:${finding.line}`, error instanceof Error ? error.message : String(error));
+      }
+    }
+    const attempted = new Set(publishableSelected.map((finding) => finding.id));
+    persistFindings(findings.map((finding) => {
+      if (!attempted.has(finding.id)) return finding;
+      return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
+    }));
+    setSelectedFindings(new Set());
+    setBatchConfirm(false);
+    setBatchPublishing(false);
+    setToast(`批量发布完成：${succeeded.size} 成功${failed > 0 ? `，${failed} 失败` : ''}`);
+    addLog('info', 'publish', `批量发布 ${succeeded.size} 成功 / ${failed} 失败`);
+  };
+
+  // --- Keyboard shortcuts ---
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (publishFinding) setPublishFinding(undefined);
+        else if (batchConfirm) setBatchConfirm(false);
+        else if (selection) setSelection(null);
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        if (reviewStatus !== 'running' && reviewStatus !== 'preparing') void startReview(attachment ? 'selection' : 'all');
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        persistUi({ ...ui, open: true });
+        setTab((current) => current === 'chat' ? 'review' : 'chat');
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  });
+
+  const loadHistory = useCallback(async () => {
+    const gm = (globalThis as typeof globalThis & { GM?: { getValue: (k: string, fb: unknown) => Promise<unknown> } }).GM;
+    const raw = gm
+      ? await gm.getValue(SESSION_STORAGE_KEY, {})
+      : JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}');
+    const sessions = Object.values((raw ?? {}) as Record<string, ReviewSessionManifest>);
+    setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
+  }, []);
+
+  const running = reviewStatus === 'running' || reviewStatus === 'preparing';
+  const visibleLogs = debugFilter === 'all' ? debugLogs : debugLogs.filter((entry) => entry.level === debugFilter);
+  const errorCount = debugLogs.filter((entry) => entry.level === 'error').length;
+  const publishDisabledReason = !mergeRequestRef || !mrContext
+    ? '当前页面不是 MR，无法创建行级 Discussion'
+    : capabilities && !capabilities.canCreateDiscussions
+      ? 'GitLab Token 没有创建 Discussion 的权限'
+      : undefined;
+
   return (
-    <div ref={hostRef} className="relative">
-      {!panelOpen && (
-        <button type="button" onClick={() => setPanelOpen(true)} aria-label="打开 Review Agent"
-          className="fixed bottom-[18px] right-[18px] grid h-11 w-11 place-items-center rounded-full shadow-lg cursor-pointer border-0" style={{ zIndex: 2147483647, color: "#ffffff", background: "#245fc7" }}>
-          <span style={{ color: '#fff', fontSize: 22, lineHeight: 1 }}>✦</span>
+    <div ref={hostRef} className="ra-host" style={{ position: 'relative' }}>
+      <InjectAnimations />
+
+      {!ui.open && (
+        <button
+          type="button" onClick={() => persistUi({ ...ui, open: true })} aria-label="打开 Review Agent"
+          title="Review Agent（Ctrl/⌘ + K）"
+          style={{
+            position: 'fixed', bottom: 20, right: 20, zIndex: 2147483647,
+            width: 44, height: 44, borderRadius: 22, border: 0, cursor: 'pointer',
+            display: 'grid', placeItems: 'center', color: '#fff', background: C.primary,
+            boxShadow: '0 6px 18px rgba(36,95,199,0.35), 0 2px 6px rgba(0,0,0,0.15)',
+          }}
+        >
+          <Sparkles size={19} />
+          {!modelReady && settingsLoaded && (
+            <span title="模型未配置：仅规则检查可用" style={{ position: 'absolute', top: 1, right: 1, width: 9, height: 9, borderRadius: '50%', background: C.warning, border: '2px solid #fff' }} />
+          )}
         </button>
       )}
-      <aside ref={panelRef} aria-label="Review Agent"
-        className="fixed z-[2147483000] rounded-lg shadow-2xl"
-        style={{ background: '#ffffff', border: '1px solid #d4dae3', top: '72px', right: '16px', width: '460px', height: 'min(60vh, 580px)', display: panelOpen ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}>
+
+      <aside
+        ref={panelRef}
+        aria-label="Review Agent"
+        style={{
+          position: 'fixed', zIndex: 2147483000, display: ui.open ? 'flex' : 'none', flexDirection: 'column',
+          top: ui.top, right: ui.right, width: ui.width,
+          height: `min(calc(100vh - ${Math.max(24, ui.top + 16)}px), 760px)`,
+          background: C.bg, border: `1px solid ${C.border}`, borderRadius: C.radiusLg,
+          boxShadow: '0 18px 48px rgba(15,23,42,0.24), 0 4px 12px rgba(15,23,42,0.12)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          onMouseDown={handleResizeStart}
+          title="拖动调整宽度"
+          style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, cursor: 'col-resize', zIndex: 5 }}
+        />
+
         {/* Header */}
-        <div onMouseDown={handleDragStart} className="flex items-center justify-between px-4 pt-4 pb-3 cursor-grab active:cursor-grabbing select-none" style={{ background: '#1e2536', color: '#f0f4f8' }}>
-          <div>
-            <h2 className="flex items-center gap-2 text-sm font-semibold m-0" style={{ color: '#f0f4f8' }}>✦ Review Agent</h2>
-            <p className="text-xs opacity-70 mt-1 truncate" style={{ color: '#c0c8d4' }}>{loading ? '正在读取 GitLab API…' : mrContext ? `${mrContext.title.slice(0, 42)} · !${page.mergeRequestIid}` : page.filePath || 'GitLab 页面'}</p>
+        <header
+          onMouseDown={handleDragStart}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px 9px 14px',
+            background: C.headerBg, color: C.headerText, cursor: 'grab', userSelect: 'none', flexShrink: 0,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Sparkles size={14} style={{ color: '#7ea6f0', flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.01em' }}>Review Agent</span>
+              {modelReady
+                ? <span title={`模型 ${settings.model}`} style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 10, background: 'rgba(126,166,240,0.22)', color: '#c9dcff' }}>规则 + AI</span>
+                : <span title="未配置模型 API Key，只能运行本地规则检查" style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 10, background: 'rgba(217,119,6,0.25)', color: '#ffd79a' }}>仅规则</span>}
+            </div>
+            <div style={{ marginTop: 3, fontSize: 11, color: C.headerMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {loading ? '正在读取 GitLab API…'
+                : mrContext ? mrContext.title
+                  : page.projectPath ? `${page.projectPath}${page.filePath ? ` · ${page.filePath}` : ''}`
+                    : 'GitLab 页面'}
+            </div>
           </div>
-          <button type="button" onClick={() => { clearHighlights(); setPanelOpen(false); }} aria-label="关闭侧栏"
-            className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 bg-transparent cursor-pointer" style={{ color: '#c0c8d4' }}>
-            <X size={16} />
-          </button>
-        </div>
+          {mergeRequestRef && (
+            <a
+              href={`${page.origin}/${page.projectPath}/-/merge_requests/${mergeRequestRef.mergeRequestIid}`}
+              target="_blank" rel="noopener noreferrer" aria-label="在 GitLab 中打开此 MR" title="在 GitLab 中打开此 MR"
+              style={{ display: 'grid', placeItems: 'center', width: 28, height: 28, borderRadius: C.radiusSm, color: C.headerMuted }}
+            ><ExternalLink size={14} /></a>
+          )}
+          <IconButton
+            tone="dark" icon={<X size={15} />} label="关闭侧栏"
+            onClick={() => { clearHighlights(); persistUi({ ...ui, open: false }); }}
+          />
+        </header>
 
         {/* Action bar */}
-        <div className="flex items-center gap-2 border-t border-white/10 px-3 py-2" style={{ background: '#1e2536' }}>
-          <button type="button" onClick={() => void startReview(attachment ? 'selection' : 'all')}
-            disabled={files.length === 0 && !attachment && !selection}
-            className="flex items-center gap-1.5 min-h-[32px] px-3 rounded-md text-xs font-semibold border-0 cursor-pointer disabled:opacity-40"
-            style={{ background: '#245fc7', color: '#fff' }}>
-            <Play size={13} />开始 Review
-            {findings.length > 0 && <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold" style={{ background: 'rgba(255,255,255,0.25)' }}>{findings.length}</span>}
-          </button>
-          <div className="flex-1" />
-          <button type="button" onClick={() => setActiveTab(activeTab === 'debug' ? 'chat' : 'debug')} aria-label="调试"
-            className="relative grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 cursor-pointer"
-            style={{ color: activeTab === 'debug' ? '#ffffff' : '#a0aec0' }}>
-            <Bug size={15} />
-            {debugLogs.filter(l => l.level === 'error').length > 0 && (
-              <span style={{ position: 'absolute', top: 2, right: 2, width: 7, height: 7, borderRadius: '50%', background: '#d3453b' }} />
-            )}
-          </button>
-          <button type="button" onClick={() => setActiveTab(activeTab === 'config' ? 'chat' : 'config')} aria-label="配置"
-            className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 border-0 cursor-pointer"
-            style={{ color: activeTab === 'config' ? '#ffffff' : '#a0aec0' }}>
-            <Settings size={15} />
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: C.headerBg, borderTop: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
+          <Btn
+            variant="primary" size="sm"
+            icon={running ? <Loader2 size={13} className="ra-spin" /> : <Play size={13} />}
+            disabled={running || (files.length === 0 && !attachment && !selection)}
+            onClick={() => void startReview(attachment || selection ? 'selection' : 'all')}
+            title={attachment || selection ? 'Review 当前选区（Ctrl/⌘ + Enter）' : 'Review 整个 MR（Ctrl/⌘ + Enter）'}
+          >
+            {running ? 'Review 中' : attachment || selection ? 'Review 选区' : '开始 Review'}
+          </Btn>
+          {running ? (
+            <Btn variant="outline" size="sm" icon={<Square size={12} />} onClick={cancelReview}
+              style={{ background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.16)', color: '#e6ebf2' }}>
+              取消
+            </Btn>
+          ) : (
+            <span style={{ fontSize: 11, color: C.headerMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {attachment || selection
+                ? `${(attachment ?? selection)!.filePath.replace(/^.*\//, '')}:${(attachment ?? selection)!.startLine}-${(attachment ?? selection)!.endLine}`
+                : loading ? '读取中…' : `${files.length} 个变更文件 · ${enabledRuleCount} 条规则`}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          {savedSession && savedSession.status !== 'running' && findings.length === 0 && (
+            <Btn variant="ghost" size="sm" icon={<History size={13} />} onClick={() => void resumeSession()}
+              style={{ color: C.headerMuted }}>恢复</Btn>
+          )}
         </div>
 
+        <Tabs<Tab>
+          value={tab}
+          onChange={setTab}
+          items={[
+            { value: 'review', label: '结果', icon: <CheckSquare size={13} />, count: findings.length },
+            { value: 'chat', label: '对话', icon: <MessageSquare size={13} />, dot: responding },
+            { value: 'settings', label: '设置', icon: <SettingsIcon size={13} />, dot: !modelReady && settingsLoaded },
+            { value: 'debug', label: '调试', icon: <Bug size={13} />, dot: errorCount > 0 },
+          ]}
+        />
+
         {/* Body */}
-        <div style={{ background: '#ffffff', overflow: 'hidden', flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          {loadError && (
-            <div className="flex items-center justify-between gap-2 m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
-              {loadError}
-              <Button variant="outline" size="xs" onClick={() => location.reload()}><RefreshCw size={13} />重试</Button>
-            </div>
-          )}
-          {!isOnline && (
-            <div className="m-4 p-2.5 rounded-md border border-destructive/20 text-xs" style={{ color: "#d3453b", background: "rgba(211,69,59,0.1)" }} role="alert">
-              网络已断开，部分功能可能不可用。
-            </div>
-          )}
-          {/* Main view: Chat with integrated findings panel */}
-          {activeTab === 'chat' && (
-            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0, overflow: 'hidden' }}>
-              {/* Status bar */}
-              {(reviewStatus === 'running' || reviewStatus === 'preparing' || reviewStatus === 'normalizing') && (
-                <div style={{ padding: '8px 12px', background: '#e8f0fe', borderBottom: '1px solid #d4dae3', flexShrink: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#245fc7' }}>
-                    <LoaderCircle size={14} className="animate-spin" />
-                    {reviewStatus === 'preparing' ? '准备 Review 上下文…' : reviewStatus === 'normalizing' ? '整理 Findings…' : 'Review 进行中，请稍候…'}
+        <div style={{ flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column', background: C.bg, overflow: 'hidden' }}>
+          {tab === 'review' && (
+            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 }}>
+              <div className="ra-scroll" style={{ flexShrink: 0, maxHeight: '45%', overflowY: 'auto', padding: findings.length > 0 ? '8px 10px 0' : 10, display: 'flex', flexDirection: 'column', gap: 7, borderBottom: findings.length > 0 ? 'none' : `1px solid ${C.border}` }}>
+                {loadError && (
+                  <Banner tone="danger" title="读取 GitLab 数据失败" onDismiss={() => setLoadError('')}>
+                    {loadError}
+                    <div style={{ marginTop: 6 }}>
+                      <Btn size="sm" variant="outline" onClick={() => location.reload()}>重新加载页面</Btn>
+                    </div>
+                  </Banner>
+                )}
+                {!isOnline && (
+                  <Banner tone="danger" title="网络已断开">规则检查仍可离线运行，AI 评审和发布需要网络。</Banner>
+                )}
+                {!modelReady && settingsLoaded && !ui.hintDismissed && (
+                  <Banner
+                    tone="warning" icon={<ShieldCheck size={14} />} title="未配置模型 API Key"
+                    onDismiss={() => persistUi({ ...ui, hintDismissed: true })}
+                    action={
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <Btn size="sm" variant="primary" icon={<SettingsIcon size={12} />} onClick={() => setTab('settings')}>去配置</Btn>
+                        <Btn size="sm" variant="outline" icon={<Play size={12} />} onClick={() => void startReview(attachment || selection ? 'selection' : 'all')}>
+                          先跑规则检查
+                        </Btn>
+                      </div>
+                    }
+                  >
+                    规则检查（{enabledRuleCount} 条）、划词定位、Finding 编辑和复制评论草稿都不需要 API Key，现在就能用。
+                    {config.issues.length > 0 && <>缺少：{config.issues.map((issue) => <span key={issue.field} title={issue.hint} style={{ fontWeight: 700 }}> {issue.label}</span>)}。</>}
+                  </Banner>
+                )}
+                {running && (
+                  <Banner tone="info" icon={<Loader2 size={14} className="ra-spin" />} title={reviewStatus === 'preparing' ? '准备 Review 上下文…' : 'Review 进行中'}>
+                    {settings.reviewMode === 'rules' || !modelReady
+                      ? `正在本地执行 ${enabledRuleCount} 条确定性规则…`
+                      : '规则检查已完成，模型正在分析变更…'}
+                    <div style={{ marginTop: 6 }}>
+                      <Btn size="sm" variant="outline" icon={<Square size={12} />} onClick={cancelReview}>取消</Btn>
+                    </div>
+                  </Banner>
+                )}
+                {reviewStatus === 'completed' && !running && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11, color: C.textMuted }}>
+                    <GitMerge size={12} />
+                    {mergeRequestRef && <span>MR !{mergeRequestRef.mergeRequestIid}</span>}
+                    {mrContext && <span>head {mrContext.diffRefs.headSha.slice(0, 8)}</span>}
+                    {stages && (
+                      <>
+                        <Pill tone="rule" count={stages.rules.findings}>规则</Pill>
+                        {stages.model.ran
+                          ? <Pill tone="model" count={stages.model.findings}>AI</Pill>
+                          : <Pill tone="warning">AI 未运行</Pill>}
+                      </>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    {savedSession && <span>已保存会话</span>}
+                  </div>
+                )}
+                {reviewStatus === 'cancelled' && !reviewError && (
+                  <Banner tone="warning" title="已取消">未完成的结果不会进入发布队列。</Banner>
+                )}
+              </div>
+
+              {findings.length > 0 || reviewError ? (
+                <FindingsPanel
+                  findings={findings}
+                  running={running}
+                  stages={stages}
+                  warnings={reviewWarnings}
+                  error={reviewError}
+                  modelReady={modelReady}
+                  rulesOnlyMode={settings.reviewMode === 'rules'}
+                  enabledRuleCount={enabledRuleCount}
+                  canPublish={canPublish}
+                  publishDisabledReason={publishDisabledReason}
+                  expandedId={expandedFinding}
+                  selectedIds={selectedFindings}
+                  onToggleExpand={(id) => setExpandedFinding((current) => current === id ? '' : id)}
+                  onToggleSelect={toggleFindingSelection}
+                  onSelectPublishable={selectAllPublishable}
+                  onClearSelection={() => setSelectedFindings(new Set())}
+                  onBatchPublish={() => setBatchConfirm(true)}
+                  onLocate={locateFinding}
+                  onCopy={copyFinding}
+                  onPublish={(finding) => { setPublishFinding(finding); setPublishBody(finding.comment); }}
+                  onIgnore={(finding) => ignoreFinding(finding.id)}
+                  onEdit={editFinding}
+                  onOpenSettings={() => setTab('settings')}
+                  onDismissError={() => { setReviewError(''); setReviewStatus('idle'); }}
+                />
+              ) : running ? (
+                <div style={{ flex: '1 1 0%', minHeight: 0, display: 'grid', placeItems: 'center', padding: 20 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: C.textMuted, fontSize: 12 }}>
+                    <Loader2 size={20} className="ra-spin" style={{ color: C.primary }} />
+                    {settings.reviewMode === 'rules' || !modelReady
+                      ? `正在本地执行 ${enabledRuleCount} 条规则…`
+                      : '规则检查完成，模型正在分析变更…'}
                   </div>
                 </div>
-              )}
-              {reviewError && (
-                <div style={{ padding: '8px 12px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12, color: '#d3453b', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>{reviewError}</span>
-                  <button type="button" onClick={() => setReviewError('')} style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#d3453b' }}><X size={13} /></button>
+              ) : (
+                <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '0 10px 10px' }}>
+                  <IdleReview
+                    loading={loading}
+                    filesCount={files.length}
+                    enabledRuleCount={enabledRuleCount}
+                    modelReady={modelReady}
+                    hasMr={Boolean(mergeRequestRef && mrContext)}
+                    savedSession={savedSession}
+                    sessionHistory={sessionHistory}
+                    showHistory={showHistory}
+                    onToggleHistory={() => {
+                      const next = !showHistory;
+                      setShowHistory(next);
+                      if (next && sessionHistory.length === 0) void loadHistory();
+                    }}
+                    onOpenSession={(session) => {
+                      currentSessionRef.current = session;
+                      setSavedSession(session);
+                      setFindings(resumeReviewSession(session).findings);
+                      setReviewWarnings(session.warnings ?? []);
+                      setReviewStatus(session.status === 'running' ? 'idle' : session.status);
+                      setExpandedFinding('');
+                      setShowHistory(false);
+                      setToast('已载入历史会话结果');
+                    }}
+                    onResume={() => void resumeSession()}
+                    onStart={() => void startReview(attachment || selection ? 'selection' : 'all')}
+                    onOpenSettings={() => setTab('settings')}
+                  />
                 </div>
               )}
-
-              {/* Attachment indicator */}
-              {attachment && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 12px 0', padding: '5px 8px', borderRadius: 6, background: '#e8f0fe', fontSize: 11, flexShrink: 0 }}>
-                  <FileText size={12} style={{ color: '#245fc7', flexShrink: 0 }} />
-                  <span style={{ color: '#245fc7', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filePath}:{attachment.startLine}-{attachment.endLine}</span>
-                  <button type="button" onClick={() => setAttachment(undefined)} aria-label="移除代码附件"
-                    style={{ border: 0, background: 'transparent', cursor: 'pointer', color: '#8a9bb0', padding: 2 }}><X size={12} /></button>
-                </div>
-              )}
-
-              {/* Findings collapsible panel (shows after review) */}
-              {findings.length > 0 && (
-                <div style={{ flexShrink: 0, borderBottom: '1px solid #d4dae3', display: 'flex', flexDirection: 'column', maxHeight: showFindings ? 180 : 38, transition: 'max-height 0.2s ease' }}>
-                  <button type="button" onClick={() => setShowFindings(!showFindings)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', border: 0, background: '#f4f6f9', cursor: 'pointer', width: '100%', textAlign: 'left', flexShrink: 0 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#1a2332' }}>Review 结果</span>
-                    <span style={{ fontSize: 11, color: '#245fc7', fontWeight: 700 }}>{findings.length}</span>
-                    {(() => { const h = findings.filter(f => f.severity === 'high' || f.severity === 'critical').length; return h > 0 ? <span style={{ fontSize: 10, color: '#d3453b', fontWeight: 600 }}>{h} High+</span> : null; })()}
-                    <div style={{ flex: 1 }} />
-                    {selectedFindings.size > 0 && (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setShowBatchConfirm(true); }}
-                        style={{ padding: '3px 10px', borderRadius: 5, border: 0, background: '#245fc7', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', marginRight: 8 }}>
-                        批量发布 ({selectedFindings.size})
-                      </button>
-                    )}
-                    <span style={{ fontSize: 11, color: '#5a6b80' }}>{showFindings ? '收起 ▲' : '展开 ▼'}</span>
-                  </button>
-                  {showFindings && (
-                    <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, borderTop: '1px solid #e8edf3' }}>
-                      {/* Filter row */}
-                      <div style={{ display: 'flex', gap: 4, padding: '6px 12px', flexWrap: 'wrap', borderBottom: '1px solid #f0f3f7' }}>
-                        <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)} style={compactSelect} aria-label="严重度筛选">
-                          <option value="all">严重度</option><option value="critical">严重</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option>
-                        </select>
-                        <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={compactSelect} aria-label="分类筛选">
-                          <option value="all">分类</option><option value="bug">缺陷</option><option value="security">安全</option><option value="performance">性能</option><option value="maintainability">可维护性</option><option value="testing">测试</option>
-                        </select>
-                        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={compactSelect} aria-label="状态筛选">
-                          <option value="all">状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="ignored">已忽略</option>
-                        </select>
-                      </div>
-                      {/* Finding cards */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 12px' }}>
-                        {filteredFindings.slice(0, visibleFindingCount).map(finding => (
-                          <FindingCard
-                            key={finding.id}
-                            finding={finding}
-                            expanded={expandedFinding === finding.id}
-                            selected={selectedFindings.has(finding.id)}
-                            onToggleExpand={() => setExpandedFinding(expandedFinding === finding.id ? '' : finding.id)}
-                            onToggleSelect={() => {
-                              const next = new Set(selectedFindings);
-                              if (next.has(finding.id)) next.delete(finding.id); else next.add(finding.id);
-                              setSelectedFindings(next);
-                            }}
-                            onEdit={(edit) => editFinding(finding.id, edit)}
-                            onPublish={() => { setPublishFinding(finding); setPublishBody(finding.comment); }}
-                            onIgnore={() => { const next = findings.map(f => f.id === finding.id ? { ...f, status: 'ignored' as const } : f); setFindings(next); persistFindings(next); }}
-                            onNavigate={() => void highlightFindingOnPage(finding)}
-                            onCopy={() => { void navigator.clipboard?.writeText(finding.comment); setToast('评论已复制'); }}
-                          />
-                        ))}
-                        {filteredFindings.length > visibleFindingCount && (
-                          <button type="button" onClick={() => setVisibleFindingCount(c => c + 20)}
-                            style={{ padding: '6px', borderRadius: 5, border: '1px solid #d4dae3', background: '#fff', color: '#245fc7', fontSize: 11, cursor: 'pointer' }}>
-                            加载更多 ({filteredFindings.length - visibleFindingCount})
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Chat thread: messages scroll, composer at bottom */}
-              <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-                <ChatThread
-                  draft={draft}
-                  onDraftChange={setDraft}
-                  messages={messages}
-                  onSend={(text) => void sendMessage(text)}
-                  responding={responding}
-                />
-              </div>
             </div>
           )}
 
-          {/* Config overlay */}
-          {activeTab === 'config' && (
-            <div style={{ flex: '1 1 0%', overflowY: 'auto', minHeight: 0 }}>
+          {tab === 'chat' && (
+            <ChatThread
+              messages={messages}
+              responding={responding}
+              draft={draft}
+              onDraftChange={setDraft}
+              onSend={(text) => void sendMessage(text)}
+              onStop={stopChat}
+              attachment={attachment}
+              onClearAttachment={() => setAttachment(undefined)}
+              toolEvents={toolEvents}
+              suggestions={suggestions}
+              modelReady={modelReady}
+              onOpenSettings={() => setTab('settings')}
+            />
+          )}
+
+          {tab === 'settings' && (
+            <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
               <SettingsView
                 settings={settings}
                 onSettingsChange={setSettings}
                 onSave={() => { void saveSettings(settings).then(() => setToast('设置已保存')); }}
                 onTestModel={() => void testModelConnection()}
-                onClearApiKey={() => { setSettings({ ...settings, apiKey: '' }); void clearSensitiveSettings(); setToast('密钥已清除'); }}
+                onClearApiKey={() => {
+                  setSettings({ ...settings, apiKey: '' });
+                  void clearSensitiveSettings();
+                  setToast('密钥已清除');
+                }}
                 rulePacks={rulePacks}
-                onToggleRulePack={(id, enabled) => {
-                  const next = rulePacks.map(p => p.id === id ? { ...p, enabled } : p);
-                  setRulePacks(next);
-                  void saveRulePacks(next);
-                }}
-                onDeleteRulePack={(id) => {
-                  const next = rulePacks.filter(p => p.id !== id);
-                  setRulePacks(next);
-                  void removeRulePack(id);
-                }}
-                onImportRulePack={(json) => {
-                  try {
-                    const pack = importRulePack(json);
-                    const next = [...rulePacks, pack];
-                    setRulePacks(next);
-                    void saveRulePacks(next);
-                    setToast('规则包已导入');
-                  } catch (e) {
-                    setToast(e instanceof Error ? e.message : '导入失败');
-                  }
-                }}
-                onExportRulePack={(id) => {
-                  const pack = rulePacks.find(p => p.id === id);
-                  if (pack) {
-                    void navigator.clipboard?.writeText(exportRulePack(pack));
-                    setToast('规则包 JSON 已复制');
-                  }
-                }}
-                onUpdateRulePack={(id, patch) => {
-                  const next = rulePacks.map(p => p.id === id ? { ...p, ...patch } : p);
-                  setRulePacks(next);
-                  void saveRulePacks(next);
-                }}
+                onToggleRulePack={(id, enabled) => void toggleRulePack(id, enabled)}
+                onToggleRule={(packId, ruleId) => void toggleRule(packId, ruleId)}
+                onDeleteRulePack={(id) => void deleteRulePack(id)}
+                onImportRulePack={handleImportPack}
+                onExportRulePack={handleExportPack}
+                onUpdateRulePack={(id, patch) => void updatePacks(rulePacks.map((pack) => pack.id === id ? { ...pack, ...patch } : pack))}
                 importError={importError}
                 usageSummary={usageSummary}
                 onClearUsage={() => { void clearUsage().then(() => { setUsageSummary(null); setToast('用量记录已清空'); }); }}
@@ -1031,76 +1134,209 @@ export default function App({ page, adapter }: AppProps) {
                   });
                 }}
                 onExportSiteConfig={() => {
-                  const config = exportSiteConfig(page, capabilities ?? { authenticated: false, canReadMergeRequests: false, canCreateDiscussions: false });
-                  void navigator.clipboard?.writeText(JSON.stringify(config, null, 2));
-                  setToast('站点配置已复制');
+                  if (!capabilities) { setToast('请先点击「检测权限」，再导出站点配置'); return; }
+                  const siteConfig = exportSiteConfig(page, capabilities, { ...settings, apiKey: '', gitlabToken: '' });
+                  void navigator.clipboard?.writeText(siteConfig);
+                  setToast('站点配置已复制到剪贴板（已剔除密钥）');
                 }}
+                onNewRulePack={() => void createNewPack()}
                 testing={testing}
               />
-
             </div>
           )}
 
-          {/* Debug overlay - separate from config */}
-          {activeTab === 'debug' && (
-            <div style={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              <DebugPanel
-                logs={debugLogs}
-                diagnostics={diagnostics}
-                toolEvents={toolEvents}
-                usageSummary={usageSummary}
-                reviewStatus={reviewStatus}
-                findingsCount={findings.length}
-                filesCount={files.length}
-                modelConfigured={runtimeConfigured}
-                mcpEnabled={settings.mcp?.enabled ?? false}
-                onClearLogs={() => setDebugLogs([])}
-              />
+          {tab === 'debug' && (
+            <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderBottom: `1px solid ${C.border}`, background: C.bgSubtle, flexShrink: 0 }}>
+                <Segmented
+                  value={debugFilter}
+                  onChange={(value) => setDebugFilter(value as typeof debugFilter)}
+                  style={{ flex: 1, padding: 2 }}
+                  options={[
+                    { value: 'all', label: `全部 ${debugLogs.length}` },
+                    { value: 'info', label: 'info' },
+                    { value: 'warn', label: 'warn' },
+                    { value: 'error', label: `error ${errorCount}` },
+                  ]}
+                />
+                <IconButton icon={<X size={13} />} label="清空日志" onClick={() => setDebugLogs([])} />
+              </div>
+              <div style={{ flex: '1 1 0%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                <DebugPanel
+                  logs={visibleLogs}
+                  diagnostics={diagnostics}
+                  toolEvents={toolEvents}
+                  usageSummary={usageSummary}
+                  reviewStatus={reviewStatus}
+                  findingsCount={findings.length}
+                  filesCount={files.length}
+                  modelConfigured={modelReady}
+                  mcpEnabled={settings.mcp?.enabled ?? false}
+                  onClearLogs={() => setDebugLogs([])}
+                />
+              </div>
             </div>
           )}
         </div>
       </aside>
 
-      {selection && <SelectionToolbar state={selection} onAsk={() => { setAttachment(selection); setActiveTab('chat'); setPanelOpen(true); setShowChat(true); setDraft('请解释这段代码的潜在风险，并给出验证建议。'); setSelection(null); }} onReview={() => { setAttachment(selection); setSelection(null); void startReview('selection'); }} onCopy={() => { void navigator.clipboard?.writeText(selection.text); setToast('选中代码已复制'); setSelection(null); }} onClose={() => setSelection(null)} />}
-
-      {publishFinding && <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation"><section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border" style={{ background: "#ffffff", borderColor: "#d4dae3" }} role="dialog" aria-modal="true" aria-labelledby="publish-title"><div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b" style={{ borderColor: "#d4dae3" }}><div><h2 id="publish-title">发布到 GitLab</h2><p>确认项目、MR、代码位置和 diff refs 后创建行级 Discussion。</p></div><button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:" style={{ background: "#e8edf3" }} onClick={() => setPublishFinding(undefined)} aria-label="关闭发布确认"><X size={16} /></button></div><div className="grid gap-3 p-4"><div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}><span>{page.projectPath} · MR !{page.mergeRequestIid}</span><ExternalLink size={13} /></div><div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}><span>{publishFinding.path}:{publishFinding.line}-{publishFinding.endLine} · {publishFinding.side}</span><span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span></div><div className="grid gap-1.5"><label htmlFor="publish-body">评论内容</label><textarea id="publish-body" value={publishBody} onChange={(event) => setPublishBody(event.target.value)} /></div></div><div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => setPublishFinding(undefined)}>返回修改</button><button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md cursor-pointer" style={{ color: "#ffffff", background: "#245fc7", border: "1px solid #245fc7" }} onClick={() => void confirmPublish()} disabled={publishing || !publishBody.trim()}><MessageSquare size={14} />{publishing ? '发布中…' : '确认发布'}</button></div></section></div>}
-
-      {showBatchConfirm && selectedFindings.size > 0 && (
-        <div className="fixed z-[2147483100] inset-0 grid place-items-center p-[18px] bg-black/55" role="presentation">
-          <section className="w-[min(560px,100%)] max-h-[calc(100vh-36px)] overflow-y-auto rounded-lg border" style={{ background: "#ffffff", borderColor: "#d4dae3" }} role="dialog" aria-modal="true" aria-labelledby="batch-publish-title">
-            <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b" style={{ borderColor: "#d4dae3" }}>
-              <div>
-                <h2 id="batch-publish-title">批量发布到 GitLab</h2>
-                <p>将选中的 {selectedFindings.size} 个 Finding 逐条创建行级 Discussion。</p>
-              </div>
-              <button type="button" className="inline-grid h-8 w-8 place-items-center rounded-md bg-transparent border-0 cursor-pointer hover:" style={{ background: "#e8edf3" }} onClick={() => setShowBatchConfirm(false)} aria-label="关闭批量发布"><X size={16} /></button>
-            </div>
-            <div className="grid gap-3 p-4">
-              <div className="flex items-center justify-between gap-3 p-2.5 rounded-md border text-[10px] font-mono" style={{ background: "#f0f3f7", borderColor: "#d4dae3", color: "#4a5568" }}>
-                <span>{page.projectPath} · MR !{page.mergeRequestIid}</span>
-                <span>head {mrContext?.diffRefs.headSha.slice(0, 8)}</span>
-              </div>
-              <div className="grid gap-1.5">
-                {findings.filter((f) => selectedFindings.has(f.id)).slice(0, 10).map((f) => (
-                  <div key={f.id} className="flex items-center gap-2 p-1.5 rounded border text-[10px]" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${f.severity === 'high' || f.severity === 'critical' ? 'error' : f.severity === 'medium' ? 'warning' : 'neutral'}`}>{f.severity}</span>
-                    <span className="flex-1 min-w-0 truncate">{f.title}</span>
-                    <span className="font-mono text-[9px]" style={{ color: "#4a5568" }}>{f.path}:{f.line}</span>
-                  </div>
-                ))}
-                {selectedFindings.size > 10 && <p style={{ fontSize: 10, color: '#6b778b' }}>…还有 {selectedFindings.size - 10} 个</p>}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 p-3 border-t" style={{ background: "#f0f3f7", borderColor: "#d4dae3" }}>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md border cursor-pointer" style={{ background: "#ffffff", borderColor: "#d4dae3", color: "#1a2332" }} onClick={() => setShowBatchConfirm(false)}>取消</button>
-              <button type="button" className="inline-flex items-center justify-center gap-1.5 min-h-[34px] px-2.5 py-1.5 text-xs font-semibold rounded-md cursor-pointer" style={{ color: "#ffffff", background: "#245fc7", border: "1px solid #245fc7" }} disabled={batchPublishing || !mrContext} onClick={() => void batchConfirmPublish()}>
-                <MessageSquare size={14} />{batchPublishing ? '发布中…' : `确认批量发布 ${selectedFindings.size} 条`}
-              </button>
-            </div>
-          </section>
-        </div>
+      {selection && (
+        <SelectionToolbar
+          state={selection}
+          onAsk={() => {
+            setAttachment(selection);
+            setSelection(null);
+            setTab('chat');
+            persistUi({ ...ui, open: true });
+            setDraft('请解释这段代码的潜在风险，并给出验证建议。');
+          }}
+          onReview={() => {
+            setAttachment(selection);
+            setSelection(null);
+            persistUi({ ...ui, open: true });
+            void startReview('selection');
+          }}
+          onCopy={() => {
+            void navigator.clipboard?.writeText(selection.text);
+            setToast('选中代码已复制');
+            setSelection(null);
+          }}
+          onClose={() => setSelection(null)}
+        />
       )}
-      {toast && <div className="fixed z-[300] right-[18px] bottom-[18px] flex max-w-[360px] items-center gap-2 p-3 rounded-lg text-xs shadow-xl" style={{ background: '#1e2536', color: '#f0f4f8' }} role="status">{toast}</div>}
+
+      {publishFinding && mergeRequestRef && (
+        <PublishDialog
+          finding={publishFinding}
+          body={publishBody}
+          onBodyChange={setPublishBody}
+          publishing={publishing}
+          meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
+          onCancel={() => setPublishFinding(undefined)}
+          onConfirm={() => void confirmPublish()}
+        />
+      )}
+
+      {batchConfirm && (
+        <BatchPublishDialog
+          findings={publishableSelected}
+          publishing={batchPublishing}
+          meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef?.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
+          onCancel={() => setBatchConfirm(false)}
+          onConfirm={() => void batchConfirmPublish()}
+        />
+      )}
+
+      {toast && (
+        <div role="status" style={{
+          position: 'fixed', zIndex: 2147483200, right: 18, bottom: 18, maxWidth: 360,
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', borderRadius: C.radius,
+          background: '#1e2536', color: '#f0f4f8', fontSize: 12, lineHeight: 1.5,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.3)',
+        }}>{toast}</div>
+      )}
     </div>
+  );
+
+}
+
+function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings }: {
+  loading: boolean; filesCount: number; enabledRuleCount: number; modelReady: boolean; hasMr: boolean;
+  savedSession?: ReviewSessionManifest;
+  sessionHistory: ReviewSessionManifest[];
+  showHistory: boolean;
+  onToggleHistory: () => void;
+  onOpenSession: (session: ReviewSessionManifest) => void;
+  onResume: () => void;
+  onStart: () => void;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{
+        padding: '14px 14px 16px', borderRadius: C.radiusLg, border: `1px solid ${C.border}`,
+        background: `linear-gradient(180deg, ${C.bgSubtle} 0%, ${C.bg} 100%)`, textAlign: 'center',
+      }}>
+        <div style={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 19, margin: '0 auto 9px', background: C.primaryLight, color: C.primary }}>
+          <ShieldCheck size={19} />
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+          {loading ? '正在读取 MR 数据…' : hasMr ? '开始一次混合评审' : '当前页面没有可用的 MR Diff'}
+        </div>
+        <div style={{ marginTop: 5, fontSize: 12, color: C.textSecondary, lineHeight: 1.65 }}>
+          {loading
+            ? '正在通过 GitLab REST API 拉取变更文件和 Diff Refs。'
+            : hasMr
+              ? <>
+                {filesCount} 个变更文件已就绪。规则检查在浏览器本地执行（{enabledRuleCount} 条规则，零 token），
+                {modelReady ? 'AI 评审会补充语义层面的问题，两类结果分开标注。' : '配置 API Key 后可叠加 AI 深度评审。'}
+              </>
+              : <>在 MR 的 Changes 页面打开侧栏即可评审整个 MR；也可以先划选一段代码，再针对选区提问或 Review。</>}
+        </div>
+        <div style={{ display: 'flex', gap: 7, justifyContent: 'center', marginTop: 11, flexWrap: 'wrap' }}>
+          <Btn variant="primary" icon={<Play size={13} />} disabled={loading || (!hasMr && filesCount === 0)} onClick={onStart}>
+            {modelReady ? '运行混合评审' : '运行规则检查'}
+          </Btn>
+          {!modelReady && (
+            <Btn variant="outline" icon={<SettingsIcon size={13} />} onClick={onOpenSettings}>配置模型</Btn>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          <FileText size={12} />评审流程
+        </div>
+        <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: C.textSecondary, lineHeight: 1.8 }}>
+          <li>确定性规则先跑，命中结果标注为「规则」。</li>
+          <li>{modelReady ? '模型再评审同一批 Diff，结果标注为「AI」。' : '配置模型后，AI 会评审同一批 Diff，结果标注为「AI」。'}</li>
+          <li>两个来源命中同一处问题时自动合并，标注「规则 + AI」。</li>
+          <li>逐条定位、编辑或忽略，确认后再发布为 GitLab 行级评论。</li>
+        </ol>
+      </div>
+
+      {savedSession && (
+        <Banner tone="info" icon={<History size={14} />} title="检测到本 MR 的历史 Review 会话"
+          action={<Btn size="sm" variant="outline" onClick={onResume}>恢复上次结果</Btn>}>
+          {new Date(savedSession.updatedAt).toLocaleString('zh-CN')} · {savedSession.findings.length} 个问题 · {savedSession.scope === 'selection' ? '选区' : '整个 MR'}
+        </Banner>
+      )}
+
+      <div>
+        <button type="button" onClick={onToggleHistory} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, background: 'transparent',
+          cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 700, color: C.textMuted,
+        }}>
+          <History size={12} />{showHistory ? '收起历史会话' : '查看历史会话'}
+        </button>
+        {showHistory && (
+          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {sessionHistory.length === 0
+              ? <div style={{ fontSize: 11, color: C.textMuted }}>暂无历史会话。</div>
+              : sessionHistory.map((session) => (
+                <SessionRow key={session.id} session={session} onOpen={() => onOpenSession(session)} />
+              ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SessionRow({ session, onOpen }: { session: ReviewSessionManifest; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} title="载入这次会话的 Finding" style={{
+      display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', width: '100%',
+      border: `1px solid ${C.border}`, borderRadius: C.radiusSm, background: C.bgSubtle,
+      cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+    }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: C.textSecondary }}>!{session.mergeRequestIid}</span>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.textMuted }}>
+        {session.projectPath.replace(/^.*\//, '')} · {session.scope === 'selection' ? '选区' : '整个 MR'} · {session.findings.length} 个问题
+      </span>
+      <span style={{ fontSize: 10, color: C.textMuted, flexShrink: 0 }}>
+        {new Date(session.updatedAt).toLocaleDateString('zh-CN')}
+      </span>
+    </button>
   );
 }

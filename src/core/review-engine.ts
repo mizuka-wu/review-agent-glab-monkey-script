@@ -1,13 +1,14 @@
 import { anchorFindings } from './anchor';
 import { buildReviewContext, fileOmissionReason, includedFiles } from './context';
 import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } from './full-file';
-import { normalizeFindings, parseModelFindings } from './findings';
-import { hardenFindings } from './finding-hardening';
-import { BUILT_IN_PACK, runRulePackReview, type RulePack } from './rule-packs';
+import { parseModelFindings } from './findings';
+import { corroborateFindings, hardenFindings } from './finding-hardening';
+import { BUILT_IN_PACK, countEnabledRules, runRulePackReview, type RulePack } from './rule-packs';
 import type {
   CodeSelection,
   FileDiff,
   Finding,
+  FindingSource,
   FullFileOmission,
   FullFileSnapshot,
   ReviewContext,
@@ -95,6 +96,10 @@ export class ReviewEngine {
     loadFile?: FullFileLoader;
     fullFileRef?: string;
     candidatePaths?: string[];
+    /** 关闭后只跑 AI 评审。默认开启，未配置模型时也能独立工作。 */
+    rules?: boolean;
+    /** 关闭后只跑规则检查，即使模型已配置。 */
+    model?: boolean;
   }): Promise<ReviewEngineResult> {
     const baseContext = buildReviewContext(input);
     const diffFiles = includedFiles(baseContext);
@@ -117,38 +122,62 @@ export class ReviewEngine {
       ? [`省略 ${context.omittedFiles.length} 个文件：${context.omittedFiles.map((item) => `${item.path} (${item.reason})`).join(', ')}`]
       : [];
 
-    let findings: Finding[];
-    let source: ReviewEngineResult['source'];
-    if (this.runtime.configured) {
-      source = 'model';
-      const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background);
-      findings = parseModelFindings(raw, files);
-
-      if (input.loadFile && input.fullFileRef) {
-        const knownPaths = new Set(fullFiles.map((file) => file.path));
-        const candidatePaths = [...new Set(findings.flatMap((finding) => [
-          finding.path,
-          ...finding.evidence.map((evidence) => evidence.path),
-        ]))]
-          .filter((path) => !knownPaths.has(path))
-          .filter(fullFileEligible);
-        const additional = await loadFullFiles(candidatePaths, input.fullFileRef, input.loadFile, {}, input.signal);
-        fullFiles = mergeFullFiles(fullFiles, additional.files);
-        omittedFullFiles = [...omittedFullFiles, ...additional.omitted];
-      }
-    } else {
-      source = 'rule';
-      findings = normalizeFindings(runRulePackReview(files, this.rulePacks), files);
+    // 阶段一：确定性规则检查。不依赖模型，未配置 API Key 时同样运行。
+    const rulePacksEnabled = input.rules !== false;
+    // 规则结果已经是结构化 Finding，保留原始换行和规则溯源信息，不再二次归一化。
+    const ruleFindings = rulePacksEnabled ? runRulePackReview(files, this.rulePacks) : [];
+    const stages: ReviewEngineResult['stages'] = {
+      rules: { ran: rulePacksEnabled, findings: ruleFindings.length, rules: rulePacksEnabled ? countEnabledRules(this.rulePacks) : 0 },
+      model: { ran: false, findings: 0 },
+    };
+    if (rulePacksEnabled && stages.rules.rules === 0) {
+      warnings.push('没有启用的规则，已跳过规则检查。可在设置中开启内置规则包。');
     }
 
-    findings = anchorFindings(findings, files, fullFiles);
+    // 阶段二：AI 评审。模型失败不拖垮规则结果。
+    let modelFindings: Finding[] = [];
+    if (this.runtime.configured && input.model !== false) {
+      stages.model.ran = true;
+      try {
+        const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background);
+        modelFindings = parseModelFindings(raw, files);
+        stages.model.findings = modelFindings.length;
 
-    // Apply hardening: severity calibration, evidence check, similar merge, effort budget
+        if (input.loadFile && input.fullFileRef) {
+          const knownPaths = new Set(fullFiles.map((file) => file.path));
+          const candidatePaths = [...new Set(modelFindings.flatMap((finding) => [
+            finding.path,
+            ...finding.evidence.map((evidence) => evidence.path),
+          ]))]
+            .filter((path) => !knownPaths.has(path))
+            .filter(fullFileEligible);
+          const additional = await loadFullFiles(candidatePaths, input.fullFileRef, input.loadFile, {}, input.signal);
+          fullFiles = mergeFullFiles(fullFiles, additional.files);
+          omittedFullFiles = [...omittedFullFiles, ...additional.omitted];
+        }
+      } catch (error) {
+        if (input.signal?.aborted || (error as Error)?.name === 'AbortError') throw error;
+        stages.model.error = error instanceof Error ? error.message : String(error);
+        stages.model.ran = false;
+        warnings.push(`AI 评审未产出结果：${stages.model.error}。已保留规则检查结果。`);
+      }
+    } else if (rulePacksEnabled) {
+      warnings.push(input.model === false
+        ? '当前为「仅规则」模式，已跳过 AI 评审。'
+        : `未配置模型，本次仅执行 ${stages.rules.rules} 条确定性规则检查；配置 API Key 后可叠加 AI 深度评审。`);
+    }
+
+    const context2: ReviewContext = { ...context, fullFiles, omittedFullFiles };
+    const combined = corroborateFindings(ruleFindings, modelFindings);
+    const corroborated = combined.filter((finding) => finding.corroborated).length;
+    if (corroborated > 0) warnings.push(`${corroborated} 个问题被规则和 AI 同时命中，已合并并标注。`);
+    let findings = anchorFindings(combined, files, fullFiles);
+
     const hardened = hardenFindings(findings, files, this.settings.effort);
     findings = hardened.findings;
 
     if (hardened.merged > 0) warnings.push(`合并了 ${hardened.merged} 个相似 Finding。`);
-    if (hardened.severityAdjusted > 0) warnings.push(`校准了 ${hardened.severityAdjusted} 个 Finding 的严重度。`);
+    if (hardened.severityAdjusted > 0) warnings.push(`校准了 ${hardened.severityAdjusted} 个 AI Finding 的严重度。`);
     if (hardened.filtered > 0) warnings.push(`按证据充分度或审查强度过滤了 ${hardened.filtered} 个 Finding。`);
 
     const relocated = findings.filter((finding) => finding.anchor?.relocatedFromPath).length;
@@ -157,11 +186,30 @@ export class ReviewEngine {
     if (fullFileAnchored > 0) warnings.push(`${fullFileAnchored} 个 Finding 仅锚定到完整文件，不能发布为行级 Discussion。`);
     if (omittedFullFiles.length > 0) warnings.push(`完整文件读取省略 ${omittedFullFiles.length} 个文件。`);
 
+    const finalFindings = dedupe(findings).sort(compareFindings);
+    const sources = ([...new Set(finalFindings.flatMap(
+      (finding) => finding.corroborated ? [finding.source, finding.corroborated] : [finding.source],
+    ))] as FindingSource[])
+      .sort((left, right) => (left === 'rule' ? -1 : 1) - (right === 'rule' ? -1 : 1));
+    stages.rules.findings = finalFindings.filter((finding) => finding.source === 'rule').length;
+    stages.model.findings = finalFindings.filter((finding) => finding.source === 'model').length;
+
     return {
-      findings: dedupe(findings).sort((left, right) => severityOrder[left.severity] - severityOrder[right.severity]),
-      context: { ...context, fullFiles, omittedFullFiles },
-      source,
+      findings: finalFindings,
+      context: context2,
+      source: stages.model.findings > 0 ? 'model' : 'rule',
+      sources,
+      stages,
       warnings,
     };
   }
+}
+
+function compareFindings(left: Finding, right: Finding) {
+  if (severityOrder[left.severity] !== severityOrder[right.severity]) {
+    return severityOrder[left.severity] - severityOrder[right.severity];
+  }
+  if (left.source !== right.source) return left.source === 'rule' ? -1 : 1;
+  if (left.path !== right.path) return left.path.localeCompare(right.path);
+  return left.line - right.line;
 }

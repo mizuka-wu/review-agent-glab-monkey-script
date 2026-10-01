@@ -1,157 +1,133 @@
-@import "tailwindcss";
-@import '@fontsource-variable/geist';
-@import "tw-animate-css";
+/* Review Agent panel styles — injected into the Shadow DOM root.
+   All component styling is inline; this file only holds tokens, resets and
+   the pieces that need real CSS (markdown output, scrollbars, animations). */
 
-@custom-variant dark (&:is(.dark *));
+.ra-host {
+  --ra-primary: #245fc7;
+  --ra-text: #1a2332;
+  --ra-text-secondary: #5a6b80;
+  --ra-text-muted: #8a9bb0;
+  --ra-border: #dfe3e9;
+  --ra-bg-subtle: #f8f9fb;
 
-:root {
-  /* Design tokens (used by both our UI and assistant-ui) */
-  --background: #ffffff;
-  --foreground: #1a2332;
-  --card: #ffffff;
-  --card-foreground: #1a2332;
-  --popover: #ffffff;
-  --popover-foreground: #1a2332;
-  --primary: #245fc7;
-  --primary-foreground: #ffffff;
-  --secondary: #f0f3f7;
-  --secondary-foreground: #2d3748;
-  --muted: #f4f6f9;
-  --muted-foreground: #5a6b80;
-  --accent: #e8edf3;
-  --accent-foreground: #2d3748;
-  --destructive: #d3453b;
-  --destructive-foreground: #ffffff;
-  --border: #d4dae3;
-  --input: #d4dae3;
-  --ring: #245fc7;
-  --radius: 0.5rem;
-  --success: #1a7a42;
-  --warning: #b8860b;
-  --info: #245fc7;
-  --panel-header: #1e2536;
-  --panel-header-foreground: #f0f4f8;
-
-  /* assistant-ui specific variables */
-  --thread-max-width: 100%;
-  --composer-bg: var(--background);
-  --composer-padding: 8px 12px;
-  --composer-radius: 12px;
-
-  font-family: 'Geist Variable', Inter, ui-sans-serif, system-ui, sans-serif;
+  position: relative;
+  color: var(--ra-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  color: var(--foreground);
-  background: var(--background);
 }
 
-.dark {
-  --background: #151b28;
-  --foreground: #e8edf3;
-  --card: #1c2433;
-  --card-foreground: #e8edf3;
-  --popover: #1c2433;
-  --popover-foreground: #e8edf3;
-  --primary: #5b9af0;
-  --primary-foreground: #ffffff;
-  --secondary: #242e40;
-  --secondary-foreground: #c8d4e2;
-  --muted: #242e40;
-  --muted-foreground: #8a9bb0;
-  --accent: #2a3548;
-  --accent-foreground: #e8edf3;
-  --destructive: #e05548;
-  --destructive-foreground: #ffffff;
-  --border: #2d3950;
-  --input: #2d3950;
-  --ring: #5b9af0;
-  --success: #2ecc71;
-  --warning: #f0b429;
-  --info: #5b9af0;
-  --panel-header: #111827;
-  --panel-header-foreground: #f0f4f8;
-}
+.ra-host *,
+.ra-host *::before,
+.ra-host *::after { box-sizing: border-box; }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-info: var(--info);
-  --color-panel-header: var(--panel-header);
-  --color-panel-header-foreground: var(--panel-header-foreground);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
-
-* { box-sizing: border-box; }
-
-html, body, #root {
-  width: 100%;
-  min-width: 320px;
-  min-height: 100%;
-  margin: 0;
-}
-
-/* Panel scope - minimal overrides, let assistant-ui style itself */
-.ra-host {
-  color: var(--foreground);
-  font-family: inherit;
-}
-.ra-host * { box-sizing: border-box; }
 .ra-host button,
 .ra-host input,
 .ra-host textarea,
 .ra-host select {
   font: inherit;
   letter-spacing: 0;
+  color: inherit;
 }
 
-/* Ensure assistant-ui Thread fills the chat area */
-.ra-host .aui-root {
-  height: 100%;
-}
-.ra-host .aui-thread-root {
-  height: 100%;
+.ra-host a { color: var(--ra-primary); text-decoration: none; }
+.ra-host a:hover { text-decoration: underline; }
+
+.ra-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-/* Panel body must scroll - strong constraints */
-.ra-host .panel-body-scroll {
-  overflow-y: scroll !important;
-  overflow-x: hidden !important;
-  min-height: 0 !important;
-  flex: 1 1 0% !important;
-  max-height: 100% !important;
-  -webkit-overflow-scrolling: touch;
+.ra-spin { animation: ra-spin 0.9s linear infinite; }
+
+@keyframes ra-spin { to { transform: rotate(360deg); } }
+@keyframes ra-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Scrollbars --- */
+.ra-scroll { scrollbar-width: thin; scrollbar-color: #c8cfd9 transparent; }
+.ra-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.ra-scroll::-webkit-scrollbar-thumb { background: #c8cfd9; border-radius: 4px; }
+.ra-scroll::-webkit-scrollbar-thumb:hover { background: #aab4c2; }
+.ra-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* --- Markdown output --- */
+.ra-md { font-size: 12.5px; line-height: 1.65; word-break: break-word; }
+.ra-md > :first-child { margin-top: 0; }
+.ra-md > :last-child { margin-bottom: 0; }
+.ra-md-p { margin: 0 0 7px; }
+.ra-md-h { margin: 12px 0 5px; line-height: 1.35; }
+.ra-md h1.ra-md-h { font-size: 15px; }
+.ra-md h2.ra-md-h { font-size: 14px; }
+.ra-md h3.ra-md-h,
+.ra-md h4.ra-md-h,
+.ra-md h5.ra-md-h,
+.ra-md h6.ra-md-h { font-size: 13px; }
+.ra-md-list { margin: 4px 0 8px; padding-left: 20px; }
+.ra-md-list li { margin: 2px 0; }
+.ra-md-list li::marker { color: var(--ra-text-muted); }
+.ra-md-quote {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--ra-border);
+  background: var(--ra-bg-subtle);
+  color: var(--ra-text-secondary);
+  border-radius: 0 6px 6px 0;
+}
+.ra-md-hr { margin: 10px 0; border: 0; border-top: 1px solid var(--ra-border); }
+.ra-md-code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f3f7;
+  border: 1px solid var(--ra-border);
+  color: #b3261e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+.ra-md-pre {
+  margin: 7px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #1b2233;
+  overflow-x: auto;
   scrollbar-width: thin;
 }
-.ra-host .panel-body-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-.ra-host .panel-body-scroll::-webkit-scrollbar-track {
+.ra-md-pre .ra-md-code-block {
+  display: block;
+  padding: 0;
+  border: 0;
   background: transparent;
+  color: #e6ebf2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre;
 }
-.ra-host .panel-body-scroll::-webkit-scrollbar-thumb {
-  background: #c0c8d4;
-  border-radius: 3px;
+.ra-md-pre::-webkit-scrollbar { height: 8px; }
+.ra-md-pre::-webkit-scrollbar-thumb { background: #3b465c; border-radius: 4px; }
+.ra-md-table {
+  width: 100%;
+  margin: 7px 0;
+  border-collapse: collapse;
+  font-size: 11.5px;
 }
+.ra-md-table th,
+.ra-md-table td {
+  padding: 4px 8px;
+  border: 1px solid var(--ra-border);
+  text-align: left;
+}
+.ra-md-table th { background: var(--ra-bg-subtle); font-weight: 600; }

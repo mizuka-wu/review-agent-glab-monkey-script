@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Download, Copy } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Copy } from 'lucide-react';
 import type { DiagnosticEntry } from '../core/capabilities';
 import type { AgentLoopEvent } from '../core/agent-loop';
 import type { UsageSummary } from '../core/usage';

@@ -9,6 +9,9 @@ export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type FindingConfidence = 'high' | 'medium' | 'low';
 export type FindingStatus = 'draft' | 'ignored' | 'published' | 'failed';
 
+/** 规则命中 = 确定性检查（无需模型），model = AI 评审。 */
+export type FindingSource = 'rule' | 'model';
+
 export interface FindingEvidence {
   path: string;
   lines: string;
@@ -41,10 +44,18 @@ export interface Finding {
   existingCode: string;
   suggestionCode: string;
   comment: string;
-  source: 'model' | 'rule';
+  source: FindingSource;
   status: FindingStatus;
   anchor?: FindingAnchor;
   edited?: boolean;
+  /** 规则来源信息，仅 source === 'rule' 时有值。 */
+  ruleId?: string;
+  rulePackId?: string;
+  rulePackName?: string;
+  /** 同一规则在同一文件的命中总数，用于提示“共 N 处”。 */
+  occurrences?: number;
+  /** 另一个来源独立命中了同一处问题，已合并进本条。 */
+  corroborated?: FindingSource;
 }
 
 export interface DiffLine {
@@ -126,6 +137,9 @@ export interface ChatMessage {
   findings?: Finding[];
 }
 
+/** 评审阶段组合：hybrid = 规则 + AI，rules = 仅确定性规则，ai = 仅模型。 */
+export type ReviewMode = 'hybrid' | 'rules' | 'ai';
+
 export type ModelProvider = 'openai' | 'anthropic' | 'gemini';
 export type AuthMode = 'bearer' | 'api-key-header' | 'query-param' | 'custom';
 
@@ -157,6 +171,7 @@ export interface RuntimeSettings {
   model: string;
   gitlabToken: string;
   effort: 'fast' | 'balanced' | 'thorough';
+  reviewMode: ReviewMode;
   language: 'zh-CN' | 'en-US';
   mcp: McpSettings;
   auth: AuthSettings;
@@ -226,9 +241,22 @@ export interface FullFileOmission {
   message?: string;
 }
 
+export interface ReviewStageReport {
+  ran: boolean;
+  findings: number;
+  /** 规则阶段：参与评估的规则条数。 */
+  rules?: number;
+  /** 模型阶段失败原因（失败时仍会返回规则结果）。 */
+  error?: string;
+}
+
 export interface ReviewEngineResult {
   findings: Finding[];
   context: ReviewContext;
-  source: 'model' | 'rule';
+  /** 主要来源：模型参与过就是 'model'，否则 'rule'。 */
+  source: FindingSource;
+  /** 本次实际产出结果的阶段，用于 UI 区分“规则命中 / AI 评审”。 */
+  sources: FindingSource[];
+  stages: { rules: ReviewStageReport; model: ReviewStageReport };
   warnings: string[];
 }

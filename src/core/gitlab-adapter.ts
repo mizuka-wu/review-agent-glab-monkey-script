@@ -47,6 +47,8 @@ function errorCode(status: number) {
   return codes[status] ?? `gitlab_http_${status}`;
 }
 
+type RawDiff = Parameters<typeof normalizeFileDiff>[0];
+
 export function buildDiscussionPayload(input: DiscussionDraft) {
   const payload = new URLSearchParams();
   payload.set('body', input.body);
@@ -195,7 +197,7 @@ export class GitLabAdapter {
     options: { onPage?: (loaded: number, hasMore: boolean) => void; signal?: AbortSignal } = {},
   ): Promise<FileDiff[]> {
     // Fetch first page to determine total
-    const firstPage = await this.request<unknown[]>(
+    const firstPage = await this.request<RawDiff[]>(
       `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=1`,
       { signal: options.signal },
     );
@@ -206,7 +208,7 @@ export class GitLabAdapter {
     }
 
     // Parallel fetch remaining pages with concurrency limit of 3
-    const allRaw: unknown[][] = [firstPage];
+    const allRaw: RawDiff[][] = [firstPage];
     let page = 2;
     let hasMore = true;
     const CONCURRENCY = 3;
@@ -220,7 +222,7 @@ export class GitLabAdapter {
 
       const batchResults = await Promise.all(
         batchPages.map((p) =>
-          this.request<unknown[]>(
+          this.request<RawDiff[]>(
             `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=${p}`,
             { signal: options.signal },
           ).catch(() => null),
@@ -326,7 +328,7 @@ export class GitLabAdapter {
   async listCommitDiffs(sha: string): Promise<FileDiff[]> {
     const files: FileDiff[] = [];
     for (let page = 1; page <= 50; page += 1) {
-      const data = await this.request<unknown[]>(
+      const data = await this.request<RawDiff[]>(
         `/api/v4/projects/${this.projectRef()}/repository/commits/${encodeURIComponent(sha)}/diff?per_page=100&page=${page}`,
       );
       files.push(...data.map(normalizeFileDiff));
@@ -340,7 +342,7 @@ export class GitLabAdapter {
    */
   async listCompareDiffs(fromRef: string, toRef: string): Promise<FileDiff[]> {
     const data = await this.request<{
-      diffs: unknown[];
+      diffs: RawDiff[];
       commits: { id: string; short_id: string; title: string }[];
     }>(
       `/api/v4/projects/${this.projectRef()}/repository/compare?from=${encodeURIComponent(fromRef)}&to=${encodeURIComponent(toRef)}`,
