@@ -340,4 +340,51 @@ test.describe('real GitLab mode', () => {
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
     await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
   });
+
+  test('builds repo index on real GitLab, searches symbols and manages registry', async ({ page }) => {
+    test.setTimeout(120_000);
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, realMrUrl, {
+      provider: 'openai', modelBaseUrl: 'https://model.invalid/v1', model: 'unused', apiKey: '',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+      repoIndex: { enabled: true, maxFiles: 120, maxBytes: 6 * 1024 * 1024, maxIndexes: 3 },
+      repoContext: true,
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
+    await page.getByRole('tab', { name: /索引/ }).click();
+    await page.getByRole('button', { name: '建立索引' }).click();
+
+    await expect(page.getByText('已就绪')).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText('已缓存索引')).toBeVisible();
+    await expect(page.getByText('当前 head')).toBeVisible();
+
+    // 直接从 OPFS 读符号表，取一个真实存在的符号去搜索
+    const symbolName = await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const idx = await (await root.getDirectoryHandle('review-agent')).getDirectoryHandle('idx');
+      for await (const [, handle] of idx.entries()) {
+        if (handle.kind !== 'directory') continue;
+        const metaFile = await handle.getFileHandle('meta.json');
+        const meta = JSON.parse(await (await metaFile.getFile()).text());
+        const withDefs = (meta.files ?? []).find((file: { defs?: unknown[] }) => (file.defs ?? []).length > 0);
+        if (withDefs) return withDefs.defs[0].name as string;
+      }
+      return null;
+    });
+    expect(symbolName).toBeTruthy();
+
+    const search = page.getByLabel('符号搜索');
+    await search.fill(symbolName as string);
+    await expect(page.getByRole('button', { name: new RegExp(symbolName as string) }).first()).toBeVisible({ timeout: 5000 });
+
+    // 调试面板应记录真实 GitLab 请求
+    await page.getByRole('tab', { name: /调试/ }).click();
+    await page.getByRole('button', { name: /网络 \d+/ }).click();
+    await expect(page.getByText(/repository\/tree/).first()).toBeVisible({ timeout: 10000 });
+
+    // 删除该索引后注册表清空
+    await page.getByRole('tab', { name: /索引/ }).click();
+    await page.getByRole('button', { name: /删除索引/ }).first().click();
+    await expect(page.getByText('还没有缓存')).toBeVisible({ timeout: 10000 });
+  });
 });
