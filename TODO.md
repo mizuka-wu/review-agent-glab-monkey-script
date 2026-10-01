@@ -30,6 +30,18 @@ GitLab 调用始终留在浏览器内（凭据不出浏览器）。
 - [ ] M4 上下文增强（attachDoc/setBrief/budget、跨项目 gitlab 与符号工具）
 - [ ] M5 托管 relay 评估（仅设计评审，不默认实现）
 
+## 0.3.0 已落地
+
+- 流式评审：SSE 逐 token、思考通道折叠打字机（JSON/代码块自动折叠摘要、展开自动滚动）、finding 增量进入结果列表、规则先行、可停止。
+- 快速操作：一键 Approve / 一键行内评论 / 总评论（两步确认）。
+- 全文件扫描（索引页，仅规则，结果不可发布）；findings JSON 导出；Delegation 上下文导出。
+- 大 MR 目录内聚分组 + 并发子评审（分组失败保留其余）；评论反思自检（fast 跳过）。
+- 规则文档化：rule_docs/*.md 为唯一来源 + 生成器 + CI 漂移检查；eval fixture 8 → 31。
+- 符号精度一阶段：import 感知解析 + 调用链去同名误边。
+- 模型选择：可输入+下拉建议、不在服务器列表时自动切换并立即保存、对话区顶部可切换。
+- 失败显性化：模型非 2xx（含 507 内存不足）横幅+toast+URL；GitLab 传输改 GM 优先；去重读取失败进 warnings+toast；划词工具条在面板内选区时隐藏。
+- VitePress 文档站（设计文档）+ 旧前缀 URL 重定向。
+
 ## 与 OpenCodeReview 的剩余差距（backlog）
 
 - [x] 符号检索精度（一阶段）：import 感知解析（ts/js/py/go）+ 调用链排除同名本地定义误边；LSIF 级精确调用图仍开放
@@ -50,4 +62,5 @@ GitLab 调用始终留在浏览器内（凭据不出浏览器）。
 ## 其他开放项
 
 - [ ] P3：本地 Gateway / IDE 插件 / 团队化能力（`ReviewRuntime` 抽象已预留替换点）
+- [ ] 思考过程进一步结构化（要点抽取 / 分段时间轴）
 - [ ] Session viewer 剩余 parity：回放与「处理中隐藏」交互

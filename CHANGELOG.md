@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.2.0 — 2026-10-01
+## 0.3.0 — 2026-10-01
+- VitePress docs site on GitHub Pages (design docs only; old numeric-prefixed URLs keep working via static redirects); README and the panel header link to it.
+- GitLab API calls now route through `httpRequest` (GM.xmlHttpRequest first, fetch fallback) so self-hosted GitLab works from the Tampermonkey sandbox; a failed existing-discussions read surfaces as a warning + toast instead of a silent success.
+- Model endpoint failures are surfaced: danger banner carrying the server message and the request URL, a toast, and a 打开设置 action; HTTP 507 (server out of memory) is no longer pointlessly retried.
 - Model picker is now a typeable input with datalist suggestions (no more 下拉/手动 split); when the fetched server list does not contain the current model (e.g. switching from the OpenAI preset to a local server still holding `gpt-4o-mini`), it auto-switches to the first available model and persists immediately; a compact picker also appears atop the chat tab.
 - Rule packs now live as language docs: `rule_docs/*.md` (frontmatter + pattern fence + examples) are the source of truth; `scripts/generate-rules.mjs` emits `builtin-rules.generated.ts` and `--check` guards drift in CI. Migration verified lossless by unit tests and the eval benchmark.
 - Expand the eval benchmark from 8 to 31 fixtures (one annotated sample per built-in rule plus a clean negative).
@@ -8,6 +11,7 @@
 - Close more OpenCodeReview gaps: directory-cohesive file bundling with concurrent per-bundle sub-reviews (partial-failure tolerant), a reflection pass where the model self-checks its own findings (keep/drop, skipped on fast effort), full-file rule scan over the cached repo index (ocr-scan parity, unpublishable results), one-click findings JSON export and a Delegation context export (file selection + resolved rules + diff + background + output schema) for external agents.
 - Slim `docs/` to design documents only (numeric prefixes dropped); move plans and backlog (MCP bridge plan, OpenCodeReview gaps, acceptance baselines, open items) into root `TODO.md`; docs site sidebar/README links updated accordingly.
 - Add `docs/11-mcp-bridge-and-agent-surface-plan.md`: a development plan for an optional local MCP relay bridge (stdio/Streamable HTTP to MCP hosts, outbound WS/long-poll to the userscript) exposing an MCP-isomorphic tool surface — review state/control, rule-pack read-write per scope, requirement/tech-doc context attachment, and cross-project GitLab context — plus in-page RPC so same-page extensions can call the same surface without any process.
+## 0.2.0 — 2026-10-01
 - Codex-style streamed review presentation: the model thinking channel (`reasoning_content`) renders as a collapsed-by-default typewriter pane with a live character count, completed findings stream into the results list incrementally via a partial-JSON extractor, and the raw JSON draft is hidden behind an explicit 「查看原始输出」 toggle; thinking tokens are captured separately from content so `json_object` output stays clean.
 - Stream the review model stage over SSE: the running banner shows the model's live output draft so it is obvious the AI is working, and 「取消」 aborts the stream mid-flight; servers that ignore `stream` or omit SSE fall back to a single read with one whole-text callback; stream chunks' `usage` (when sent) is now recorded. Rule-stage findings render immediately via a stage callback instead of waiting for the model.
 - Add quick actions in the results footer: 一键 Approve (`POST .../approve`), 一键行内评论 (publish all publishable drafts as line discussions in one click) and 总评论 (one MR-level summary note with counts and a per-finding list); all use a two-step confirm button to prevent mis-clicks.

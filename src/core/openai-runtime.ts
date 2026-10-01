@@ -150,8 +150,11 @@ export class OpenAIRuntime {
     const conversation = messages.filter((message) => message.role !== 'system');
     try {
       const content = await this.runComplete(messages, options);
+      const conversationWithThinking = this.lastThinking
+        ? [...conversation, { role: 'thinking', content: this.lastThinking.slice(0, 4000) }]
+        : conversation;
       debugBus.prompt({
-        stage, model: this.settings.model, system, messages: conversation,
+        stage, model: this.settings.model, system, messages: conversationWithThinking,
         response: content.slice(0, 4000), tokens: this.lastTokens,
       });
       return content;
@@ -165,11 +168,13 @@ export class OpenAIRuntime {
   }
 
   private lastTokens: { input: number; output: number } | undefined;
+  private lastThinking = '';
 
   private async runComplete(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
     options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; onThinking?: (token: string) => void; stage?: string } = {},
   ) {
+    this.lastThinking = '';
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const useStream = Boolean(options.onToken);
 
@@ -230,7 +235,10 @@ export class OpenAIRuntime {
                   options.onToken?.(delta);
                 }
                 const reasoning = choice?.delta?.reasoning_content ?? choice?.message?.reasoning_content ?? '';
-                if (reasoning) options.onThinking?.(reasoning);
+                if (reasoning) {
+                  this.lastThinking += reasoning;
+                  options.onThinking?.(reasoning);
+                }
               } catch {
                 // Skip malformed chunks
               }

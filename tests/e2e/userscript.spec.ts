@@ -409,6 +409,22 @@ test.describe('mock mode', () => {
     expect(stored).toBe('qwen35-a3b');
   });
 
+  test('hides the selection toolbar for selections inside the panel', async ({ page }) => {
+    await routeGitLab(page);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    // 页内 diff 选区 → 工具条出现
+    await page.locator('code.ra-line-code').first().dblclick();
+    await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toBeVisible({ timeout: 10000 });
+    // 面板内选区（对话输入框）→ 工具条隐藏
+    await page.getByRole('tab', { name: /对话/ }).click();
+    const box = page.getByLabel('消息输入框');
+    await box.click();
+    await box.fill('hello world selection');
+    await box.dblclick();
+    await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toHaveCount(0, { timeout: 10000 });
+  });
+
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
     const metadata = bundle.slice(bundle.indexOf('// ==UserScript=='), bundle.indexOf('// ==/UserScript=='));
     expect(metadata).toContain('@name         Review Agent for GitLab');

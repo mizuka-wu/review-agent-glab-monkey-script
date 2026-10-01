@@ -6,6 +6,7 @@ import { normalizeFileDiff } from './core/diff';
 import { FindingsPanel } from './components/review/FindingsPanel';
 import { buildSummaryComment, extractPartialFindings, parseModelFindings, serializeFindingsExport } from './core/findings';
 import { buildDelegationContext } from './core/delegation';
+import { compactThinking } from './core/thinking';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
@@ -109,6 +110,7 @@ export default function App({ page }: AppProps) {
   const ruleLiveRef = useRef<Finding[]>([]);
   const lastPartialParseRef = useRef(0);
   const lastPartialCountRef = useRef(0);
+  const thinkingPreRef = useRef<HTMLPreElement>(null);
   const streamPreStyle: CSSProperties = {
     marginTop: 4, maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
     fontSize: 11, lineHeight: 1.5, color: C.textSecondary, background: C.bgSubtle,
@@ -274,17 +276,36 @@ export default function App({ page }: AppProps) {
   }, [addLog]);
 
   useEffect(() => {
-    const handleMouseUp = () => {
+    const handleMouseUp = (event: MouseEvent) => {
+      // composedPath 只在派发期间有效，需同步读取：点击落在面板（Shadow DOM）内时隐藏工具条。
+      const clickedInHost = Boolean(hostRef.current && event.composedPath().includes(hostRef.current));
       window.setTimeout(() => {
+        if (clickedInHost) {
+          setSelection(null);
+          return;
+        }
         const selected = captureCodeSelection(document, page.filePath ?? '');
         const anchor = document.getSelection()?.anchorNode ?? null;
-        if (!selected || (anchor && hostRef.current?.contains(anchor))) return;
-        setSelection(selected);
+        const anchorRoot = anchor?.getRootNode();
+        // contains() 不跨 Shadow 边界，需再用 getRootNode 判定选区是否落在面板内。
+        const inHost = Boolean(anchor && hostRef.current
+          && (anchorRoot === hostRef.current.shadowRoot || hostRef.current.contains(anchor)));
+        if (inHost) {
+          setSelection(null);
+          return;
+        }
+        if (selected) setSelection(selected);
       }, 0);
     };
     document.addEventListener('mouseup', handleMouseUp);
     return () => document.removeEventListener('mouseup', handleMouseUp);
   }, [page.filePath]);
+
+  useEffect(() => {
+    if (!showThinking) return;
+    const node = thinkingPreRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [modelThinking, showThinking]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1274,7 +1295,12 @@ export default function App({ page }: AppProps) {
                               style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
                               {showThinking ? '▾ 模型思考过程' : `▸ 模型思考过程（${modelThinking.length} 字）`}
                             </button>
-                            {showThinking && <pre style={streamPreStyle}>{modelThinking.slice(-1500)}</pre>}
+                            {showThinking && (
+                              <pre ref={thinkingPreRef} style={streamPreStyle}>
+                                {modelThinking.length > 1500 ? `…（前 ${modelThinking.length - 1500} 字已省略）\n` : ''}
+                                {compactThinking(modelThinking.slice(-1500))}
+                              </pre>
+                            )}
                           </div>
                         )}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.textSecondary }}>
