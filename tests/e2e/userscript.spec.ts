@@ -81,7 +81,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
           role: 'assistant',
           content: JSON.stringify([
             {
-              title: '代码中疑似硬编码敏感信息',
+              title: '硬编码 API Key 应移至安全配置',
               severity: 'high',
               category: 'security',
               confidence: 'high',
@@ -96,7 +96,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
               comment: '发现硬编码 API Key，应从安全配置或密钥管理服务读取。',
             },
             {
-              title: '新增调试日志可能泄漏运行时信息',
+              title: '调试日志可能泄漏运行时变量',
               severity: 'low',
               category: 'maintainability',
               confidence: 'medium',
@@ -209,10 +209,10 @@ test.describe('mock mode', () => {
     await expect(page.getByText('Harden checkout payment error handling')).toBeVisible();
     await page.getByRole('button', { name: '开始 Review' }).click();
 
-    await expect(page.getByText('代码中疑似硬编码敏感信息')).toBeVisible();
-    await expect(page.getByText('新增调试日志可能泄漏运行时信息')).toBeVisible();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置')).toBeVisible();
+    await expect(page.getByText('调试日志可能泄漏运行时变量')).toBeVisible();
 
-    const finding = page.locator('article').filter({ hasText: '代码中疑似硬编码敏感信息' });
+    const finding = page.locator('article').filter({ hasText: '硬编码 API Key 应移至安全配置' });
     await finding.getByRole('button', { name: '发布到 GitLab' }).click();
     await expect(page.getByRole('dialog', { name: '发布到 GitLab' })).toBeVisible();
     await page.getByLabel('评论内容').fill('Edited review comment');
@@ -344,7 +344,7 @@ test.describe('mock mode', () => {
     });
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
     await page.getByRole('button', { name: '开始 Review' }).click();
-    await expect(page.getByText('代码中疑似硬编码敏感信息').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('硬编码 API Key 应移至安全配置').first()).toBeVisible({ timeout: 15000 });
     // SSE 流式路径应被调试面板记录（url 带 (stream) 后缀）
     const panel = page.locator('aside[aria-label="Review Agent"]');
     await page.getByRole('tab', { name: /调试/ }).click();

@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import {
-  Bug, CheckSquare, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare,
-  Database, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X,
-} from 'lucide-react';
+import { BookOpen, Bug, CheckSquare, Database, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { FindingsPanel } from './components/review/FindingsPanel';
@@ -1087,6 +1084,11 @@ export default function App({ page }: AppProps) {
               style={{ display: 'grid', placeItems: 'center', width: 28, height: 28, borderRadius: C.radiusSm, color: C.headerMuted }}
             ><ExternalLink size={14} /></a>
           )}
+          <a
+            href="https://mizuka-wu.github.io/review-agent-glab-monkey-script/"
+            target="_blank" rel="noopener noreferrer" aria-label="技术文档" title="技术文档（GitHub Pages）"
+            style={{ display: 'grid', placeItems: 'center', width: 28, height: 28, borderRadius: C.radiusSm, color: C.headerMuted }}
+          ><BookOpen size={14} /></a>
           <IconButton
             tone="dark" icon={<X size={15} />} label="关闭侧栏"
             onClick={() => { clearHighlights(); persistUi({ ...ui, open: false }); }}

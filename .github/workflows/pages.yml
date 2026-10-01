@@ -41,13 +41,15 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Build docs site
+        run: pnpm docs:build
+
       - name: Prepare Pages artifact
         run: |
           mkdir -p public
-          cp -R dist/. public/
-          cp README.md public/README.md
-          cp LICENSE public/LICENSE
-          cp -R docs public/docs
+          cp -R docs-site/.vitepress/dist/. public/
+          cp dist/review-agent-glab-monkey-script.user.js public/
+          cp dist/review-agent-glab-monkey-script.meta.js public/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

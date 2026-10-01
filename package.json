@@ -13,7 +13,10 @@
     "test": "pnpm test:unit && pnpm test:e2e",
     "build": "pnpm typecheck && vite build && node scripts/generate-meta.js",
     "check": "pnpm typecheck && pnpm test",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "docs:dev": "vitepress dev docs-site",
+    "docs:build": "vitepress build docs-site",
+    "docs:preview": "vitepress preview docs-site"
   },
   "imports": {
     "#components/*": "./src/components/*.tsx",
@@ -40,6 +43,7 @@
     "typescript": "^6.0.3",
     "vite": "^8.0.11",
     "vite-plugin-monkey": "^8.0.0",
+    "vitepress": "^1.6.4",
     "vitest": "^5.0.2"
   }
 }
