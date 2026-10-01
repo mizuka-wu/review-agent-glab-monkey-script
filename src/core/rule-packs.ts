@@ -267,6 +267,7 @@ const builtInRules: RuleDef[] = [
     content: '非空断言会让 TypeScript 跳过 undefined / null 检查，运行时仍可能抛错。请补充显式判空、可选链或收窄类型，只有在类型系统无法表达但业务上确实非空时才使用断言。',
     matchPatterns: [{ type: 'regex', pattern: '[\\w)\\]]!\\.|[\\w)\\]]!\\[' }],
     languages: ['ts'],
+    scope: { exclude: ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/tests/**', '**/testdata/**'] },
   },
   {
     id: 'builtin-weak-types',
@@ -277,6 +278,7 @@ const builtInRules: RuleDef[] = [
     content: 'any、@ts-ignore、@ts-expect-error 或空 catch 会隐藏类型错误与失败路径。建议保留精确类型（unknown + 收窄），并在 catch 中记录日志或向上抛出。',
     matchPatterns: [{ type: 'regex', pattern: ':\\s*any\\b|<any>|as\\s+any\\b|@ts-(?:ignore|expect-error|nocheck)|catch\\s*(?:\\([^)]*\\))?\\s*\\{\\s*\\}' }],
     languages: WEB,
+    scope: { exclude: ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/tests/**', '**/testdata/**'] },
   },
   {
     id: 'builtin-swallowed-promise-error',
@@ -341,6 +343,7 @@ const builtInRules: RuleDef[] = [
     matchPatterns: [{ type: 'regex', pattern: 'console\\.(?:log|debug|info)\\s*\\(' }],
     suggestionTemplate: 'logger.debug',
     languages: WEB,
+    scope: { exclude: ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/tests/**', '**/testdata/**'] },
   },
   {
     id: 'builtin-stdout-debug',
@@ -354,6 +357,7 @@ const builtInRules: RuleDef[] = [
       pattern: 'System\\.(?:out|err)\\.print|\\bfmt\\.Print(?:ln|f)?\\s*\\(|\\bConsole\\.Write(?:Line)?\\s*\\(|^\\s*print\\s*\\(|\\bprint_r\\s*\\(',
     }],
     languages: [...JVM, 'python', 'go', 'csharp', 'php'],
+    scope: { exclude: ['**/*.test.*', '**/*.spec.*', '**/__tests__/**', '**/tests/**', '**/testdata/**'] },
   },
   {
     id: 'builtin-hardcoded-local-endpoint',

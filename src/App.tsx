@@ -1064,7 +1064,7 @@ export default function App({ page }: AppProps) {
                 )}
               </div>
 
-              {findings.length > 0 || reviewError ? (
+              {findings.length > 0 || reviewError || reviewStatus !== 'idle' ? (
                 <FindingsPanel
                   findings={findings}
                   running={running}
