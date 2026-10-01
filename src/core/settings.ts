@@ -38,7 +38,7 @@ export const defaultSettings: RuntimeSettings = {
   reviewMode: 'hybrid',
   language: 'zh-CN',
   mcp: { enabled: false, serverUrl: 'http://127.0.0.1:3000/mcp' },
-  repoIndex: { enabled: true, maxFiles: 400, maxBytes: 12 * 1024 * 1024 },
+  repoIndex: { enabled: true, maxFiles: 400, maxBytes: 12 * 1024 * 1024, maxIndexes: 6 },
   repoContext: true,
   auth: {
     mode: 'bearer',

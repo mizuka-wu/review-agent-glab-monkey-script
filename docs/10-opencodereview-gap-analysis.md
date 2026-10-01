@@ -46,7 +46,8 @@ OpenCodeReview 的核心竞争力不是"会用模型"，而是**把不能出错�
 6. **强度预算只作用于 AI 结果**：确定性结果不再被 `effort` 过滤，用户启用的规则始终可见。
 7. **UI 重构**：结果 / 对话 / 设置 / 调试四标签；面板可拖拽、可拉伸宽度；Finding 折叠卡片带代码预览；批量发布条；会话恢复与历史。
 8. **依赖瘦身**：移除 assistant-ui / tailwind / ai-sdk 等运行时依赖，产物 2.5 MB → 0.9 MB（gzip 190 KB），注入更快、样式不再与 GitLab 互相污染。
-9. **本地仓库索引**（`repo-store.ts` / `repo-index.ts` / `symbols.ts`）：引入 [opfs-worker](https://github.com/kachurun/opfs-worker)，优先独立 Worker（gitlab.com CSP 允许 `blob:` worker），退回主线程 OPFS，再退回内存；按 head ref 缓存仓库文件并构建符号表，提供符号搜索、启发式调用链，以及注入 Review 提示词的「Diff 外调用点」上下文。同 ref 命中缓存时零网络开销恢复。
+9. **本地仓库索引**（`repo-store.ts` / `repo-index.ts` / `symbols.ts`）：引入 [opfs-worker](https://github.com/kachurun/opfs-worker)，优先独立 Worker（gitlab.com CSP 允许 `blob:` worker），退回主线程 OPFS，再退回内存；按 ref 分命名空间缓存仓库文件并构建符号表，提供符号搜索、启发式调用链，以及注入 Review 提示词的「Diff 外调用点」上下文。同 ref 命中缓存时零网络开销恢复。
+9b. **索引管理系统**：注册表（`/registry.json`）记录每份索引的 ref / branch 标签 / 项目 / 文件数 / 字节数 / 符号数；不同 branch、不同 MR 的索引互不覆盖，可在「索引」页载入、单份删除、全部清除；超过 `maxIndexes` 自动清理最旧（刚写入的永远保留）；显示站点存储用量与配额；载入的索引与当前 head 不一致时给出过期警告，且不再向 Review 提示词注入仓库上下文。
 10. **调试工具链**（`debug-bus.ts` + DebugPanel）：日志 / 网络 / 提示词 / 状态四面板。GitLab API、模型调用、MCP、索引的每次请求都记录方法、状态码、耗时、字节数；每次模型调用记录完整 system 与消息内容（超长截断）、工具列表、token 用量；`console.warn/error` 被镜像进日志；日志跨刷新保留；一键导出 JSON 调试包（含脱敏快照）。
 11. **CSP 兼容传输**（`http.ts`）：模型/MCP 请求优先走 `GM.xmlHttpRequest`（不受 gitlab.com `connect-src 'self'` 与 CORS 限制），流式对话保留 fetch 并在被拦截时自动回退。
 

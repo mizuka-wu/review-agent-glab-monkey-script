@@ -9,12 +9,18 @@ import { createOPFSAsync } from 'opfs-worker/async';
 
 export type StoreBackend = 'opfs-worker' | 'opfs-async' | 'memory';
 
+interface FileEntry {
+  path: string;
+  size: number;
+}
+
 interface OpfsFacade {
   readFile(path: string): Promise<Uint8Array | string>;
   writeFile(path: string, data: Uint8Array | string): Promise<void>;
   exists(path: string): Promise<boolean>;
-  remove(path: string): Promise<void>;
+  remove(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
   clear(path?: string): Promise<void>;
+  index(): Promise<Map<string, { size: number }>>;
   dispose(): void;
 }
 
@@ -24,8 +30,16 @@ export interface RepoStore {
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   remove(path: string): Promise<void>;
+  /** 递归列出前缀下所有文件及字节数，用于存储核算。 */
+  listFiles(prefix: string): Promise<FileEntry[]>;
+  /** 递归删除目录（或单个文件）。 */
+  removeDir(path: string): Promise<void>;
   clear(): Promise<void>;
   dispose(): void;
+}
+
+function normalize(key: string): string {
+  return key.startsWith('/') ? key : `/${key}`;
 }
 
 function decode(value: Uint8Array | string): string {
@@ -50,7 +64,19 @@ function wrapFacade(backend: StoreBackend, facade: OpfsFacade): RepoStore {
       return facade.exists(path);
     },
     remove(path) {
-      return facade.remove(path);
+      return facade.remove(path, { force: true });
+    },
+    async listFiles(prefix) {
+      const wanted = normalize(prefix);
+      const entries: FileEntry[] = [];
+      for (const [key, stat] of await facade.index()) {
+        const path = normalize(key);
+        if (path === wanted || path.startsWith(`${wanted}/`)) entries.push({ path, size: stat.size });
+      }
+      return entries;
+    },
+    removeDir(path) {
+      return facade.remove(path, { recursive: true, force: true });
     },
     clear() {
       return facade.clear();
@@ -63,6 +89,11 @@ function wrapFacade(backend: StoreBackend, facade: OpfsFacade): RepoStore {
 
 function memoryStore(): RepoStore {
   const files = new Map<string, string>();
+  const sizes = new Map<string, number>();
+  const drop = (path: string) => {
+    files.delete(path);
+    sizes.delete(path);
+  };
   return {
     backend: 'memory',
     async readFile(path) {
@@ -70,18 +101,35 @@ function memoryStore(): RepoStore {
     },
     async writeFile(path, content) {
       files.set(path, content);
+      sizes.set(path, new TextEncoder().encode(content).length);
     },
     async exists(path) {
       return files.has(path);
     },
     async remove(path) {
-      files.delete(path);
+      drop(path);
+    },
+    async listFiles(prefix) {
+      const wanted = normalize(prefix);
+      const entries: FileEntry[] = [];
+      for (const [path, size] of sizes) {
+        if (path === wanted || path.startsWith(`${wanted}/`)) entries.push({ path, size });
+      }
+      return entries;
+    },
+    async removeDir(path) {
+      const wanted = normalize(path);
+      for (const key of [...files.keys()]) {
+        if (key === wanted || key.startsWith(`${wanted}/`)) drop(key);
+      }
     },
     async clear() {
       files.clear();
+      sizes.clear();
     },
     dispose() {
       files.clear();
+      sizes.clear();
     },
   };
 }

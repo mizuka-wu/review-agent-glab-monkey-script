@@ -13,7 +13,7 @@
 
 ```bash
 pnpm typecheck        # TypeScript 类型检查
-pnpm test:unit        # 单元测试（190 个）
+pnpm test:unit        # 单元测试（195 个）
 pnpm test:e2e         # Playwright E2E（mock 5 个 + 真实 GitLab 2 个，需环境变量）
 pnpm build            # 构建油猴脚本（含 typecheck）
 pnpm dev              # 开发模式（原型页面）
@@ -41,7 +41,7 @@ src/
 │   ├── debug-bus.ts        # 调试总线（日志/网络/提示词/快照，跨刷新保留）
 │   ├── http.ts             # GM.xmlHttpRequest 优先的传输层（绕 CSP/CORS）
 │   ├── repo-store.ts       # OPFS 缓存层（opfs-worker → 主线程 → 内存）
-│   ├── repo-index.ts       # 仓库索引编排（tree + raw 拉取、符号表、缓存恢复）
+│   ├── repo-index.ts       # 索引管理器（按 ref 命名空间、注册表、配额清理、载入/删除）
 │   ├── symbols.ts          # 启发式符号抽取 / 搜索 / 调用链
 │   ├── review-engine.ts    # Review 引擎主入口（规则恒运行 + 模型可选）
 │   ├── rules.ts            # 规则模式入口（委托 rule-packs）
@@ -120,7 +120,7 @@ Finding 的 `source`（rule/model）与 `corroborated` 决定 UI 的来源徽标
 - 评测测试放在 `tests/eval/`
 - E2E 测试放在 `tests/e2e/`
 - 新功能必须有对应测试
-- 现有 190 个单元测试 + 7 个 E2E 不能减少
+- 现有 195 个单元测试 + 7 个 E2E 不能减少
 
 ### 代码风格
 - 不写注释（除非 WHY 不明显）

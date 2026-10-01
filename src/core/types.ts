@@ -167,8 +167,10 @@ export interface UsageRecord {
 export interface RepoIndexSettings {
   enabled: boolean;
   maxFiles: number;
-  /** 索引总字节上限。 */
+  /** 单个索引的字节上限。 */
   maxBytes: number;
+  /** 注册表保留的索引份数（不同 branch/commit 各一份），超出清理最旧。 */
+  maxIndexes: number;
 }
 
 export interface RuntimeSettings {

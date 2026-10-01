@@ -318,7 +318,9 @@ export default function App({ page }: AppProps) {
   }, [settings, capabilities, repoStatus, reviewStatus, findings.length, files.length, savedSession]);
 
   useEffect(() => {
-    if (!repoIndex || !settings.repoIndex.enabled || !mrContext) return;
+    if (!repoIndex || !mrContext) return;
+    repoIndex.markCurrentRef(mrContext.diffRefs.headSha);
+    if (!settings.repoIndex.enabled) return;
     if (repoIndex.status.ref === mrContext.diffRefs.headSha && repoIndex.status.state !== 'idle') return;
     void repoIndex.restore(mrContext.diffRefs.headSha).then((restored) => {
       if (restored) addLog('info', 'repo-index', '命中本地索引缓存，无需重新拉取');
@@ -547,7 +549,7 @@ export default function App({ page }: AppProps) {
 
     try {
       setReviewStatus('running');
-      const repoContext = runModel && modelReady && settings.repoContext && repoIndex?.ready
+      const repoContext = runModel && modelReady && settings.repoContext && repoIndex?.ready && repoIndex.inSync
         ? repoIndex.contextForFiles(scopedFiles.map((file) => file.newPath))
         : '';
       if (repoContext) addLog('debug', 'review', `注入仓库符号上下文 ${repoContext.length} 字符`);
@@ -1160,12 +1162,20 @@ export default function App({ page }: AppProps) {
                 repoIndex.updateOptions({
                   maxFiles: settings.repoIndex.maxFiles,
                   maxBytes: settings.repoIndex.maxBytes,
+                  maxIndexes: settings.repoIndex.maxIndexes,
                 });
                 setTab('repo');
-                void repoIndex.index(api, mrContext.diffRefs.headSha);
+                void repoIndex.index(api, {
+                  ref: mrContext.diffRefs.headSha,
+                  label: mrContext.sourceBranch || mrContext.diffRefs.headSha.slice(0, 8),
+                  projectPath: page.projectPath,
+                });
               }}
               onCancel={() => repoIndex.cancel()}
-              onClear={() => { void repoIndex.clear(); setToast('本地仓库缓存已清除'); }}
+              onClear={() => { void repoIndex.clear(); setToast('本地索引缓存已全部清除'); }}
+              onActivate={(ref) => { void repoIndex.activate(ref); }}
+              onRemove={(ref) => { void repoIndex.remove(ref); setToast('该索引已删除'); }}
+              maxIndexes={settings.repoIndex.maxIndexes}
               onOpenSettings={() => setTab('settings')}
               onSearch={(query) => repoIndex.search(query)}
               onCallChain={(symbol, depth) => repoIndex.callChain(symbol, depth)}

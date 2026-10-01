@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Database, GitBranch, Loader2, Search, Trash2, X } from 'lucide-react';
+import { Database, GitBranch, HardDrive, Loader2, Search, Trash2, X } from 'lucide-react';
 import { Banner, Btn, EmptyState, Pill, tokens as C } from '../ui/modern';
 import type { RepoIndexStatus } from '../../core/repo-index';
 import type { CallChainNode, SymbolDef, SymbolRef } from '../../core/symbols';
@@ -11,6 +11,7 @@ const backendLabel: Record<RepoIndexStatus['backend'], string> = {
 };
 
 function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${bytes} B`;
@@ -20,16 +21,19 @@ export interface RepoPanelProps {
   status: RepoIndexStatus;
   enabled: boolean;
   hasMr: boolean;
+  maxIndexes: number;
   onIndex: () => void;
   onCancel: () => void;
   onClear: () => void;
+  onActivate: (ref: string) => void;
+  onRemove: (ref: string) => void;
   onOpenSettings: () => void;
   onSearch: (query: string) => { defs: SymbolDef[]; refs: SymbolRef[] };
   onCallChain: (symbol: string, depth: number) => CallChainNode | null;
 }
 
 export function RepoPanel(props: RepoPanelProps) {
-  const { status, enabled, hasMr } = props;
+  const { status, enabled, hasMr, maxIndexes } = props;
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [chain, setChain] = useState<{ symbol: string; node: CallChainNode | null; depth: number } | undefined>(undefined);
@@ -133,6 +137,25 @@ export function RepoPanel(props: RepoPanelProps) {
         )}
       </div>
 
+      {status.state === 'ready' && status.currentRef && status.ref !== status.currentRef && (
+        <Banner
+          tone="warning" icon={<GitBranch size={14} />}
+          title="载入的索引与当前 head 不一致"
+          action={hasMr ? <Btn size="sm" variant="primary" onClick={props.onIndex}>更新到当前 head</Btn> : undefined}
+        >
+          当前载入 {status.label}（{status.ref.slice(0, 8)}），页面 head 是 {status.currentRef.slice(0, 8)}。
+          符号与调用链可能已过期，Review 也不会注入这份仓库上下文。
+        </Banner>
+      )}
+
+      <RegistryCard
+        status={status}
+        maxIndexes={maxIndexes}
+        onActivate={props.onActivate}
+        onRemove={props.onRemove}
+        onClear={props.onClear}
+      />
+
       {status.state === 'ready' && (
         <>
           <div style={{ position: 'relative' }}>
@@ -223,6 +246,80 @@ export function RepoPanel(props: RepoPanelProps) {
         <EmptyState icon={<Loader2 size={18} className="ra-spin" />} title="正在读取仓库文件清单…">
           通过 GitLab repository tree API 递归列举文件。
         </EmptyState>
+      )}
+    </div>
+  );
+}
+
+function RegistryCard({ status, maxIndexes, onActivate, onRemove, onClear }: {
+  status: RepoIndexStatus;
+  maxIndexes: number;
+  onActivate: (ref: string) => void;
+  onRemove: (ref: string) => void;
+  onClear: () => void;
+}) {
+  const totalBytes = status.registry.reduce((total, entry) => total + entry.bytes, 0);
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: C.radiusLg, padding: 11, background: C.bg }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+        <HardDrive size={13} style={{ color: C.textSecondary }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>已缓存索引</span>
+        <span style={{ fontSize: 10.5, color: C.textMuted }}>{status.registry.length}/{maxIndexes} 份 · {formatBytes(totalBytes)}</span>
+        <span style={{ flex: 1 }} />
+        {status.storage.usage !== undefined && (
+          <span style={{ fontSize: 10, color: C.textMuted, ...mono }} title="浏览器站点存储用量 / 配额">
+            站点存储 {formatBytes(status.storage.usage)}{status.storage.quota ? ` / ${formatBytes(status.storage.quota)}` : ''}
+          </span>
+        )}
+        <button type="button" onClick={onClear} disabled={status.registry.length === 0}
+          title="删除全部本地索引" aria-label="删除全部本地索引"
+          style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.textMuted, display: 'flex', padding: 2, opacity: status.registry.length === 0 ? 0.4 : 1 }}>
+          <Trash2 size={13} />
+        </button>
+      </div>
+
+      {status.registry.length === 0 ? (
+        <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.7 }}>
+          还没有缓存。每个 branch / commit 的索引各自独立保存，切换 MR 时命中同 ref 可直接恢复；
+          超过 {maxIndexes} 份会自动清理最旧的。
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {[...status.registry]
+            .sort((a, b) => b.indexedAt.localeCompare(a.indexedAt))
+            .map((entry) => {
+              const active = entry.ref === status.ref;
+              const isHead = entry.ref === status.currentRef;
+              return (
+                <div key={entry.ref} style={{
+                  display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px',
+                  border: `1px solid ${active ? C.primary : C.border}`,
+                  background: active ? C.primaryLight : C.bgSubtle, borderRadius: C.radiusSm,
+                }}>
+                  <GitBranch size={12} style={{ color: active ? C.primary : C.textMuted, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {entry.label}
+                      </span>
+                      <span style={{ fontSize: 10, color: C.textMuted, ...mono }}>{entry.ref.slice(0, 8)}</span>
+                      {active && <Pill tone="success">已载入</Pill>}
+                      {isHead && <Pill>当前 head</Pill>}
+                    </div>
+                    <div style={{ fontSize: 10, color: C.textMuted, marginTop: 1, ...mono }}>
+                      {entry.files} 文件 · {formatBytes(entry.bytes)} · {entry.symbols} 符号 · {new Date(entry.indexedAt).toLocaleString('zh-CN')}
+                    </div>
+                  </div>
+                  {!active && (
+                    <Btn size="sm" variant="outline" onClick={() => onActivate(entry.ref)}>载入</Btn>
+                  )}
+                  <Btn size="sm" variant="ghost" onClick={() => onRemove(entry.ref)} title="删除这份索引" ariaLabel={`删除索引 ${entry.label}`}>
+                    <Trash2 size={12} />
+                  </Btn>
+                </div>
+              );
+            })}
+        </div>
       )}
     </div>
   );

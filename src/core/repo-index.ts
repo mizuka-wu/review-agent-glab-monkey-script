@@ -8,9 +8,9 @@ import {
 } from './symbols';
 
 /**
- * 仓库级上下文：GitLab REST 只提供 tree + raw 文件，没有符号索引，
- * 所以把文件缓存到 OPFS 后在本地构建符号表，供符号搜索、调用链和
- * Review 提示词的"Diff 外调用点"上下文使用。
+ * 仓库索引管理器。GitLab REST 没有符号级 API，因此把每个 ref 的仓库文件
+ * 缓存到 OPFS 的独立命名空间（/idx/<ref>/），并用注册表记录所有已缓存的
+ * ref：不同 branch / 不同 MR 的索引互不覆盖，可以按需载入、删除和配额清理。
  */
 
 export interface RepoIndexOptions {
@@ -18,6 +18,8 @@ export interface RepoIndexOptions {
   maxBytes: number;
   maxFileBytes: number;
   concurrency: number;
+  /** 注册表最多保留的索引份数，超出自动清理最旧的。 */
+  maxIndexes: number;
 }
 
 export const defaultRepoIndexOptions: RepoIndexOptions = {
@@ -25,14 +27,30 @@ export const defaultRepoIndexOptions: RepoIndexOptions = {
   maxBytes: 12 * 1024 * 1024,
   maxFileBytes: 300 * 1024,
   concurrency: 4,
+  maxIndexes: 6,
 };
 
 export type RepoIndexState = 'idle' | 'indexing' | 'ready' | 'error';
 
+export interface IndexRecord {
+  ref: string;
+  label: string;
+  projectPath: string;
+  indexedAt: string;
+  files: number;
+  bytes: number;
+  symbols: number;
+}
+
 export interface RepoIndexStatus {
   state: RepoIndexState;
   backend: StoreBackend;
+  /** 当前载入的索引 ref。 */
   ref: string;
+  label: string;
+  projectPath: string;
+  /** 页面当前 head ref；与 ref 不一致说明载入的是其它分支/旧提交。 */
+  currentRef: string;
   files: number;
   bytes: number;
   symbols: number;
@@ -40,9 +58,12 @@ export interface RepoIndexStatus {
   indexedAt?: string;
   progress: { done: number; total: number; current?: string };
   skipped: { files: number; bytes: number };
+  registry: IndexRecord[];
+  storage: { usage?: number; quota?: number };
   error?: string;
 }
 
+const REGISTRY_PATH = '/registry.json';
 const SKIP_PATH = /(?:^|\/)(?:node_modules|dist|build|out|target|vendor|\.git|coverage|__snapshots__|\.next|\.gradle|\.idea)\//;
 const SKIP_SUFFIX = /\.(?:min\.(?:js|css)|map|svg|png|jpe?g|gif|ico|woff2?|ttf|eot|wasm|pdf|zip)$/i;
 const LOCK_FILES = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|composer\.lock|Cargo\.lock|poetry\.lock|Gemfile\.lock|go\.sum|gradle\.lockfile)$/i;
@@ -51,6 +72,10 @@ function eligible(path: string): boolean {
   if (SKIP_PATH.test(path) || SKIP_SUFFIX.test(path) || LOCK_FILES.test(path)) return false;
   const language = detectLanguage(path);
   return language !== 'other' && language !== 'markdown';
+}
+
+function namespaceOf(ref: string): string {
+  return `/idx/${ref.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 }
 
 function countSymbols(index: SymbolIndex): number {
@@ -65,15 +90,19 @@ export class RepoIndex {
   private statusValue: RepoIndexStatus;
   private readonly listeners = new Set<(status: RepoIndexStatus) => void>();
   private symbolIndex: SymbolIndex | null = null;
+  private options: RepoIndexOptions;
   private abort: AbortController | undefined;
 
   constructor(
     readonly store: RepoStore,
-    private options: RepoIndexOptions = defaultRepoIndexOptions,
+    options: Partial<RepoIndexOptions> = {},
   ) {
+    this.options = { ...defaultRepoIndexOptions, ...options };
     this.statusValue = {
-      state: 'idle', backend: store.backend, ref: '', files: 0, bytes: 0, symbols: 0, refs: 0,
+      state: 'idle', backend: store.backend, ref: '', label: '', projectPath: '', currentRef: '',
+      files: 0, bytes: 0, symbols: 0, refs: 0,
       progress: { done: 0, total: 0 }, skipped: { files: 0, bytes: 0 },
+      registry: [], storage: {},
     };
   }
 
@@ -81,12 +110,17 @@ export class RepoIndex {
     return this.statusValue;
   }
 
-  updateOptions(patch: Partial<RepoIndexOptions>) {
-    this.options = { ...this.options, ...patch };
-  }
-
   get ready(): boolean {
     return this.statusValue.state === 'ready' && this.symbolIndex !== null;
+  }
+
+  /** 索引与当前 head 是否一致；不一致时仓库上下文不应注入提示词。 */
+  get inSync(): boolean {
+    return Boolean(this.statusValue.ref) && this.statusValue.ref === this.statusValue.currentRef;
+  }
+
+  updateOptions(patch: Partial<RepoIndexOptions>) {
+    this.options = { ...this.options, ...patch };
   }
 
   subscribe(listener: (status: RepoIndexStatus) => void): () => void {
@@ -99,38 +133,91 @@ export class RepoIndex {
     for (const listener of this.listeners) listener(this.statusValue);
   }
 
-  /** 命中同 ref 的已存索引时直接恢复，不重新拉文件。 */
-  async restore(ref: string): Promise<boolean> {
-    const meta = await this.store.readFile('/meta.json');
+  markCurrentRef(ref: string) {
+    if (this.statusValue.currentRef === ref) return;
+    this.emit({ currentRef: ref });
+  }
+
+  // --- Registry ---
+
+  async list(): Promise<IndexRecord[]> {
+    const raw = await this.store.readFile(REGISTRY_PATH);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as { entries?: IndexRecord[] };
+      return Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async saveRegistry(entries: IndexRecord[]): Promise<void> {
+    await this.store.writeFile(REGISTRY_PATH, JSON.stringify({ version: 1, entries }));
+  }
+
+  async refresh(): Promise<void> {
+    const registry = await this.list();
+    const storage = await this.estimate();
+    this.emit({ registry, storage });
+  }
+
+  private async estimate(): Promise<{ usage?: number; quota?: number }> {
+    try {
+      const estimate = await navigator.storage?.estimate?.();
+      return estimate ? { usage: estimate.usage, quota: estimate.quota } : {};
+    } catch {
+      return {};
+    }
+  }
+
+  // --- Lifecycle ---
+
+  /** 载入某个已缓存 ref 的索引（零网络）。 */
+  async activate(ref: string): Promise<boolean> {
+    const meta = await this.store.readFile(`${namespaceOf(ref)}/meta.json`);
     if (!meta) return false;
     try {
       const parsed = JSON.parse(meta) as SymbolIndex;
-      if (parsed.ref !== ref || !Array.isArray(parsed.files)) return false;
+      if (!Array.isArray(parsed.files)) return false;
+      const record = (await this.list()).find((entry) => entry.ref === ref);
       this.symbolIndex = parsed;
-      debugBus.log('info', 'repo-index', `从本地缓存恢复索引（${parsed.files.length} 文件）`, `ref ${ref.slice(0, 8)}`);
       this.emit({
-        state: 'ready', ref, files: parsed.files.length, symbols: countSymbols(parsed),
-        refs: countRefs(parsed), bytes: parsed.files.reduce((total, file) => total + file.bytes, 0),
+        state: 'ready', ref, label: record?.label ?? ref.slice(0, 8),
+        projectPath: record?.projectPath ?? this.statusValue.projectPath,
+        files: parsed.files.length, symbols: countSymbols(parsed), refs: countRefs(parsed),
+        bytes: record?.bytes ?? parsed.files.reduce((total, file) => total + file.bytes, 0),
         indexedAt: parsed.indexedAt, progress: { done: parsed.files.length, total: parsed.files.length },
+        error: undefined,
       });
+      debugBus.log('info', 'repo-index', `载入本地索引 ${ref.slice(0, 8)}（${parsed.files.length} 文件，零网络）`, record?.label);
       return true;
     } catch {
       return false;
     }
   }
 
-  async index(adapter: GitLabAdapter, ref: string, signal?: AbortSignal): Promise<RepoIndexStatus> {
+  /** 兼容旧调用：等价于 activate。 */
+  restore(ref: string): Promise<boolean> {
+    return this.activate(ref);
+  }
+
+  async index(
+    adapter: GitLabAdapter,
+    input: { ref: string; label?: string; projectPath?: string; signal?: AbortSignal },
+  ): Promise<RepoIndexStatus> {
+    const { ref } = input;
     this.abort?.abort();
     const controller = new AbortController();
     this.abort = controller;
     const onAbort = () => controller.abort();
-    signal?.addEventListener('abort', onAbort, { once: true });
+    input.signal?.addEventListener('abort', onAbort, { once: true });
 
+    const namespace = namespaceOf(ref);
     this.emit({
-      state: 'indexing', ref, error: undefined, files: 0, bytes: 0, symbols: 0, refs: 0,
+      state: 'indexing', ref: this.statusValue.ref, error: undefined,
       progress: { done: 0, total: 0 }, skipped: { files: 0, bytes: 0 },
     });
-    debugBus.log('info', 'repo-index', `开始建立仓库索引 ref ${ref.slice(0, 8)}`, `存储后端 ${this.store.backend}`);
+    debugBus.log('info', 'repo-index', `开始建立索引 ${ref.slice(0, 8)}（${input.label ?? ''}）`, `存储后端 ${this.store.backend}`);
 
     try {
       const tree = await adapter.listTree(ref, { signal: controller.signal });
@@ -159,7 +246,7 @@ export class RepoIndex {
               continue;
             }
             bytes += content.length;
-            await this.store.writeFile(`/files/${entry.path}`, content);
+            await this.store.writeFile(`${namespace}/files/${entry.path}`, content);
             loaded.push({ path: entry.path, content });
           } catch {
             skippedFiles += 1;
@@ -168,21 +255,35 @@ export class RepoIndex {
       });
       await Promise.all(workers);
 
-      const index = buildSymbolIndex({
+      const built = buildSymbolIndex({
         ref,
         files: loaded.map((file) => ({ ...extractFileSymbols(file.path, file.content), content: file.content })),
       });
-      this.symbolIndex = index;
-      await this.store.writeFile('/meta.json', JSON.stringify(index));
+      await this.store.writeFile(`${namespace}/meta.json`, JSON.stringify(built));
+
+      const record: IndexRecord = {
+        ref,
+        label: input.label ?? ref.slice(0, 8),
+        projectPath: input.projectPath ?? this.statusValue.projectPath,
+        indexedAt: built.indexedAt,
+        files: built.files.length,
+        bytes,
+        symbols: countSymbols(built),
+      };
+      const registry = await this.list();
+      const pruned = await this.withRegistry([...registry.filter((entry) => entry.ref !== ref), record], ref);
+
+      this.symbolIndex = built;
       this.emit({
-        state: 'ready', files: index.files.length, bytes, symbols: countSymbols(index),
-        refs: countRefs(index), indexedAt: index.indexedAt,
-        skipped: { files: skippedFiles, bytes: skippedBytes },
+        state: 'ready', ref, label: record.label, projectPath: record.projectPath,
+        files: record.files, bytes, symbols: record.symbols, refs: countRefs(built),
+        indexedAt: record.indexedAt, skipped: { files: skippedFiles, bytes: skippedBytes },
         progress: { done: candidates.length, total: candidates.length },
+        registry: pruned, storage: await this.estimate(), error: undefined,
       });
       debugBus.log('info', 'repo-index',
-        `索引完成：${index.files.length} 文件 / ${(bytes / 1024).toFixed(0)} KB / ${countSymbols(index)} 符号 / ${countRefs(index)} 引用`,
-        `ref ${ref.slice(0, 8)} · 存储 ${this.store.backend} · 跳过 ${skippedFiles} 文件`);
+        `索引完成：${record.files} 文件 / ${(bytes / 1024).toFixed(0)} KB / ${record.symbols} 符号 / ${countRefs(built)} 引用`,
+        `ref ${ref.slice(0, 8)} · ${record.label} · 缓存 ${pruned.length} 份`);
     } catch (error) {
       const aborted = controller.signal.aborted || (error as Error).name === 'AbortError';
       const message = error instanceof Error ? error.message : String(error);
@@ -191,15 +292,61 @@ export class RepoIndex {
         : { state: this.symbolIndex ? 'ready' : 'error', error: message });
       debugBus.log(aborted ? 'warn' : 'error', 'repo-index', aborted ? '索引已取消' : `索引失败：${message}`);
     } finally {
-      signal?.removeEventListener('abort', onAbort);
+      input.signal?.removeEventListener('abort', onAbort);
       this.abort = undefined;
     }
     return this.statusValue;
   }
 
+  /** 写入注册表并按 maxIndexes 清理最旧索引（刚写入的永远保留）。 */
+  private async withRegistry(entries: IndexRecord[], keepRef?: string): Promise<IndexRecord[]> {
+    const sorted = [...entries].sort((a, b) =>
+      b.indexedAt.localeCompare(a.indexedAt)
+      || (a.ref === keepRef ? -1 : b.ref === keepRef ? 1 : 0));
+    const keep = sorted.slice(0, this.options.maxIndexes);
+    const dropped = sorted.slice(this.options.maxIndexes).filter((entry) => entry.ref !== keepRef);
+    for (const record of dropped) {
+      await this.store.removeDir(namespaceOf(record.ref));
+      debugBus.log('info', 'repo-index', `配额清理：删除旧索引 ${record.ref.slice(0, 8)}（${record.label}）`);
+    }
+    await this.saveRegistry(keep);
+    return keep;
+  }
+
+  async remove(ref: string): Promise<void> {
+    await this.store.removeDir(namespaceOf(ref));
+    const registry = (await this.list()).filter((entry) => entry.ref !== ref);
+    await this.saveRegistry(registry);
+    if (this.statusValue.ref === ref) {
+      this.symbolIndex = null;
+      this.emit({
+        state: 'idle', ref: '', label: '', files: 0, bytes: 0, symbols: 0, refs: 0,
+        indexedAt: undefined, progress: { done: 0, total: 0 }, registry, storage: await this.estimate(),
+      });
+    } else {
+      this.emit({ registry, storage: await this.estimate() });
+    }
+    debugBus.log('info', 'repo-index', `已删除索引 ${ref.slice(0, 8)}`);
+  }
+
+  async clear(): Promise<void> {
+    this.cancel();
+    await this.store.removeDir('/idx');
+    await this.store.remove(REGISTRY_PATH);
+    this.symbolIndex = null;
+    this.emit({
+      state: 'idle', ref: '', label: '', files: 0, bytes: 0, symbols: 0, refs: 0,
+      indexedAt: undefined, progress: { done: 0, total: 0 }, skipped: { files: 0, bytes: 0 },
+      registry: [], storage: await this.estimate(), error: undefined,
+    });
+    debugBus.log('info', 'repo-index', '已清除全部本地索引缓存');
+  }
+
   cancel() {
     this.abort?.abort();
   }
+
+  // --- Queries (against the active namespace) ---
 
   search(query: string, limit = 20): SymbolSearchResult {
     return this.symbolIndex ? searchSymbols(this.symbolIndex, query, limit) : { defs: [], refs: [] };
@@ -214,21 +361,19 @@ export class RepoIndex {
   }
 
   readFile(path: string): Promise<string | null> {
-    return this.store.readFile(`/files/${path}`);
-  }
-
-  async clear(): Promise<void> {
-    this.cancel();
-    await this.store.clear();
-    this.symbolIndex = null;
-    this.emit({
-      state: 'idle', ref: '', files: 0, bytes: 0, symbols: 0, refs: 0, indexedAt: undefined,
-      progress: { done: 0, total: 0 }, skipped: { files: 0, bytes: 0 }, error: undefined,
-    });
+    if (!this.statusValue.ref) return Promise.resolve(null);
+    return this.store.readFile(`${namespaceOf(this.statusValue.ref)}/files/${path}`);
   }
 }
 
 export async function createRepoIndex(options?: Partial<RepoIndexOptions>): Promise<RepoIndex> {
   const store = await createRepoStore('/review-agent');
-  return new RepoIndex(store, { ...defaultRepoIndexOptions, ...options });
+  // 清理 0.x 单份缓存布局，避免孤儿数据占空间
+  if (await store.exists('/meta.json')) {
+    await store.removeDir('/files');
+    await store.remove('/meta.json');
+  }
+  const index = new RepoIndex(store, options);
+  await index.refresh();
+  return index;
 }

@@ -297,10 +297,18 @@ function RepoIndexSection({ settings, onSettingsChange }: SettingsViewProps) {
                     onChange={(v) => patch({ maxFiles: Math.max(10, Math.min(5000, Number(v.replace(/\D/g, '')) || repo.maxFiles)) })}
                   />
                 </Field>
-                <Field label="体积上限 (MB)">
+                <Field label="单份体积上限 (MB)">
                   <Input
                     mono value={String(Math.round(repo.maxBytes / 1024 / 1024))}
                     onChange={(v) => patch({ maxBytes: Math.max(1, Math.min(200, Number(v.replace(/\D/g, '')) || 12)) * 1024 * 1024 })}
+                  />
+                </Field>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field label="保留索引份数" hint="不同 branch/commit 各一份，超出自动清理最旧">
+                  <Input
+                    mono value={String(repo.maxIndexes)}
+                    onChange={(v) => patch({ maxIndexes: Math.max(1, Math.min(20, Number(v.replace(/\D/g, '')) || 6)) })}
                   />
                 </Field>
               </div>

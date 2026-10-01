@@ -280,6 +280,13 @@ test.describe('mock mode', () => {
     await page.getByRole('button', { name: /verifyToken/ }).first().click();
     await expect(page.getByText(/调用链（向上 2 层/)).toBeVisible();
     await expect(page.getByText(/handler/).first()).toBeVisible();
+
+    // 注册表：按 branch 记录，标记当前 head，可单独删除
+    await expect(page.getByText('已缓存索引')).toBeVisible();
+    await expect(page.getByText('feature/payment')).toBeVisible();
+    await expect(page.getByText('当前 head')).toBeVisible();
+    await page.getByRole('button', { name: '删除索引 feature/payment' }).click();
+    await expect(page.getByText('还没有缓存')).toBeVisible();
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
