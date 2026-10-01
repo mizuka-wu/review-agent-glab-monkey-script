@@ -415,11 +415,11 @@ test.describe('mock mode', () => {
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
     // 页内 diff 选区 → 工具条出现（拖拽选区比 dblclick 在各环境更稳定）
     const code = page.locator('code.ra-line-code').first();
-    const box = (await code.boundingBox())!;
+    const lineBox = (await code.boundingBox())!;
     const selectLine = async () => {
-      await page.mouse.move(box.x + 1, box.y + box.height / 2);
+      await page.mouse.move(lineBox.x + 1, lineBox.y + lineBox.height / 2);
       await page.mouse.down();
-      await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 6 });
+      await page.mouse.move(lineBox.x + lineBox.width - 1, lineBox.y + lineBox.height / 2, { steps: 6 });
       await page.mouse.up();
     };
     await selectLine();
