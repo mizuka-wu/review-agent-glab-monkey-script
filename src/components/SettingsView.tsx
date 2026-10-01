@@ -1,9 +1,29 @@
 import { useEffect, useState } from 'react';
 import {
-  Bug, Cpu, Database, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
-  RefreshCw, Check, Save, Download, Upload, ChevronDown, ChevronRight, HelpCircle,
+  Bug,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Cpu,
+  Database,
+  Download,
+  Eye,
+  EyeOff,
+  Globe,
+  HelpCircle,
+  Package,
+  Plus,
+  Puzzle,
+  RefreshCw,
+  Save,
+  Shield,
+  ShieldCheck,
+  TestTube,
+  Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
-import type { RuntimeSettings } from '../core/types';
+import type { McpServerEntry, RuntimeSettings } from '../core/types';
 import type { UsageSummary } from '../core/usage';
 import { formatTokenCount, formatCost } from '../core/usage';
 import { BUILT_IN_PACK, countEnabledRules, type RulePack } from '../core/rule-packs';
@@ -659,6 +679,11 @@ function DebugSection({ settings, onSettingsChange, onOpenDebug }: SettingsViewP
 
 // ─── MCP ───
 function McpSection({ settings, onSettingsChange }: SettingsViewProps) {
+  const servers = settings.mcp.servers ?? [];
+  const setServers = (next: McpServerEntry[]) => onSettingsChange({ ...settings, mcp: { ...settings.mcp, servers: next } });
+  const updateServer = (index: number, patch: Partial<McpServerEntry>) => setServers(servers.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  const removeServer = (index: number) => setServers(servers.filter((_, i) => i !== index));
+  const addServer = () => setServers([...servers, { id: `mcp-${Date.now().toString(36)}`, name: `MCP ${servers.length + 1}`, url: 'http://127.0.0.1:3000/mcp', enabled: true }]);
   return (
     <Card>
       <CardHeader
@@ -677,14 +702,20 @@ function McpSection({ settings, onSettingsChange }: SettingsViewProps) {
             <Toggle checked={settings.mcp.enabled} onChange={v => onSettingsChange({ ...settings, mcp: { ...settings.mcp, enabled: v } })} />
           </div>
           {settings.mcp.enabled && (
-            <Field label="Server URL" hint="Streamable HTTP 端点">
-              <Input
-                value={settings.mcp.serverUrl}
-                onChange={v => onSettingsChange({ ...settings, mcp: { ...settings.mcp, serverUrl: v } })}
-                placeholder="http://localhost:3000/mcp"
-                mono
-              />
-            </Field>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {servers.map((entry, index) => (
+                <div key={entry.id} style={{ border: `1px solid ${C.border}`, borderRadius: C.radiusSm, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <Toggle checked={entry.enabled} onChange={v => updateServer(index, { enabled: v })} />
+                    <Input value={entry.name} onChange={v => updateServer(index, { name: v })} placeholder="名称" style={{ flex: 1, height: 30 }} />
+                    <Btn variant="ghost" size="sm" icon={<Trash2 size={13} />} ariaLabel="删除该 MCP 服务器" onClick={() => removeServer(index)} />
+                  </div>
+                  <Input value={entry.url} onChange={v => updateServer(index, { url: v })} placeholder="http://127.0.0.1:3000/mcp" mono style={{ height: 30 }} />
+                </div>
+              ))}
+              {servers.length === 0 && <div style={{ fontSize: 11, color: C.textMuted }}>还没有 MCP 服务器，添加一个以扩展 Agent 工具。</div>}
+              <Btn variant="outline" size="sm" icon={<Plus size={13} />} onClick={addServer}>添加 MCP 服务器</Btn>
+            </div>
           )}
         </div>
       </CardBody>

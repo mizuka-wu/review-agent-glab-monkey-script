@@ -16,7 +16,7 @@
 - **OpenAI 兼容接口**：官方端点、企业网关、本地代理均可；Bearer Token、API Key Header、Query Parameter、自定义 Header 四种认证模式（网关免鉴权时可不填 Key）
 - **本地模型提示**：Base URL 旁「?」列出 omlx / Ollama / LM Studio 的默认端口与带 `/v1` 后缀的兼容地址，点击即填；localhost 端点自动拉取 `/v1/models` 列表；模型名为「可输入 + 下拉建议」组合框，当前模型不在服务器列表时自动切换到第一个可用模型并立即保存；对话区顶部也可直接切换模型；可用「关闭思考输出」开关抑制 omlx/vLLM 的思考过程泄漏
 - **Agent 工具循环**：模型可主动调用 `file_read`、`search_code`、`git_log` 工具获取仓库上下文
-- **MCP 扩展**：通过 Streamable HTTP 连接本地 MCP server，扩展工具能力
+- **MCP 扩展**：可同时连接多个 MCP server（Streamable HTTP / SSE），工具名按服务 id 加前缀避免冲突，调用按前缀路由；单服务器旧配置自动迁移
 - **SSE 流式输出**：聊天逐 token 流式渲染；Review 模型阶段同样流式——思考通道（`reasoning_content`）以可折叠打字机呈现（默认折叠、实时字数），finding 随流式逐条增量进入结果列表，原始 JSON 默认折叠仅供排查；可随时「取消」停止；服务端不支持 SSE 时自动回退一次性读取；规则结果在规则阶段完成后立即先行渲染
 - **三档审查强度**：fast（仅高置信）、balanced（默认）、thorough（全面）
 

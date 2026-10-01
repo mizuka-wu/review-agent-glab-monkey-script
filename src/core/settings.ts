@@ -1,4 +1,13 @@
-import type { ModelProvider, RuntimeSettings } from './types';
+import type { McpSettings, ModelProvider, RuntimeSettings } from './types';
+
+/** 旧版单服务器配置迁移为服务器列表。 */
+function migrateMcp(mcp: Partial<McpSettings> & { serverUrl?: string }): McpSettings {
+  const servers = Array.isArray(mcp.servers) ? [...mcp.servers] : [];
+  if (servers.length === 0 && mcp.serverUrl) {
+    servers.push({ id: 'mcp-1', name: 'MCP 1', url: mcp.serverUrl, enabled: true });
+  }
+  return { enabled: Boolean(mcp.enabled), servers };
+}
 
 export interface ProviderPreset {
   label: string;
@@ -37,7 +46,7 @@ export const defaultSettings: RuntimeSettings = {
   effort: 'balanced',
   reviewMode: 'hybrid',
   language: 'zh-CN',
-  mcp: { enabled: false, serverUrl: 'http://127.0.0.1:3000/mcp' },
+  mcp: { enabled: false, servers: [] },
   repoIndex: { enabled: true, maxFiles: 400, maxBytes: 12 * 1024 * 1024, maxIndexes: 6 },
   repoContext: true,
   debugEnabled: false,
@@ -175,7 +184,7 @@ export async function loadSettings(): Promise<RuntimeSettings> {
     return deobfuscateSettings({
       ...defaultSettings,
       ...partial,
-      mcp: { ...defaultSettings.mcp, ...(partial.mcp ?? {}) },
+      mcp: migrateMcp((partial.mcp ?? {}) as Partial<McpSettings> & { serverUrl?: string }),
       auth: { ...defaultSettings.auth, ...(partial.auth ?? {}) },
       repoIndex: { ...defaultSettings.repoIndex, ...(partial.repoIndex ?? {}) },
     });

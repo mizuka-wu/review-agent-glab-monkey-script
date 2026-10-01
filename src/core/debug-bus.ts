@@ -78,6 +78,19 @@ class DebugBus {
     this.restore();
   }
 
+  private seenErrorsAt = Number(typeof localStorage === 'undefined' ? 0 : localStorage.getItem('review-agent-debug-seen-errors') ?? 0);
+
+  /** 尚未被用户查看过的错误日志数（设置/调试标签红点的依据）。 */
+  unseenErrorCount(): number {
+    return this.getLogs().filter((entry) => entry.level === 'error' && Date.parse(entry.ts) > this.seenErrorsAt).length;
+  }
+
+  markErrorsSeen(): void {
+    this.seenErrorsAt = Date.now();
+    try { localStorage.setItem('review-agent-debug-seen-errors', String(this.seenErrorsAt)); } catch { /* 忽略存储失败 */ }
+    this.emitChange();
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

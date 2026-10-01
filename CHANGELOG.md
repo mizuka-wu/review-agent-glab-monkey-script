@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- MCP extension now supports multiple servers (list management in settings, per-server enable, tool names prefixed with the server id and routed back on call); legacy single-`serverUrl` settings migrate automatically.
+- The settings/debug tab red dot now means *unseen* error logs: it clears once the debug tab is opened and shows a tooltip with the reason (unconfigured model / N unseen errors).
+- Thinking pane compacts JSON drafts and code fences into fold summaries, auto-scrolls while expanded, and the raw thinking is recorded in the debug prompt log.
+- The selection toolbar hides for selections made inside the panel (shadow root), including clicks and text selection in panel inputs.
+
 ## 0.3.0 — 2026-10-01
 - VitePress docs site on GitHub Pages (design docs only; old numeric-prefixed URLs keep working via static redirects); README and the panel header link to it.
 - GitLab API calls now route through `httpRequest` (GM.xmlHttpRequest first, fetch fallback) so self-hosted GitLab works from the Tampermonkey sandbox; a failed existing-discussions read surfaces as a warning + toast instead of a silent success.

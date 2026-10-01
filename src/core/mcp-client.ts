@@ -212,3 +212,29 @@ export class McpClient {
     };
   }
 }
+
+/** 多 MCP 服务器聚合：工具名加 `<serverId>__` 前缀避免冲突，调用时按前缀路由。 */
+export class MultiMcpClient {
+  readonly availableTools: ToolDefinition[] = [];
+  private readonly routes = new Map<string, { client: McpClient; original: string }>();
+
+  constructor(clients: { id: string; client: McpClient }[]) {
+    for (const { id, client } of clients) {
+      for (const tool of client.availableTools) {
+        const name = `${id}__${tool.name}`;
+        this.routes.set(name, { client, original: tool.name });
+        this.availableTools.push({
+          ...tool,
+          name,
+          description: tool.description ? `[${id}] ${tool.description}` : tool.description,
+        });
+      }
+    }
+  }
+
+  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    const route = this.routes.get(name);
+    if (!route) throw new Error(`未知 MCP 工具：${name}`);
+    return route.client.callTool(route.original, args, signal);
+  }
+}

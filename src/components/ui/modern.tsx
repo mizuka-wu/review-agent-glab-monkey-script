@@ -385,14 +385,14 @@ export function EmptyState({ icon, title, children, action }: {
 // ─── Tabs ───
 export function Tabs<T extends string>({ value, onChange, items }: {
   value: T; onChange: (v: T) => void;
-  items: { value: T; label: string; icon?: ReactNode; count?: number; dot?: boolean }[];
+  items: { value: T; label: string; icon?: ReactNode; count?: number; dot?: boolean; title?: string }[];
 }) {
   return (
     <div role="tablist" style={{ display: 'flex', gap: 2, padding: '0 8px', background: C.headerBg, borderBottom: `1px solid rgba(255,255,255,0.08)` }}>
       {items.map((item) => {
         const active = item.value === value;
         return (
-          <button key={item.value} type="button" role="tab" aria-selected={active} onClick={() => onChange(item.value)}
+          <button key={item.value} type="button" role="tab" aria-selected={active} title={item.title} onClick={() => onChange(item.value)}
             style={{
               position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 5,
               padding: '8px 10px 9px', border: 0, background: 'transparent', cursor: 'pointer',

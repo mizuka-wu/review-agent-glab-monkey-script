@@ -21,7 +21,7 @@ import { clearHighlights, highlightFindingOnPage, injectHighlightStyles } from '
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
-import { McpClient } from './core/mcp-client';
+import { McpClient, MultiMcpClient } from './core/mcp-client';
 import { createModelRuntime, type AgentMessage, type ModelRuntime } from './core/model-runtime';
 import { createRepoIndex, type RepoIndex, type RepoIndexStatus } from './core/repo-index';
 import { ReviewEngine } from './core/review-engine';
@@ -457,20 +457,27 @@ export default function App({ page }: AppProps) {
           undefined,
           repoIndex ? [new RepoIndexToolExecutor(repoIndex)] : [],
         );
-        if (settings.mcp?.enabled && settings.mcp.serverUrl) {
-          try {
-            const mcpClient = new McpClient({ url: settings.mcp.serverUrl, enabled: true });
-            await mcpClient.initialize();
-            if (mcpClient.availableTools.length > 0) {
-              executor = new CompositeToolExecutor(
-                gitlabExecutor,
-                mcpClient,
-                repoIndex ? [new RepoIndexToolExecutor(repoIndex)] : [],
-              );
-              addLog('info', 'mcp', `已接入 ${mcpClient.availableTools.length} 个 MCP 工具`);
+        if (settings.mcp?.enabled) {
+          const entries = (settings.mcp.servers ?? []).filter((entry) => entry.enabled && entry.url.trim());
+          const connected: { id: string; client: McpClient }[] = [];
+          for (const entry of entries) {
+            try {
+              const client = new McpClient({ url: entry.url, enabled: true });
+              await client.initialize();
+              if (client.availableTools.length > 0) connected.push({ id: entry.id, client });
+              else addLog('warn', 'mcp', `MCP ${entry.name} 无可用工具`, entry.url);
+            } catch (error) {
+              addLog('warn', 'mcp', `MCP ${entry.name} 连接失败，已跳过`, String(error));
             }
-          } catch (error) {
-            addLog('warn', 'mcp', 'MCP 连接失败，仅使用 GitLab 工具', String(error));
+          }
+          if (connected.length > 0) {
+            const multi = new MultiMcpClient(connected);
+            executor = new CompositeToolExecutor(
+              gitlabExecutor,
+              multi,
+              repoIndex ? [new RepoIndexToolExecutor(repoIndex)] : [],
+            );
+            addLog('info', 'mcp', `已接入 ${connected.length} 个 MCP 服务 / ${multi.availableTools.length} 个工具`);
           }
         }
         const agentMessages: AgentMessage[] = history
@@ -1094,10 +1101,14 @@ export default function App({ page }: AppProps) {
     setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
   }, []);
 
-  const hasErrorLogs = useSyncExternalStore(
+  const unseenErrors = useSyncExternalStore(
     useCallback((listener: () => void) => debugBus.subscribe(listener), []),
-    () => debugBus.getLogs().reduce((total, entry) => total + (entry.level === 'error' ? 1 : 0), 0),
-  ) > 0;
+    () => debugBus.unseenErrorCount(),
+  );
+
+  useEffect(() => {
+    if (tab === 'debug') debugBus.markErrorsSeen();
+  }, [tab]);
 
   useEffect(() => {
     if (!settings.debugEnabled && tab === 'debug') setTab('review');
@@ -1230,9 +1241,9 @@ export default function App({ page }: AppProps) {
             { value: 'review', label: '结果', icon: <CheckSquare size={13} />, count: findings.length },
             { value: 'chat', label: '对话', icon: <MessageSquare size={13} />, dot: responding },
             { value: 'repo', label: '索引', icon: <Database size={13} />, dot: repoStatus?.state === 'ready' },
-            { value: 'settings', label: '设置', icon: <SettingsIcon size={13} />, dot: (!modelReady && settingsLoaded) || hasErrorLogs },
+            { value: 'settings', label: '设置', icon: <SettingsIcon size={13} />, dot: (!modelReady && settingsLoaded) || unseenErrors > 0, title: [!modelReady && settingsLoaded ? '模型未配置' : '', unseenErrors > 0 ? `${unseenErrors} 条未读错误日志` : ''].filter(Boolean).join('；') || undefined },
             ...(settings.debugEnabled
-              ? [{ value: 'debug' as Tab, label: '调试', icon: <Bug size={13} />, dot: hasErrorLogs }]
+              ? [{ value: 'debug' as Tab, label: '调试', icon: <Bug size={13} />, dot: unseenErrors > 0, title: unseenErrors > 0 ? `${unseenErrors} 条未读错误日志` : undefined }]
               : []),
           ]}
         />

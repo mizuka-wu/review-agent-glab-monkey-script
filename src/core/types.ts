@@ -143,9 +143,16 @@ export type ReviewMode = 'hybrid' | 'rules' | 'ai';
 export type ModelProvider = 'openai' | 'anthropic' | 'gemini';
 export type AuthMode = 'bearer' | 'api-key-header' | 'query-param' | 'custom';
 
+export interface McpServerEntry {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+
 export interface McpSettings {
   enabled: boolean;
-  serverUrl: string;
+  servers: McpServerEntry[];
 }
 
 export interface AuthSettings {
