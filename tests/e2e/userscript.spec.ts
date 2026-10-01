@@ -67,7 +67,7 @@ const diff = {
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number }) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -117,6 +117,10 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
     };
     if (options?.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+    if (options?.modelStatus) {
+      await route.fulfill({ status: options.modelStatus, contentType: 'application/json', body: JSON.stringify({ error: { message: 'model not found' } }) });
+      return;
+    }
     const content = body.choices[0].message.content as string;
     if (options?.stream && (route.request().postData() ?? '').includes('"stream":true')) {
       const step = Math.max(1, Math.floor(content.length / 3));
@@ -372,6 +376,21 @@ test.describe('mock mode', () => {
     await expect(page.getByText('已取消')).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('模型分析已停止；已完成的规则结果仍保留并可发布。')).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: '开始 Review' })).toBeVisible({ timeout: 10000 });
+  });
+
+  test('shows a visible banner when the model endpoint fails', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests, { modelStatus: 404 });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'missing-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('AI 评审未运行', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/模型服务返回 HTTP 404/)).toBeVisible({ timeout: 10000 });
+    // 规则结果不受模型失败影响
+    await expect(page.getByText(/个问题/)).toBeVisible({ timeout: 10000 });
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {

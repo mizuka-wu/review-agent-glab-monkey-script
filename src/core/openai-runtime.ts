@@ -286,7 +286,7 @@ export class OpenAIRuntime {
 
       const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
       if (!response.ok || payload.error) {
-        const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}`;
+        const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}（${this.buildUrl('/chat/completions')}）`;
         if (attempt < 2 && shouldRetry(response.status)) {
           await wait(250 * 2 ** attempt, options.signal);
           continue;

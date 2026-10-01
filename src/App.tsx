@@ -655,6 +655,9 @@ export default function App({ page }: AppProps) {
 
       setFindings(synced);
       setStages(result.stages);
+      if (result.stages.model.ran === false && result.stages.model.error) {
+        setToast(`AI 评审未运行：${result.stages.model.error}`);
+      }
       setReviewWarnings(result.warnings);
       setExpandedFinding(synced[0]?.id ?? '');
       setReviewStatus('completed');
@@ -1218,6 +1221,18 @@ export default function App({ page }: AppProps) {
           {tab === 'review' && (
             <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 }}>
               <div className="ra-scroll" style={{ flexShrink: 0, maxHeight: '45%', overflowY: 'auto', padding: findings.length > 0 ? '8px 10px 0' : 10, display: 'flex', flexDirection: 'column', gap: 7, borderBottom: findings.length > 0 ? 'none' : `1px solid ${C.border}` }}>
+                {stages?.model.ran === false && stages.model.error && (
+                  <Banner
+                    tone="danger"
+                    title="AI 评审未运行"
+                    action={<Btn size="sm" variant="outline" onClick={() => setTab('settings')}>打开设置</Btn>}
+                  >
+                    {stages.model.error}
+                    <div style={{ marginTop: 4 }}>
+                      常见原因：Base URL 路径与服务不一致（OpenAI 兼容通常以 /v1 结尾）、模型名不存在或已卸载、本地服务未启动。规则检查结果不受影响。
+                    </div>
+                  </Banner>
+                )}
                 {loadError && (
                   <Banner tone="danger" title="读取 GitLab 数据失败" onDismiss={() => setLoadError('')}>
                     {loadError}
