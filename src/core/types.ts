@@ -7,7 +7,7 @@ export type FindingCategory =
 
 export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type FindingConfidence = 'high' | 'medium' | 'low';
-export type FindingStatus = 'draft' | 'ignored' | 'published' | 'failed';
+export type FindingStatus = 'draft' | 'ignored' | 'published' | 'failed' | 'fixed';
 
 /** 规则命中 = 确定性检查（无需模型），model = AI 评审。 */
 export type FindingSource = 'rule' | 'model';

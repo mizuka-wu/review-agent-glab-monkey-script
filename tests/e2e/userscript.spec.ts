@@ -459,6 +459,31 @@ test.describe('mock mode', () => {
     await expect(panel.getByText('禁止报告命名风格问题').first()).toBeVisible({ timeout: 10000 });
   });
 
+  test('session viewer replays findings, marks fixed and hides handled', async ({ page }) => {
+    await routeGitLab(page);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText(/个问题/)).toBeVisible({ timeout: 15000 });
+
+    await page.locator('article').first().getByRole('button', { name: '忽略' }).click();
+    await page.getByRole('button', { name: '回放' }).click();
+    const dialog = page.getByRole('dialog', { name: '会话回放' });
+    await expect(dialog).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByText('已忽略').first()).toBeVisible({ timeout: 10000 });
+
+    await dialog.getByRole('switch').click();
+    await expect(dialog.getByText('已忽略')).toHaveCount(0);
+    await dialog.getByRole('switch').click();
+
+    await dialog.getByRole('button', { name: '标记已修复' }).first().click();
+    await expect(dialog.getByText('已修复').first()).toBeVisible({ timeout: 10000 });
+
+    await dialog.getByRole('button', { name: '恢复为当前会话' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('article').first().getByText('已修复')).toBeVisible({ timeout: 10000 });
+  });
+
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
     const metadata = bundle.slice(bundle.indexOf('// ==UserScript=='), bundle.indexOf('// ==/UserScript=='));
     expect(metadata).toContain('@name         Review Agent for GitLab');

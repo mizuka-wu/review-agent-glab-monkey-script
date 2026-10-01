@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactThinking } from '../../src/core/thinking';
+import { compactThinking, extractThinkingOutline } from '../../src/core/thinking';
 
 describe('compactThinking', () => {
   it('folds long JSON drafts but keeps short ones', () => {
@@ -20,5 +20,29 @@ describe('compactThinking', () => {
 
   it('keeps prose untouched', () => {
     expect(compactThinking('  先检查 cookies.txt 是否包含会话凭据…  ')).toBe('先检查 cookies.txt 是否包含会话凭据…');
+  });
+});
+
+describe('extractThinkingOutline', () => {
+  it('extracts bullets and a prose/json/code timeline', () => {
+    const text = [
+      '先检查 cookies.txt 是否包含会话凭据，发现 _gitlab_session 明文。',
+      '```ts',
+      'const a = 1;',
+      '```',
+      '{"findings": [{' + `"path": "a.ts", "title": "${'x'.repeat(140)}"` + '}]}',
+      '建议把凭据移到密钥管理服务。',
+    ].join('\n');
+    const outline = extractThinkingOutline(text);
+    expect(outline.bullets.length).toBeGreaterThanOrEqual(2);
+    expect(outline.bullets.some((b) => b.includes('发现'))).toBe(true);
+    const kinds = outline.timeline.map((segment) => segment.kind);
+    expect(kinds).toContain('code');
+    expect(kinds).toContain('json');
+    expect(kinds).toContain('prose');
+  });
+
+  it('returns empty outline for empty input', () => {
+    expect(extractThinkingOutline('')).toEqual({ bullets: [], timeline: [] });
   });
 });

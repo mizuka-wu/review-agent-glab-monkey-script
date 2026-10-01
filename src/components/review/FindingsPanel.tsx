@@ -13,9 +13,9 @@ import type { Finding, ReviewStageReport } from '../../core/types';
 export type SourceFilter = 'all' | 'rule' | 'model';
 export type SortKey = 'severity' | 'path' | 'source';
 
-const severityLabel = { critical: '严重', high: '高', medium: '中', low: '低' };
 const categoryLabel = { bug: '缺陷', security: '安全', performance: '性能', maintainability: '可维护性', test: '测试' };
-const statusLabel = { draft: '待处理', ignored: '已忽略', published: '已发布', failed: '发布失败' };
+export const statusLabel: Record<Finding['status'], string> = { draft: '待处理', ignored: '已忽略', published: '已发布', failed: '发布失败', fixed: '已修复' };
+export const severityLabel: Record<Finding['severity'], string> = { critical: '严重', high: '高', medium: '中', low: '低' };
 const severityOrder: Record<Finding['severity'], number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
 /** 合并过的 Finding 同时属于两个来源，任一筛选都应该能看到它。 */
@@ -59,6 +59,7 @@ export interface FindingsPanelProps {
   onCopy: (finding: Finding) => void;
   onPublish: (finding: Finding) => void;
   onIgnore: (finding: Finding) => void;
+  onMarkFixed: (finding: Finding) => void;
   onEdit: (id: string, edit: FindingEdit) => void;
   onOpenSettings: () => void;
   onDismissError: () => void;
@@ -262,6 +263,7 @@ export function FindingsPanel(props: FindingsPanelProps) {
                     onCopy={() => props.onCopy(finding)}
                     onPublish={() => props.onPublish(finding)}
                     onIgnore={() => props.onIgnore(finding)}
+                    onMarkFixed={() => props.onMarkFixed(finding)}
                     onEdit={(edit) => props.onEdit(finding.id, edit)}
                   />
                 ))}

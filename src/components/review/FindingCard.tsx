@@ -1,8 +1,5 @@
 import { useState } from 'react';
-import {
-  Check, ChevronDown, ChevronRight, Copy, Crosshair, Edit3, EyeOff,
-  MessageSquarePlus, Save, X,
-} from 'lucide-react';
+import { Check, CheckCheck, ChevronDown, ChevronRight, Copy, Crosshair, Edit3, EyeOff, MessageSquarePlus, Save, X } from 'lucide-react';
 import { findingEditableFields, type FindingEdit } from '../../core/finding-edit';
 import { Markdown } from '../Markdown';
 import { Badge, Pill, sourceTone, tokens as C } from '../ui/modern';
@@ -33,6 +30,7 @@ interface FindingCardProps {
   onCopy: () => void;
   onPublish: () => void;
   onIgnore: () => void;
+  onMarkFixed: () => void;
   onEdit: (edit: FindingEdit) => void;
 }
 
@@ -62,7 +60,7 @@ function ActionButton({ icon, children, onClick, disabled, title, primary, dange
 
 export function FindingCard({
   finding, expanded, selected, publishDisabled, publishDisabledReason,
-  onToggle, onSelect, onLocate, onCopy, onPublish, onIgnore, onEdit,
+  onToggle, onSelect, onLocate, onCopy, onPublish, onIgnore, onMarkFixed, onEdit,
 }: FindingCardProps) {
   const [edit, setEdit] = useState<FindingEdit | undefined>();
   const editInvalid = !edit?.title.trim() || !edit?.content.trim() || !edit?.comment.trim();
@@ -250,6 +248,7 @@ export function FindingCard({
                   {finding.status === 'published' ? '已发布' : '发布到 GitLab'}
                 </ActionButton>
                 <ActionButton icon={<EyeOff size={12} />} danger onClick={onIgnore} disabled={finding.status !== 'draft'}>忽略</ActionButton>
+                <ActionButton icon={<CheckCheck size={12} />} onClick={onMarkFixed} disabled={finding.status === 'published'} title="标记为已修复">已修复</ActionButton>
               </>
             )}
           </div>

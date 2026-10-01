@@ -3,16 +3,16 @@ import { BookOpen, Bug, CheckSquare, Database, ExternalLink, FileText, GitMerge,
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { normalizeFileDiff } from './core/diff';
-import { FindingsPanel } from './components/review/FindingsPanel';
+import { FindingsPanel, severityLabel, statusLabel } from './components/review/FindingsPanel';
 import { buildSummaryComment, extractPartialFindings, parseModelFindings, serializeFindingsExport } from './core/findings';
 import { buildDelegationContext } from './core/delegation';
-import { compactThinking } from './core/thinking';
+import { compactThinking, extractThinkingOutline } from './core/thinking';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { SettingsView, ModelPicker } from './components/SettingsView';
 import {
-  Banner, Btn, IconButton, InjectAnimations, Pill, Tabs, tokens as C,
+  Banner, Btn, IconButton, InjectAnimations, Pill, Select, Tabs, Toggle, tokens as C,
 } from './components/ui/modern';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
 import { CompositeToolExecutor, GitLabToolExecutor, RepoIndexToolExecutor } from './core/agent-tools';
@@ -33,7 +33,7 @@ import {
 } from './core/rule-packs';
 import { captureCodeSelection } from './core/selection';
 import {
-  createReviewSession, loadLatestReviewSession, resumeReviewSession, reviewSessionKey,
+  createReviewSession, fromSessionFinding, loadLatestReviewSession, resumeReviewSession, reviewSessionKey, updateSessionFindingStatus,
   saveReviewSession, summarizeReviewContext, toSessionFinding, updateReviewSession,
   type ReviewSessionManifest,
 } from './core/session';
@@ -103,6 +103,10 @@ export default function App({ page }: AppProps) {
   const [showRaw, setShowRaw] = useState(false);
   const [partialModelCount, setPartialModelCount] = useState(0);
   const [scanMode, setScanMode] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerKey, setViewerKey] = useState('');
+  const [hideHandled, setHideHandled] = useState(false);
+  const [showRawThinking, setShowRawThinking] = useState(false);
   const [scanning, setScanning] = useState(false);
   const modelContentRef = useRef('');
   const bundleModelRef = useRef<Finding[]>([]);
@@ -778,6 +782,51 @@ export default function App({ page }: AppProps) {
     setSelectedFindings((prev) => { const next = new Set(prev); next.delete(id); return next; });
   };
 
+  const setFindingStatus = (id: string, status: Finding['status']) => {
+    persistFindings(findings.map((finding) => (finding.id === id ? { ...finding, status } : finding)));
+  };
+
+  const viewerSession = sessionHistory.find((item) => item.key === viewerKey) ?? savedSession;
+  const viewerFindings = useMemo(() => {
+    const list = (viewerSession?.findings ?? []).map(fromSessionFinding);
+    return hideHandled ? list.filter((finding) => !['published', 'ignored', 'fixed'].includes(finding.status)) : list;
+  }, [viewerSession, hideHandled]);
+
+  const markViewerFinding = (id: string, status: Finding['status']) => {
+    if (!viewerSession) return;
+    const updated = updateSessionFindingStatus(viewerSession, id, status);
+    setSessionHistory((list) => list.map((item) => (item.key === updated.key ? updated : item)));
+    if (savedSession?.key === updated.key) setSavedSession(updated);
+    void saveReviewSession(updated);
+    if (currentSessionRef.current?.key === updated.key) {
+      currentSessionRef.current = updated;
+      setFindings((current) => current.map((finding) => (finding.id === id ? { ...finding, status } : finding)));
+    }
+  };
+
+  const openViewer = () => {
+    if (sessionHistory.length === 0) void loadHistory();
+    setViewerKey(savedSession?.key ?? sessionHistory[0]?.key ?? '');
+    setViewerOpen(true);
+  };
+
+  const restoreViewerSession = async () => {
+    if (!viewerSession) return;
+    const resumed = resumeReviewSession(viewerSession);
+    currentSessionRef.current = resumed.session;
+    setSavedSession(resumed.session);
+    setFindings(resumed.findings);
+    setStages(undefined);
+    setExpandedFinding(resumed.findings[0]?.id ?? '');
+    setReviewStatus(resumed.status);
+    setReviewError(resumed.error ?? '');
+    setScanMode(false);
+    setViewerOpen(false);
+    setTab('review');
+    await saveReviewSession(resumed.session);
+    setToast(`已恢复会话（${resumed.findings.length} 个问题）`);
+  };
+
   const locateFinding = (finding: Finding) => {
     injectHighlightStyles();
     const highlighted = highlightFindingOnPage(finding);
@@ -1314,12 +1363,42 @@ export default function App({ page }: AppProps) {
                               style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
                               {showThinking ? '▾ 模型思考过程' : `▸ 模型思考过程（${modelThinking.length} 字）`}
                             </button>
-                            {showThinking && (
-                              <pre ref={thinkingPreRef} style={streamPreStyle}>
-                                {modelThinking.length > 1500 ? `…（前 ${modelThinking.length - 1500} 字已省略）\n` : ''}
-                                {compactThinking(modelThinking.slice(-1500))}
-                              </pre>
-                            )}
+                            {showThinking && (() => {
+                              const outline = extractThinkingOutline(modelThinking.slice(-6000));
+                              return (
+                                <div style={{ ...streamPreStyle, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {outline.bullets.length > 0 && (
+                                    <div>
+                                      <div style={{ fontWeight: 700 }}>要点 {outline.bullets.length}</div>
+                                      <ul style={{ margin: '4px 0 0', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                        {outline.bullets.map((bullet, index) => <li key={index}>{bullet}</li>)}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <div style={{ fontWeight: 700 }}>时间轴 {outline.timeline.length} 段</div>
+                                    <ol style={{ margin: '4px 0 0', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                      {outline.timeline.slice(-8).map((segment, index) => (
+                                        <li key={index}>
+                                          {segment.kind === 'json' ? `JSON 草稿 ${segment.chars} 字` : segment.kind === 'code' ? `代码块 ${segment.chars} 字` : `推理 ${segment.chars} 字`}
+                                          ：{segment.preview}…
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  </div>
+                                  <button type="button" onClick={() => setShowRawThinking(!showRawThinking)}
+                                    style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, fontSize: 11, color: C.textMuted, textDecoration: 'underline', textAlign: 'left' }}>
+                                    {showRawThinking ? '收起原文' : '查看原文'}
+                                  </button>
+                                  {showRawThinking && (
+                                    <pre ref={thinkingPreRef} style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                      {modelThinking.length > 1500 ? `…（前 ${modelThinking.length - 1500} 字已省略）\n` : ''}
+                                      {compactThinking(modelThinking.slice(-1500))}
+                                    </pre>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.textSecondary }}>
@@ -1354,6 +1433,7 @@ export default function App({ page }: AppProps) {
                     )}
                     <span style={{ flex: 1 }} />
                     {savedSession && <span>已保存会话</span>}
+                    <Btn size="sm" variant="ghost" icon={<History size={12} />} onClick={openViewer}>回放</Btn>
                   </div>
                 )}
                 {scanMode && !running && (
@@ -1395,6 +1475,7 @@ export default function App({ page }: AppProps) {
                   onCopy={copyFinding}
                   onPublish={(finding) => { setPublishFinding(finding); setPublishBody(finding.comment); }}
                   onIgnore={(finding) => ignoreFinding(finding.id)}
+                  onMarkFixed={(finding) => setFindingStatus(finding.id, 'fixed')}
                   onEdit={editFinding}
                   onOpenSettings={() => setTab('settings')}
                   onDismissError={() => { setReviewError(''); setReviewStatus('idle'); }}
@@ -1566,6 +1647,55 @@ export default function App({ page }: AppProps) {
             />
           )}
         </div>
+      {viewerOpen && (
+        <div role="dialog" aria-label="会话回放" style={{ position: 'absolute', inset: 0, zIndex: 20, background: C.bg, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <History size={14} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>会话回放</span>
+              <span style={{ flex: 1 }} />
+              <Btn size="sm" variant="ghost" icon={<X size={13} />} onClick={() => setViewerOpen(false)}>关闭</Btn>
+            </div>
+            <Select
+              value={viewerKey}
+              onChange={setViewerKey}
+              options={sessionHistory.map((item) => ({
+                value: item.key,
+                label: `!${item.mergeRequestIid} ${item.title.slice(0, 16)} · ${item.scope === 'selection' ? '选区' : '整个 MR'} · ${new Date(item.updatedAt).toLocaleString('zh-CN')}`,
+              }))}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontSize: 11, color: C.textMuted }}>只读回放；标记会写回该会话。</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.textSecondary }}>
+                <Toggle checked={hideHandled} onChange={setHideHandled} /> 隐藏已处理
+              </label>
+            </div>
+          </div>
+          <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {viewerFindings.length === 0 && (
+              <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: 20 }}>
+                {hideHandled ? '没有未处理的 Finding（已隐藏已处理项）。' : '该会话没有 Finding。'}
+              </div>
+            )}
+            {viewerFindings.map((finding) => (
+              <div key={finding.id} style={{ border: `1px solid ${C.border}`, borderRadius: C.radiusSm, padding: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{finding.title}</div>
+                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                  {severityLabel[finding.severity]} · {statusLabel[finding.status]} · {finding.path}:{finding.line}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                  <Btn size="sm" variant="outline" onClick={() => markViewerFinding(finding.id, 'fixed')}>标记已修复</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => markViewerFinding(finding.id, 'ignored')}>标记忽略</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => markViewerFinding(finding.id, 'draft')}>恢复草稿</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: '8px 12px', borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
+            <Btn variant="primary" size="sm" icon={<History size={13} />} onClick={() => void restoreViewerSession()}>恢复为当前会话</Btn>
+          </div>
+        </div>
+      )}
       </aside>
 
       {selection && (

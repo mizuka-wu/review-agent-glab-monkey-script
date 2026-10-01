@@ -205,6 +205,18 @@ export function updateReviewSession(
   return { ...session, ...changes, updatedAt: now };
 }
 
+export function updateSessionFindingStatus(
+  session: ReviewSessionManifest,
+  findingId: string,
+  status: FindingStatus,
+): ReviewSessionManifest {
+  return {
+    ...session,
+    updatedAt: new Date().toISOString(),
+    findings: session.findings.map((finding) => (finding.id === findingId ? { ...finding, status } : finding)),
+  };
+}
+
 export function resumeReviewSession(session: ReviewSessionManifest) {
   if (session.status === 'running') {
     return {
