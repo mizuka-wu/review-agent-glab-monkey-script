@@ -34,6 +34,9 @@ OpenCodeReview 的核心竞争力不是"会用模型"，而是**把不能出错�
 | 会话 | session list / resume / viewer（浏览器查看、标记 fixed/ignored） | session 持久化、resume、历史列表、逐条忽略/编辑 | viewer 是独立网页，本项目内嵌面板；功能等价度约 80% |
 | 基准评测 | AACR-Bench（200 PR、1505 标注） | 本地 8 fixture 回归门禁 | **仍有差距**：样本量与人工校验规模不可比 |
 | 上下文工具 | git 原生：search、log、全文件、符号级检索 | GitLab REST：file_read / search_code / git_log + MCP 扩展；**本地符号索引**（OPFS 缓存 + 启发式符号表）提供 `symbol_search` / `call_chain` 工具与 Review 仓库上下文 | 符号检索为启发式（正则符号表），非精确调用图 |
+| 输出流式 | CLI 未把流式作为特性（结果一次性/逐条打印） | 对话为 SSE 逐 token 流式；Review 结果为批量（规则同步算完 + 模型 `json_object` 一次返回后解析），期间 UI 显示「正在收集结果」 | **结果侧无增量输出**：可让规则阶段结果先行渲染、模型结果到达后合并 |
+| Delegation 模式 | 外部编码 Agent 用自有 LLM 跑评审，OCR 只做文件选择与规则解析 | 无对应形态（仅有本地「仅规则」模式） | 形态差异；浏览器场景价值有限 |
+| 机器可读结果 | `ocr review --format json --output result.json` 供宿主 Agent 消费 | 调试包 JSON 导出 + session 存储，无独立的 findings 结果导出 | 小差距：可补「导出 findings JSON」 |
 | 发布 | 输出 JSON / CI 评论 | 行级 Discussion 草稿，人工确认后发布（含批量） | 形态不同；本项目强调"人确认" |
 
 ## 3. 本轮已落地
@@ -45,7 +48,7 @@ OpenCodeReview 的核心竞争力不是"会用模型"，而是**把不能出错�
 5. **未配置提示**：侧栏顶部常驻横幅（可关闭）说明"规则检查不需要 Key"与缺少项；设置页"当前能力"卡片逐项列出可用能力；FAB 角标；聊天与 Review 的拒绝路径都给出可操作指引。
 6. **强度预算只作用于 AI 结果**：确定性结果不再被 `effort` 过滤，用户启用的规则始终可见。
 7. **UI 重构**：结果 / 对话 / 设置 / 调试四标签；面板可拖拽、可拉伸宽度；Finding 折叠卡片带代码预览；批量发布条；会话恢复与历史。
-8. **依赖瘦身**：移除 assistant-ui / tailwind / ai-sdk 等运行时依赖，产物 2.5 MB → 0.9 MB（gzip 190 KB），注入更快、样式不再与 GitLab 互相污染。
+8. **依赖瘦身**：移除 assistant-ui / tailwind / ai-sdk 等运行时依赖，产物 2.5 MB → 约 1.16 MB（gzip 255 KB，含仓库索引与调试器），注入更快、样式不再与 GitLab 互相污染。
 9. **本地仓库索引**（`repo-store.ts` / `repo-index.ts` / `symbols.ts`）：引入 [opfs-worker](https://github.com/kachurun/opfs-worker)，优先独立 Worker（gitlab.com CSP 允许 `blob:` worker），退回主线程 OPFS，再退回内存；按 ref 分命名空间缓存仓库文件并构建符号表，提供符号搜索、启发式调用链，以及注入 Review 提示词的「Diff 外调用点」上下文。同 ref 命中缓存时零网络开销恢复。
 9b. **索引管理系统**：注册表（`/registry.json`）记录每份索引的 ref / branch 标签 / 项目 / 文件数 / 字节数 / 符号数；不同 branch、不同 MR 的索引互不覆盖，可在「索引」页载入、单份删除、全部清除；超过 `maxIndexes` 自动清理最旧（刚写入的永远保留）；显示站点存储用量与配额；载入的索引与当前 head 不一致时给出过期警告，且不再向 Review 提示词注入仓库上下文。
 10. **调试工具链**（`debug-bus.ts` + DebugPanel）：日志 / 网络 / 提示词 / 状态四面板。GitLab API、模型调用、MCP、索引的每次请求都记录方法、状态码、耗时、字节数；每次模型调用记录完整 system 与消息内容（超长截断）、工具列表、token 用量；`console.warn/error` 被镜像进日志；日志跨刷新保留；一键导出 JSON 调试包（含脱敏快照）。
@@ -59,6 +62,9 @@ OpenCodeReview 的核心竞争力不是"会用模型"，而是**把不能出错�
 3. **基准规模**：把本地 eval fixture 扩到 30+ 并引入人工标注，才能量化"精确率优先"的取舍。
 4. **规则文档化**：对方的规则以语言文档形式维护（`rule_docs/*.md`），可读性与可扩展性更好；本项目规则仍是代码内数组。
 5. **全文件扫描**：对无 diff 的目录做审计（`ocr scan`）。仓库索引已具备 tree + raw 拉取能力，可在此基础上扩展「扫描整个目录」入口。
+6. **结果增量/流式输出**：Review 结果当前为批量返回；规则阶段结果可先行渲染（engine 增加阶段回调），模型阶段若引入 bundle 并发则可逐 bundle 增量出结果，近似流式体验。
+7. **Delegation 模式**：把「文件选择 + 规则解析」结果交给外部 Agent 用其自有模型评审；浏览器形态下可退化为「导出规则命中上下文」供外部工具消费，优先级低。
+8. **findings 结果导出**：对齐 `--format json`，提供一键导出本次 Review 的结构化结果（含来源/证据/锚点），便于宿主 Agent 或 CI 消费。
 
 ## 5. 明确不做
 
