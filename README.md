@@ -1,5 +1,7 @@
 # Review Agent for GitLab
 
+[![Release](https://img.shields.io/github/v/release/mizuka-wu/review-agent-glab-monkey-script)](https://github.com/mizuka-wu/review-agent-glab-monkey-script/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/mizuka-wu/review-agent-glab-monkey-script/ci.yml?branch=main)](https://github.com/mizuka-wu/review-agent-glab-monkey-script/actions/workflows/ci.yml)
+
 一个面向 GitLab / 自部署 GitLab 的油猴脚本（Tampermonkey Userscript），在 MR / Diff / File 页面中提供代码评审能力。采用与 [OpenCodeReview](https://github.com/alibaba/open-code-review) 相同的**确定性规则 + LLM 混合架构**：规则检查永远在浏览器本地运行（无需 API Key、零 token），配置模型后叠加 AI 深度评审，两类结果分开标注、命中同一处问题时自动合并。支持划词提问、结构化 Finding 草稿、批量发布 GitLab Discussion。
 
 ## 核心特性
@@ -80,10 +82,17 @@
 
 ## 安装
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 浏览器扩展
-2. 打开 `dist/review-agent-glab-monkey-script.user.js` 或从 [Release](../../releases) 下载
-3. 在 Tampermonkey 中导入安装
-4. 打开任意 GitLab MR 页面，点击右下角浮动按钮打开 Review Agent
+**一键安装（推荐）**：安装 [Tampermonkey](https://www.tampermonkey.net/) 后，直接打开
+[review-agent-glab-monkey-script.user.js](https://github.com/mizuka-wu/review-agent-glab-monkey-script/releases/latest/download/review-agent-glab-monkey-script.user.js)
+（GitHub Release 资产），Tampermonkey 会弹出安装页确认安装。
+
+- **自动更新**：脚本内置 `@updateURL` 指向 Release 的 `.meta.js`，Tampermonkey 按 `@version` 检查并提示更新；发版由 `v*` tag 触发的 Release workflow 自动上传资产。
+- **边缘通道**：GitHub Pages 在每次 main 构建后发布同一产物，适合跟最新开发版：
+  `https://mizuka-wu.github.io/review-agent-glab-monkey-script/review-agent-glab-monkey-script.user.js`
+- **自构建**：`pnpm build` 后安装 `dist/review-agent-glab-monkey-script.user.js`；开发模式见下文。
+- 脚本 `@match` 覆盖全部 http(s) 页面（以支持任意自部署 GitLab 域名），但只在识别到 GitLab 页面时挂载 UI。
+
+安装后打开任意 GitLab MR / Diff / File 页面，点击右下角浮动按钮打开 Review Agent。
 
 不配置 API Key 也可以直接使用规则检查、划词定位、Finding 编辑和评论草稿复制；
 在「设置」中填写 OpenAI 兼容的 Base URL / 模型 / API Key 后即可叠加 AI 评审与对话。
