@@ -3,6 +3,8 @@
 本文回答一个核心问题：哪些功能油猴脚本可以直接做，哪些必须依赖 GitLab API，哪些需要本地服务。
 
 > **当前范围**：纯浏览器端实现，无本地 Gateway / CI Bot。需要服务端或本地进程的能力已明确排除。
+> 例外（计划中、可选）：MCP 本地中继桥作为**可选集成进程**承担标准 MCP server 角色，
+> 见 [11-mcp-bridge-and-agent-surface-plan.md](11-mcp-bridge-and-agent-surface-plan.md)；默认安装路径不包含它。
 
 ## 1. 总体结论
 

@@ -41,6 +41,7 @@ export default defineConfig({
           { text: '测试与验收', link: '/08-testing-acceptance' },
           { text: 'Review Engine 计划', link: '/09-p0-review-engine-plan' },
           { text: '与 OpenCodeReview 差距分析', link: '/10-opencodereview-gap-analysis' },
+          { text: 'MCP 桥与 Agent 工具面计划', link: '/11-mcp-bridge-and-agent-surface-plan' },
         ],
       },
     ],

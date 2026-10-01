@@ -222,6 +222,7 @@ Draft → User Confirm → GitLab Discussion Publish
 9. [测试与验收](docs/08-testing-acceptance.md)
 10. [Review Engine 计划](docs/09-p0-review-engine-plan.md)
 11. [与 OpenCodeReview 差距分析](docs/10-opencodereview-gap-analysis.md)
+12. [MCP 本地中继桥与 Agent 工具面开发计划](docs/11-mcp-bridge-and-agent-surface-plan.md)
 
 ## 测试
 
