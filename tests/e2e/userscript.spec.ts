@@ -388,7 +388,7 @@ test.describe('mock mode', () => {
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
     await page.getByRole('button', { name: '开始 Review' }).click();
     await expect(page.getByText('AI 评审未运行', { exact: true })).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText(/模型服务返回 HTTP 404/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/模型服务返回 HTTP 404/).first()).toBeVisible({ timeout: 10000 });
     // 规则结果不受模型失败影响
     await expect(page.getByText(/个问题/)).toBeVisible({ timeout: 10000 });
   });
