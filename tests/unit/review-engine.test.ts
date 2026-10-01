@@ -267,3 +267,13 @@ describe('ReviewEngine.scan', () => {
     }
   });
 });
+
+describe('ReviewEngine project prompt', () => {
+  it('passes projectPrompt through to the runtime review options', async () => {
+    const review = vi.fn().mockResolvedValue(JSON.stringify({ findings: [] }));
+    const runtime = { configured: true, review, reflect: vi.fn().mockResolvedValue('[]') };
+    const engine = new ReviewEngine(runtime, settings);
+    await engine.run({ files: [file], projectPrompt: '本仓库禁止 eval' });
+    expect(review.mock.calls[0][5]).toMatchObject({ projectPrompt: '本仓库禁止 eval' });
+  });
+});

@@ -425,6 +425,27 @@ test.describe('mock mode', () => {
     await expect(page.getByRole('toolbar', { name: '代码选区操作' })).toHaveCount(0, { timeout: 10000 });
   });
 
+  test('injects a per-project supplementary system prompt into hybrid review', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests, { stream: true });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN', debugEnabled: true, projectPrompts: {},
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    const promptBox = page.getByPlaceholder(/可选：本项目评审的额外约束/);
+    await promptBox.fill('禁止报告命名风格问题');
+    const stored = await page.evaluate(() => (JSON.parse(localStorage.getItem('review-agent-settings-v1') ?? '{}') as { projectPrompts?: Record<string, string> }).projectPrompts);
+    expect(stored?.['acme/app']).toBe('禁止报告命名风格问题');
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置').first()).toBeVisible({ timeout: 15000 });
+    const panel = page.locator('aside[aria-label="Review Agent"]');
+    await page.getByRole('tab', { name: /调试/ }).click();
+    await page.getByRole('button', { name: /提示词 \d+/ }).click();
+    await panel.getByText(/条消息 · 响应/).first().click();
+    await expect(panel.getByText('禁止报告命名风格问题').first()).toBeVisible({ timeout: 10000 });
+  });
+
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
     const metadata = bundle.slice(bundle.indexOf('// ==UserScript=='), bundle.indexOf('// ==/UserScript=='));
     expect(metadata).toContain('@name         Review Agent for GitLab');

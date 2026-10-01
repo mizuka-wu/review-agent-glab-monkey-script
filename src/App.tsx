@@ -624,6 +624,8 @@ export default function App({ page }: AppProps) {
         : '';
       if (repoContext) addLog('debug', 'review', `注入仓库符号上下文 ${repoContext.length} 字符`);
       lastBackgroundRef.current = repoContext;
+      const projectPrompt = (settings.projectPrompts ?? {})[page.projectPath ?? '']?.trim();
+      if (projectPrompt) addLog('info', 'review', `注入项目补充 prompt ${projectPrompt.length} 字符（${page.projectPath}）`);
       const result = await reviewEngine.run({
         files: scopedFiles,
         selection: selected,
@@ -655,6 +657,7 @@ export default function App({ page }: AppProps) {
           }
         },
         onModelThinking: (token) => setModelThinking((prev) => (prev + token).slice(-20000)),
+        projectPrompt: (settings.projectPrompts ?? {})[page.projectPath ?? '']?.trim() || undefined,
         onBundleFindings: (bundleFindings) => {
           bundleModelRef.current = [...bundleModelRef.current, ...bundleFindings];
           setFindings([...ruleLiveRef.current, ...bundleModelRef.current]);
@@ -876,6 +879,11 @@ export default function App({ page }: AppProps) {
     void navigator.clipboard?.writeText(exportRulePack(pack));
     setToast('规则包 JSON 已复制到剪贴板');
   };
+
+  const commitSettings = useCallback((next: RuntimeSettings) => {
+    setSettings(next);
+    void saveSettings(next);
+  }, []);
 
   const handleApprove = async () => {
     if (!mergeRequestRef) return;
@@ -1403,6 +1411,9 @@ export default function App({ page }: AppProps) {
               ) : (
                 <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '0 10px 10px' }}>
                   <IdleReview
+                    projectKey={page.projectPath ?? ''}
+                    projectPrompt={(settings.projectPrompts ?? {})[page.projectPath ?? ''] ?? ''}
+                    onProjectPromptChange={(value) => commitSettings({ ...settings, projectPrompts: { ...(settings.projectPrompts ?? {}), [page.projectPath ?? '']: value } })}
                     loading={loading}
                     filesCount={files.length}
                     enabledRuleCount={enabledRuleCount}
@@ -1498,7 +1509,7 @@ export default function App({ page }: AppProps) {
               <SettingsView
                 settings={settings}
                 onSettingsChange={setSettings}
-                onSettingsCommit={(next) => { setSettings(next); void saveSettings(next); }}
+                onSettingsCommit={commitSettings}
                 onSave={() => { void saveSettings(settings).then(() => setToast('设置已保存')); }}
                 onTestModel={() => void testModelConnection()}
                 onClearApiKey={() => {
@@ -1506,6 +1517,7 @@ export default function App({ page }: AppProps) {
                   void clearSensitiveSettings();
                   setToast('密钥已清除');
                 }}
+                projectKey={page.projectPath ?? ''}
                 rulePacks={scopePacks}
                 packScope={activePackScope.kind}
                 projectLabel={projectKey}
@@ -1616,8 +1628,11 @@ export default function App({ page }: AppProps) {
 
 }
 
-function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings }: {
+function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings, projectKey, projectPrompt, onProjectPromptChange }: {
   loading: boolean; filesCount: number; enabledRuleCount: number; modelReady: boolean; hasMr: boolean;
+  projectKey: string;
+  projectPrompt: string;
+  onProjectPromptChange: (value: string) => void;
   savedSession?: ReviewSessionManifest;
   sessionHistory: ReviewSessionManifest[];
   showHistory: boolean;
@@ -1649,6 +1664,23 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
               </>
               : <>在 MR 的 Changes 页面打开侧栏即可评审整个 MR；也可以先划选一段代码，再针对选区提问或 Review。</>}
         </div>
+        {hasMr && projectKey && (
+          <div style={{ marginTop: 10, textAlign: 'left' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
+              项目补充要求（按 {projectKey} 记住，注入混合评审 system prompt）
+            </div>
+            <textarea
+              value={projectPrompt}
+              onChange={(e) => onProjectPromptChange(e.target.value)}
+              placeholder="可选：本项目评审的额外约束，例如「金额计算必须用 decimal」「不要评论命名风格」。"
+              style={{
+                marginTop: 4, width: '100%', minHeight: 64, resize: 'vertical', padding: 7,
+                borderRadius: C.radiusSm, border: `1px solid ${C.border}`, fontSize: 12, lineHeight: 1.6,
+                fontFamily: 'inherit', color: C.text, background: C.bg, outline: 'none',
+              }}
+            />
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 7, justifyContent: 'center', marginTop: 11, flexWrap: 'wrap' }}>
           <Btn variant="primary" icon={<Play size={13} />} disabled={loading || (!hasMr && filesCount === 0)} onClick={onStart}>
             {modelReady ? '运行混合评审' : '运行规则检查'}

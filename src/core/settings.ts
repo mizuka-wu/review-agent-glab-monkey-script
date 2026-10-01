@@ -48,6 +48,7 @@ export const defaultSettings: RuntimeSettings = {
   language: 'zh-CN',
   mcp: { enabled: false, servers: [] },
   repoIndex: { enabled: true, maxFiles: 400, maxBytes: 12 * 1024 * 1024, maxIndexes: 6 },
+  projectPrompts: {},
   repoContext: true,
   debugEnabled: false,
   thinking: 'default',
@@ -187,6 +188,7 @@ export async function loadSettings(): Promise<RuntimeSettings> {
       mcp: migrateMcp((partial.mcp ?? {}) as Partial<McpSettings> & { serverUrl?: string }),
       auth: { ...defaultSettings.auth, ...(partial.auth ?? {}) },
       repoIndex: { ...defaultSettings.repoIndex, ...(partial.repoIndex ?? {}) },
+      projectPrompts: { ...(partial.projectPrompts ?? {}) },
     });
   } catch {
     return defaultSettings;

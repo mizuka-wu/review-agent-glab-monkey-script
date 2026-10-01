@@ -20,7 +20,7 @@ import type {
 
 interface ReviewRuntime {
   configured: boolean;
-  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void }): Promise<string>;
+  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string }): Promise<string>;
   reflect(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal): Promise<string>;
 }
 
@@ -111,6 +111,8 @@ export class ReviewEngine {
     onModelThinking?: (token: string) => void;
     /** 分组并发评审时，每个分组完成后的增量回调。 */
     onBundleFindings?: (findings: Finding[]) => void;
+    /** 按项目配置的补充 system prompt，注入模型评审系统提示词。 */
+    projectPrompt?: string;
     /** 关闭后只跑规则检查，即使模型已配置。 */
     model?: boolean;
   }): Promise<ReviewEngineResult> {
@@ -155,13 +157,13 @@ export class ReviewEngine {
       try {
         const bundles = groupFilesIntoBundles(files);
         if (bundles.length <= 1) {
-          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking });
+          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking, projectPrompt: input.projectPrompt });
           modelFindings = parseModelFindings(raw, files);
         } else {
           const bundleErrors: string[] = [];
           const perBundle = await mapWithConcurrency(bundles, 3, async (bundle) => {
             try {
-              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, {});
+              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, { projectPrompt: input.projectPrompt });
               const parsed = parseModelFindings(raw, bundle);
               input.onBundleFindings?.(parsed);
               return parsed;

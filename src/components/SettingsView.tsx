@@ -54,6 +54,7 @@ interface SettingsViewProps {
   onUpdateRulePack: (id: string, patch: Partial<RulePack>) => void;
   onToggleRule: (packId: string, ruleId: string) => void;
   onNewRulePack: () => void;
+  projectKey: string;
   packScope: 'public' | 'project';
   projectLabel: string;
   publicCustomCount: number;
@@ -340,7 +341,67 @@ export function ModelPicker({ value, baseUrl, apiKey, onChange, compact = false 
 }
 
 // ─── Review Settings ───
-function ReviewSection({ settings, onSettingsChange }: SettingsViewProps) {
+function ProjectPromptManager({ settings, projectKey, onCommit }: {
+  settings: RuntimeSettings; projectKey: string; onCommit: (s: RuntimeSettings) => void;
+}) {
+  const prompts = settings.projectPrompts ?? {};
+  const keys = [...new Set([projectKey, ...Object.keys(prompts)])].filter(Boolean);
+  const [managedKey, setManagedKey] = useState(projectKey || keys[0] || '');
+  const effectiveKey = managedKey || projectKey;
+  const setPrompt = (key: string, value: string) => {
+    const next = { ...prompts };
+    if (value.trim()) next[key] = value;
+    else delete next[key];
+    onCommit({ ...settings, projectPrompts: next });
+  };
+  const removeKey = (key: string) => {
+    const next = { ...prompts };
+    delete next[key];
+    onCommit({ ...settings, projectPrompts: next });
+    if (managedKey === key) setManagedKey(projectKey);
+  };
+  return (
+    <Field
+      label="项目补充 System Prompt"
+      hint={effectiveKey ? `注入 ${effectiveKey} 的混合评审 user 消息；按项目记住` : '当前页面没有项目上下文'}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <Select
+            value={effectiveKey}
+            onChange={setManagedKey}
+            options={keys.map((key) => ({ value: key, label: key === projectKey ? `${key}（当前）` : key }))}
+            style={{ flex: 1 }}
+          />
+          <Btn
+            variant="ghost" size="sm" icon={<Trash2 size={13} />}
+            disabled={!effectiveKey || !(effectiveKey in prompts)}
+            title="删除该项目的补充提示"
+            onClick={() => removeKey(effectiveKey)}
+          >
+            删除
+          </Btn>
+        </div>
+        <textarea
+          value={prompts[effectiveKey] ?? ''}
+          onChange={(e) => setPrompt(effectiveKey, e.target.value)}
+          disabled={!effectiveKey}
+          placeholder="例如：本仓库禁止直接查表，必须走 repository 层；涉及金额计算必须使用 decimal；不要在报告里评论命名风格。"
+          style={{
+            width: '100%', minHeight: 84, resize: 'vertical', padding: 8,
+            borderRadius: C.radiusSm, border: `1px solid ${C.border}`, fontSize: 12, lineHeight: 1.6,
+            fontFamily: 'inherit', color: C.text, background: C.bgSubtle, outline: 'none',
+          }}
+        />
+        <div style={{ fontSize: 11, color: C.textMuted }}>
+          已缓存 {Object.keys(prompts).length} 个项目的补充提示；起始页「开始一次混合评审」里也能直接编辑当前项目。
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+function ReviewSection({ settings, onSettingsChange, onSettingsCommit, projectKey }: SettingsViewProps) {
   return (
     <Card>
       <CardHeader icon={<Shield size={16} />} title="审查设置" desc="规则阶段始终在本地执行，不消耗 token" />
@@ -357,6 +418,7 @@ function ReviewSection({ settings, onSettingsChange }: SettingsViewProps) {
               ]}
             />
           </Field>
+          <ProjectPromptManager settings={settings} projectKey={projectKey} onCommit={onSettingsCommit} />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="审查强度" hint="只影响 AI 结果">
             <Select

@@ -91,7 +91,7 @@ function chatSystemPrompt(language: 'zh-CN' | 'en-US') {
     : '你是 GitLab 代码评审助手。只基于给出的代码回答，明确区分已确认事实和推断。回答使用简体中文，避免编译造文件内容。';
 }
 
-function reviewSystemPrompt(language: 'zh-CN' | 'en-US', strictness: string) {
+export function reviewSystemPrompt(language: 'zh-CN' | 'en-US', strictness: string) {
   const lang = language === 'en-US' ? ' Write findings in English.' : ' 所有字段使用简体中文。';
   return `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。existingCode 必须是目标文件中的连续原文；跨文件证据使用 evidence.path。主 Finding 应优先锚定 Diff 行，完整文件只能作为上下文或证据，不能单独作为可发布位置。${strictness}${lang}`;
 }
@@ -359,11 +359,14 @@ export class OpenAIRuntime {
     language: RuntimeSettings['language'],
     signal?: AbortSignal,
     background?: string,
-    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void },
+    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string },
   ) {
     const context = [
       selection ? selectionContext(selection) : diffContext(files),
       background ? `\n\n业务背景：\n${background}` : '',
+      options?.projectPrompt?.trim()
+        ? `\n\n## 项目补充要求（该项目维护者配置，与上述内容冲突时以本节为准）\n${options.projectPrompt.trim()}`
+        : '',
     ].join('');
     const strictness =
       this.settings.effort === 'thorough'

@@ -192,6 +192,8 @@ export interface RuntimeSettings {
   mcp: McpSettings;
   auth: AuthSettings;
   repoIndex: RepoIndexSettings;
+  /** 按项目（projectPath）配置的 Review 补充 system prompt。 */
+  projectPrompts: Record<string, string>;
   /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */
   repoContext: boolean;
   /** 调试标签页开关（默认关闭，在设置中打开）。 */
