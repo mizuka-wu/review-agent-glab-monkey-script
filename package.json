@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "docs:dev": "vitepress dev docs-site",
     "docs:build": "vitepress build docs-site && node scripts/copy-doc-redirects.mjs",
-    "docs:preview": "vitepress preview docs-site"
+    "docs:preview": "vitepress preview docs-site",
+    "generate:rules": "node scripts/generate-rules.mjs"
   },
   "imports": {
     "#components/*": "./src/components/*.tsx",

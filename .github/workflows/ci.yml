@@ -39,6 +39,9 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
+      - name: Rule docs drift check
+        run: pnpm generate:rules --check
+
       - name: Build
         run: pnpm build
 
