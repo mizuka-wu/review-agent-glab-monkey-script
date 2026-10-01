@@ -50,7 +50,7 @@ describe('ReviewEngine', () => {
     const engine = new ReviewEngine(runtime, settings);
     const result = await engine.run({ files: [file], background: 'payment retry is required' });
 
-    expect(runtime.review).toHaveBeenCalledWith([file], undefined, 'zh-CN', undefined, 'payment retry is required');
+    expect(runtime.review).toHaveBeenCalledWith([file], undefined, 'zh-CN', undefined, 'payment retry is required', { onToken: undefined });
     expect(result.findings[0]).toMatchObject({ path: 'src/a.ts', line: 1, endLine: 1, side: 'new' });
   });
 

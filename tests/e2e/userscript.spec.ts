@@ -67,7 +67,7 @@ const diff = {
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = []) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -116,6 +116,15 @@ async function routeGitLab(page: Page, requests: string[] = []) {
       }],
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
     };
+    if (options?.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+    const content = body.choices[0].message.content as string;
+    if (options?.stream && (route.request().postData() ?? '').includes('"stream":true')) {
+      const step = Math.max(1, Math.floor(content.length / 3));
+      const parts = [content.slice(0, step), content.slice(step, step * 2), content.slice(step * 2)];
+      const sse = parts.map((part) => `data: ${JSON.stringify({ choices: [{ delta: { content: part } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
+      await route.fulfill({ contentType: 'text/event-stream', body: sse });
+      return;
+    }
     await route.fulfill({ json: body });
   });
   await page.route('https://gitlab.test/**', async (route) => {
@@ -152,6 +161,14 @@ async function routeGitLab(page: Page, requests: string[] = []) {
     }
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'POST') {
       await route.fulfill({ json: { id: 'discussion-1', notes: [{ id: 'note-1' }] } });
+      return;
+    }
+    if (url.pathname.endsWith('/approve') && route.request().method() === 'POST') {
+      await route.fulfill({ json: { id: 1 } });
+      return;
+    }
+    if (url.pathname.endsWith('/notes') && route.request().method() === 'POST') {
+      await route.fulfill({ json: { id: 99 } });
       return;
     }
     await route.fulfill({ status: 404, body: 'not found' });
@@ -290,6 +307,64 @@ test.describe('mock mode', () => {
     await expect(page.getByText('当前 head')).toBeVisible();
     await page.getByRole('button', { name: '删除索引 feature/payment' }).click();
     await expect(page.getByText('还没有缓存')).toBeVisible();
+  });
+
+  test('quick actions publish inline comments, summary note and approve', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText(/个问题/)).toBeVisible({ timeout: 15000 });
+
+    await page.getByRole('button', { name: /一键行内评论/ }).click();
+    await page.getByRole('button', { name: '确认发布？' }).first().click();
+    await expect(page.getByText(/已发布 \d+ 条行内评论/)).toBeVisible({ timeout: 15000 });
+
+    await page.getByRole('button', { name: '总评论', exact: true }).click();
+    await page.getByRole('button', { name: '确认发布？' }).first().click();
+    await expect(page.getByText('总评论已发布')).toBeVisible({ timeout: 15000 });
+
+    await page.getByRole('button', { name: '一键 Approve' }).click();
+    await page.getByRole('button', { name: '确认 Approve？' }).click();
+    await expect(page.getByText('已 Approve 该 MR')).toBeVisible({ timeout: 15000 });
+
+    expect(requests.some((path) => path.endsWith('/discussions'))).toBe(true);
+    expect(requests.some((path) => path.endsWith('/notes'))).toBe(true);
+    expect(requests.some((path) => path.endsWith('/approve'))).toBe(true);
+  });
+
+  test('streams model review output live into the panel', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests, { stream: true });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN', debugEnabled: true,
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('代码中疑似硬编码敏感信息').first()).toBeVisible({ timeout: 15000 });
+    // SSE 流式路径应被调试面板记录（url 带 (stream) 后缀）
+    const panel = page.locator('aside[aria-label="Review Agent"]');
+    await page.getByRole('tab', { name: /调试/ }).click();
+    await page.getByRole('button', { name: /网络 \d+/ }).click();
+    await expect(panel.getByText(/chat\/completions \(stream\)/).first()).toBeVisible({ timeout: 10000 });
+  });
+
+  test('can stop a running review while the model stream is in flight', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests, { delayMs: 4000 });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('Review 进行中')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: '取消' }).first().click();
+    await expect(page.getByText('已取消')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('模型分析已停止；已完成的规则结果仍保留并可发布。')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: '开始 Review' })).toBeVisible({ timeout: 10000 });
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {

@@ -302,6 +302,24 @@ export class GitLabAdapter {
     };
   }
 
+  /** 一键 Approve 当前 MR。 */
+  async approveMergeRequest(ref: MergeRequestRef) {
+    await this.request<{ id: number }>(
+      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/approve`,
+      { method: 'POST' },
+    );
+  }
+
+  /** 发布 MR 级总评论（不带行位置）。 */
+  async createNote(ref: MergeRequestRef, body: string) {
+    const payload = new URLSearchParams();
+    payload.set('body', body);
+    return this.request<{ id: number }>(
+      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/notes`,
+      { method: 'POST', body: payload },
+    );
+  }
+
   async listDiscussions(ref: MergeRequestRef) {
     const discussions: { id: string; notes?: { id: number; body: string; author?: { username?: string } }[] }[] = [];
     for (let page = 1; page <= 50; page += 1) {

@@ -436,3 +436,29 @@ export function InjectAnimations() {
 }
 
 export const tokens = C;
+
+// ─── ConfirmButton（两步确认，防误触的高影响操作）───
+export function ConfirmButton({ label, confirmLabel = '确认？', onConfirm, disabled, icon, variant = 'outline', size = 'sm' }: {
+  label: string; confirmLabel?: string; onConfirm: () => void;
+  disabled?: boolean; icon?: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
+  size?: 'sm' | 'md' | 'lg';
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 3500);
+    return () => clearTimeout(timer);
+  }, [armed]);
+  return (
+    <Btn
+      variant={armed ? 'primary' : variant}
+      size={size}
+      icon={icon}
+      disabled={disabled}
+      ariaLabel={armed ? confirmLabel : label}
+      onClick={() => {
+        if (armed) { setArmed(false); onConfirm(); } else { setArmed(true); }
+      }}
+    >{armed ? confirmLabel : label}</Btn>
+  );
+}

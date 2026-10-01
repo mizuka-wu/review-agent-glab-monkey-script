@@ -6,6 +6,7 @@ import {
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { FindingsPanel } from './components/review/FindingsPanel';
+import { buildSummaryComment } from './core/findings';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
@@ -95,6 +96,8 @@ export default function App({ page }: AppProps) {
   const [projectPacks, setProjectPacks] = useState<RulePack[]>([]);
   const [packScopeKind, setPackScopeKind] = useState<'public' | 'project'>('public');
   const [importError, setImportError] = useState('');
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [modelStream, setModelStream] = useState('');
 
   const [tab, setTab] = useState<Tab>('review');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -539,6 +542,7 @@ export default function App({ page }: AppProps) {
     setReviewWarnings([]);
     setStages(undefined);
     setFindings([]);
+    setModelStream('');
     setSelectedFindings(new Set());
     addLog('info', 'review', `开始 Review（${scope === 'selection' ? '选区' : '整个 MR'} · ${settings.reviewMode}）`, `${scopedFiles.length} 个文件`);
 
@@ -573,6 +577,8 @@ export default function App({ page }: AppProps) {
         background: repoContext ? `仓库符号上下文（本地索引 @${repoIndex?.status.ref.slice(0, 8)}）：\n${repoContext}` : undefined,
         loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
+        onRuleFindings: (ruleFindings) => setFindings(ruleFindings),
+        onModelToken: (token) => setModelStream((prev) => (prev + token).slice(-20000)),
       });
       if (controller.signal.aborted) return;
 
@@ -651,7 +657,7 @@ export default function App({ page }: AppProps) {
   const cancelReview = () => {
     reviewAbort.current?.abort();
     setReviewStatus('cancelled');
-    setReviewError('运行已取消，未完成的结果不会进入发布队列。');
+    setReviewError('');
     addLog('warn', 'review', '用户取消了 Review');
     const session = currentSessionRef.current;
     if (session) {
@@ -783,6 +789,63 @@ export default function App({ page }: AppProps) {
     if (!pack) return;
     void navigator.clipboard?.writeText(exportRulePack(pack));
     setToast('规则包 JSON 已复制到剪贴板');
+  };
+
+  const handleApprove = async () => {
+    if (!mergeRequestRef) return;
+    setQuickBusy(true);
+    try {
+      await api.approveMergeRequest(mergeRequestRef);
+      setToast('已 Approve 该 MR');
+      addLog('info', 'publish', `已 Approve MR !${mergeRequestRef.mergeRequestIid}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setToast(`Approve 失败：${message}`);
+      addLog('error', 'publish', 'Approve 失败', message);
+    } finally {
+      setQuickBusy(false);
+    }
+  };
+
+  const handlePublishAllInline = async () => {
+    if (!mergeRequestRef || !mrContext) return;
+    const targets = findings.filter((finding) => finding.status === 'draft' && finding.anchor?.publishable !== false);
+    if (targets.length === 0) return;
+    setQuickBusy(true);
+    const succeeded = new Set<string>();
+    for (const finding of targets) {
+      try {
+        await api.createDiscussion(mergeRequestRef, buildDraft(finding, finding.comment));
+        succeeded.add(finding.id);
+      } catch (error) {
+        addLog('error', 'publish', `行内评论失败 ${finding.path}:${finding.line}`, error instanceof Error ? error.message : String(error));
+      }
+    }
+    const attempted = new Set(targets.map((finding) => finding.id));
+    persistFindings(findings.map((finding) => {
+      if (!attempted.has(finding.id)) return finding;
+      return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
+    }));
+    setQuickBusy(false);
+    setToast(succeeded.size === targets.length
+      ? `已发布 ${succeeded.size} 条行内评论`
+      : `已发布 ${succeeded.size} 条行内评论，失败 ${targets.length - succeeded.size} 条`);
+  };
+
+  const handleSummaryComment = async () => {
+    if (!mergeRequestRef || findings.length === 0) return;
+    setQuickBusy(true);
+    try {
+      await api.createNote(mergeRequestRef, buildSummaryComment(findings));
+      setToast('总评论已发布');
+      addLog('info', 'publish', '已发布 MR 总评论');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setToast(`总评论发布失败：${message}`);
+      addLog('error', 'publish', '总评论发布失败', message);
+    } finally {
+      setQuickBusy(false);
+    }
   };
 
   // --- Publishing ---
@@ -1071,6 +1134,16 @@ export default function App({ page }: AppProps) {
                     {settings.reviewMode === 'rules' || !modelReady
                       ? `正在本地执行 ${enabledRuleCount} 条确定性规则…`
                       : '规则检查已完成，模型正在分析变更…'}
+                    {modelStream && (
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary }}>模型实时输出（点「取消」可停止）</div>
+                        <pre style={{
+                          marginTop: 4, maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                          fontSize: 11, lineHeight: 1.5, color: C.textSecondary, background: C.bgSubtle,
+                          border: `1px solid ${C.border}`, borderRadius: C.radiusSm, padding: 6,
+                        }}>{modelStream.slice(-1500)}</pre>
+                      </div>
+                    )}
                     <div style={{ marginTop: 6 }}>
                       <Btn size="sm" variant="outline" icon={<Square size={12} />} onClick={cancelReview}>取消</Btn>
                     </div>
@@ -1094,7 +1167,7 @@ export default function App({ page }: AppProps) {
                   </div>
                 )}
                 {reviewStatus === 'cancelled' && !reviewError && (
-                  <Banner tone="warning" title="已取消">未完成的结果不会进入发布队列。</Banner>
+                  <Banner tone="warning" title="已取消">模型分析已停止；已完成的规则结果仍保留并可发布。</Banner>
                 )}
               </div>
 
@@ -1110,6 +1183,11 @@ export default function App({ page }: AppProps) {
                   enabledRuleCount={enabledRuleCount}
                   canPublish={canPublish}
                   publishDisabledReason={publishDisabledReason}
+                  canApprove={Boolean(mergeRequestRef)}
+                  quickBusy={quickBusy}
+                  onApprove={() => void handleApprove()}
+                  onPublishAllInline={() => void handlePublishAllInline()}
+                  onSummaryComment={() => void handleSummaryComment()}
                   expandedId={expandedFinding}
                   selectedIds={selectedFindings}
                   onToggleExpand={(id) => setExpandedFinding((current) => current === id ? '' : id)}

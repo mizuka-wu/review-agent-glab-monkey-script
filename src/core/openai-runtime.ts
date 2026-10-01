@@ -1,5 +1,4 @@
 import { diffContext } from './diff';
-import { planSystemPrompt } from './review-plan';
 import { isModelConfigured } from './settings';
 import { httpRequest, httpTransport } from './http';
 import { debugBus } from './debug-bus';
@@ -27,6 +26,7 @@ interface ChatCompletionResponse {
 
 interface StreamChunk {
   choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
 function endpoint(baseUrl: string, path: string) {
@@ -42,6 +42,7 @@ interface StreamLikeResponse {
   status: number;
   body: ReadableStream<Uint8Array> | null;
   text: string;
+  contentType: string;
 }
 
 /** 流式优先走 fetch；被 CSP/CORS 拦截时回退到 GM 一次性请求（无逐 token 渲染）。 */
@@ -53,11 +54,11 @@ async function fetchStream(
 ): Promise<StreamLikeResponse> {
   try {
     const response = await fetch(url, { method: 'POST', headers, body, signal });
-    return { ok: response.ok, status: response.status, body: response.body, text: '' };
+    return { ok: response.ok, status: response.status, body: response.body, text: '', contentType: response.headers.get('content-type') ?? '' };
   } catch (error) {
     if (signal?.aborted || (error as Error).name === 'AbortError') throw error;
     const fallback = await httpRequest(url, { method: 'POST', headers, body, signal });
-    return { ok: fallback.status >= 200 && fallback.status < 300, status: fallback.status, body: null, text: fallback.text };
+    return { ok: fallback.status >= 200 && fallback.status < 300, status: fallback.status, body: null, text: fallback.text, contentType: '' };
   }
 }
 
@@ -168,7 +169,7 @@ export class OpenAIRuntime {
     options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; stage?: string } = {},
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const useStream = Boolean(options.onToken) && !options.json;
+      const useStream = Boolean(options.onToken);
 
       const payloadBody = JSON.stringify({
         model: this.settings.model,
@@ -192,15 +193,17 @@ export class OpenAIRuntime {
           status: result.status,
           body: null,
           text: result.text,
+          contentType: '',
         }));
 
-      if (useStream && response.ok && response.body) {
+      if (useStream && response.ok && response.body && response.contentType.includes('text/event-stream')) {
         // Parse SSE stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let content = '';
         let buffer = '';
         let done = false;
+        let streamUsage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
         try {
           while (!done) {
@@ -217,6 +220,7 @@ export class OpenAIRuntime {
               if (data === '[DONE]') { done = true; break; }
               try {
                 const chunk = JSON.parse(data) as StreamChunk;
+                if (chunk.usage) streamUsage = chunk.usage;
                 const choice = chunk.choices?.[0];
                 const delta = choice?.delta?.content ?? choice?.message?.content ?? '';
                 if (delta) {
@@ -241,7 +245,39 @@ export class OpenAIRuntime {
           status: response.status, ms: Date.now() - startedAt, transport: 'fetch',
         });
         if (!content) throw new Error('模型服务没有返回文本内容');
-        // Stream responses don't include usage in chunks; skip recording
+        if (streamUsage?.prompt_tokens || streamUsage?.completion_tokens) {
+          this.lastTokens = { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 };
+          void recordUsage('openai', this.settings.model, this.lastTokens.input, this.lastTokens.output);
+        }
+        return content;
+      }
+
+      if (useStream && response.ok) {
+        // 服务端忽略 stream 或未返回 SSE：一次性读完并整体回调，保证 UI 仍有输出。
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        let fullText = response.body ? '' : response.text;
+        if (response.body) {
+          for (;;) {
+            const { done: readDone, value } = await reader.read();
+            if (readDone) break;
+            fullText += decoder.decode(value, { stream: true });
+          }
+          fullText += decoder.decode();
+        }
+        const parsed = (JSON.parse(fullText || 'null') ?? {}) as ChatCompletionResponse;
+        const content = parsed.choices?.[0]?.message?.content ?? fullText;
+        if (!content) throw new Error('模型服务没有返回文本内容');
+        options.onToken?.(content);
+        const usage = parseOpenAIUsage(parsed as unknown as Record<string, unknown>);
+        this.lastTokens = { input: usage.inputTokens, output: usage.outputTokens };
+        debugBus.network({
+          kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream-fallback)`,
+          status: response.status, ms: Date.now() - startedAt, bytes: fullText.length, transport: 'fetch',
+        });
+        if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+          void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
+        }
         return content;
       }
 
@@ -305,34 +341,13 @@ export class OpenAIRuntime {
     );
   }
 
-  async plan(
-    files: FileDiff[],
-    selection: CodeSelection | undefined,
-    language: RuntimeSettings['language'],
-    signal?: AbortSignal,
-    background?: string,
-  ) {
-    const context = [
-      selection ? selectionContext(selection) : diffContext(files),
-      background ? `
-业务背景：
-${background}` : '',
-    ].join('');
-    return this.complete(
-      [
-        { role: 'system', content: planSystemPrompt(language) },
-        { role: 'user', content: context + '\n请输出评审计划。' },
-      ],
-      { signal, stage: 'plan' },
-    );
-  }
-
   async review(
     files: FileDiff[],
     selection: CodeSelection | undefined,
     language: RuntimeSettings['language'],
     signal?: AbortSignal,
     background?: string,
+    options?: { onToken?: (token: string) => void },
   ) {
     const context = [
       selection ? selectionContext(selection) : diffContext(files),
@@ -353,7 +368,7 @@ ${background}` : '',
         },
         { role: 'user', content: context },
       ],
-      { json: true, signal, stage: 'review' },
+      { json: true, signal, stage: 'review', onToken: options?.onToken },
     );
   }
 

@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
-  AlertTriangle, CheckCheck, ChevronDown, ChevronRight, Inbox, ListChecks, Loader2,
-  RotateCcw, ShieldCheck, Sparkles, SquareCheckBig, X,
+  AlertTriangle, CheckCheck, ChevronDown, ChevronRight, FileText, Inbox, ListChecks, Loader2,
+  MessageSquarePlus, RotateCcw, ShieldCheck, Sparkles, SquareCheckBig, ThumbsUp, X,
 } from 'lucide-react';
 import {
-  Banner, Btn, EmptyState, IconButton, Pill, Segmented, sourceTone, tokens as C,
+  Banner, Btn, ConfirmButton, EmptyState, IconButton, Pill, Segmented, sourceTone, tokens as C,
 } from '../ui/modern';
 import { FindingCard } from './FindingCard';
 import type { FindingEdit } from '../../core/finding-edit';
@@ -40,6 +40,11 @@ export interface FindingsPanelProps {
   enabledRuleCount: number;
   canPublish: boolean;
   publishDisabledReason?: string;
+  canApprove: boolean;
+  quickBusy: boolean;
+  onApprove: () => void;
+  onPublishAllInline: () => void;
+  onSummaryComment: () => void;
   expandedId: string;
   selectedIds: Set<string>;
   onToggleExpand: (id: string) => void;
@@ -59,7 +64,7 @@ export interface FindingsPanelProps {
 export function FindingsPanel(props: FindingsPanelProps) {
   const {
     findings, running, stages, warnings, error, modelReady, rulesOnlyMode, enabledRuleCount,
-    canPublish, publishDisabledReason, expandedId, selectedIds,
+    canPublish, publishDisabledReason, canApprove, quickBusy, expandedId, selectedIds,
   } = props;
 
   const [source, setSource] = useState<SourceFilter>('all');
@@ -105,6 +110,7 @@ export function FindingsPanel(props: FindingsPanelProps) {
   }, [source, visible]);
 
   const filterActive = source !== 'all' || severity !== 'all' || category !== 'all' || status !== 'all';
+  const publishableCount = findings.filter((f) => f.status === 'draft' && f.anchor?.publishable !== false).length;
 
   if (error && findings.length === 0) {
     return (
@@ -266,6 +272,29 @@ export function FindingsPanel(props: FindingsPanelProps) {
           </Btn>
         )}
       </div>
+
+      {/* Quick actions */}
+      {(canApprove || findings.length > 0) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+          borderTop: `1px solid ${C.border}`, background: C.bg, flexShrink: 0,
+        }}>
+          <ConfirmButton
+            label="一键 Approve" confirmLabel="确认 Approve？" icon={<ThumbsUp size={13} />}
+            disabled={!canApprove || quickBusy} onConfirm={props.onApprove}
+          />
+          <ConfirmButton
+            label={publishableCount > 0 ? `一键行内评论 (${publishableCount})` : '一键行内评论'}
+            confirmLabel="确认发布？" icon={<MessageSquarePlus size={13} />}
+            disabled={publishableCount === 0 || !canPublish || quickBusy} onConfirm={props.onPublishAllInline}
+          />
+          <span style={{ flex: 1 }} />
+          <ConfirmButton
+            label="总评论" confirmLabel="确认发布？" icon={<FileText size={13} />}
+            disabled={findings.length === 0 || !canPublish || quickBusy} onConfirm={props.onSummaryComment}
+          />
+        </div>
+      )}
 
       {/* Batch bar */}
       {counts.draft > 0 && (

@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Stream the review model stage over SSE: the running banner shows the model's live output draft so it is obvious the AI is working, and 「取消」 aborts the stream mid-flight; servers that ignore `stream` or omit SSE fall back to a single read with one whole-text callback; stream chunks' `usage` (when sent) is now recorded. Rule-stage findings render immediately via a stage callback instead of waiting for the model.
+- Add quick actions in the results footer: 一键 Approve (`POST .../approve`), 一键行内评论 (publish all publishable drafts as line discussions in one click) and 总评论 (one MR-level summary note with counts and a per-finding list); all use a two-step confirm button to prevent mis-clicks.
+- Clarify cancel semantics: cancelling stops the model analysis, keeps already-completed rule findings, and shows a 「已取消」 banner explaining that rule results remain publishable.
+- Remove the dead `plan()` runtime method and `review-plan.ts` (the unwired plan stage).
 - Replace the inline oMLX preset with a Base URL 「?」hint listing omlx / Ollama / LM Studio default ports and their `/v1`-suffixed OpenAI-compatible addresses (click to fill); localhost endpoints still auto-fetch `/v1/models`.
 - Add rule-pack scopes: packs are stored per scope (public, or per GitLab project path) under separate storage keys and loaded dynamically per project; project custom packs override same-id public packs while built-in rule toggles stay public.
 - Fix the `typecheck` gate: `tsc --noEmit` against the solution-style `tsconfig.json` (`files: []`) type-checked nothing; switch to `tsc -b` so the app and node projects are actually checked.

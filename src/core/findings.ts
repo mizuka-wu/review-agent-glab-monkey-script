@@ -191,3 +191,25 @@ function jsonCandidates(content: string): string[] {
   }
   return candidates;
 }
+
+const summarySeverityLabel = { critical: '严重', high: '高', medium: '中', low: '低' } as const;
+
+/** 生成 MR 级总评论正文：计数概览 + 逐条清单（最多 20 条）。 */
+export function buildSummaryComment(findings: Finding[]): string {
+  const count = (severity: Finding['severity']) => findings.filter((f) => f.severity === severity).length;
+  const rule = findings.filter((f) => f.source === 'rule').length;
+  const model = findings.filter((f) => f.source === 'model').length;
+  const both = findings.filter((f) => Boolean(f.corroborated)).length;
+  const lines = findings.slice(0, 20).map((finding, index) => {
+    const source = finding.corroborated ? '规则+AI' : finding.source === 'rule' ? '规则' : 'AI';
+    return `${index + 1}. [${summarySeverityLabel[finding.severity]}][${source}] ${finding.title} — \`${finding.path}:${finding.line}\``;
+  });
+  return [
+    '**Review Agent 评审总结**',
+    '',
+    `共 ${findings.length} 个问题：严重 ${count('critical')} · 高 ${count('high')} · 中 ${count('medium')} · 低 ${count('low')}（规则 ${rule} / AI ${model} / 印证 ${both}）`,
+    '',
+    ...lines,
+    findings.length > 20 ? `…其余 ${findings.length - 20} 条见侧栏结果列表` : '',
+  ].filter((line) => line !== '').join('\n');
+}

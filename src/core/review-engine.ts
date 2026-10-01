@@ -18,7 +18,7 @@ import type {
 
 interface ReviewRuntime {
   configured: boolean;
-  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string): Promise<string>;
+  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void }): Promise<string>;
 }
 
 const severityOrder: Record<Finding['severity'], number> = {
@@ -94,6 +94,10 @@ export class ReviewEngine {
     candidatePaths?: string[];
     /** 关闭后只跑 AI 评审。默认开启，未配置模型时也能独立工作。 */
     rules?: boolean;
+    /** 规则阶段完成后立即回调，用于增量渲染结果。 */
+    onRuleFindings?: (findings: Finding[]) => void;
+    /** 模型流式输出回调，用于实时展示 AI 正在工作。 */
+    onModelToken?: (token: string) => void;
     /** 关闭后只跑规则检查，即使模型已配置。 */
     model?: boolean;
   }): Promise<ReviewEngineResult> {
@@ -122,6 +126,7 @@ export class ReviewEngine {
     const rulePacksEnabled = input.rules !== false;
     // 规则结果已经是结构化 Finding，保留原始换行和规则溯源信息，不再二次归一化。
     const ruleFindings = rulePacksEnabled ? runRulePackReview(files, this.rulePacks) : [];
+    input.onRuleFindings?.(ruleFindings);
     const stages: ReviewEngineResult['stages'] = {
       rules: { ran: rulePacksEnabled, findings: ruleFindings.length, rules: rulePacksEnabled ? countEnabledRules(this.rulePacks) : 0 },
       model: { ran: false, findings: 0 },
@@ -135,7 +140,7 @@ export class ReviewEngine {
     if (this.runtime.configured && input.model !== false) {
       stages.model.ran = true;
       try {
-        const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background);
+        const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken });
         modelFindings = parseModelFindings(raw, files);
         stages.model.findings = modelFindings.length;
 

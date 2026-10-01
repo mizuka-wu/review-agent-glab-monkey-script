@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeFileDiff } from '../../src/core/diff';
-import { fingerprintFinding, normalizeFindings, parseModelFindings } from '../../src/core/findings';
+import {
+  buildSummaryComment,
+  fingerprintFinding,
+  normalizeFindings,
+  parseModelFindings,
+} from '../../src/core/findings';
 
 const file = normalizeFileDiff({
   old_path: 'src/a.ts',
@@ -36,5 +41,32 @@ describe('finding pipeline', () => {
 \`\`\``;
     expect(parseModelFindings(raw, [file])).toHaveLength(1);
     expect(() => parseModelFindings('not json', [file])).toThrow(/有效 JSON/);
+  });
+});
+
+describe('buildSummaryComment', () => {
+  function finding(over: Partial<Finding>): Finding {
+    return {
+      id: 'f1', fingerprint: 'fp', path: 'src/a.ts', line: 3, endLine: 3, side: 'new',
+      category: 'security', severity: 'high', confidence: 'high', title: '硬编码密钥',
+      content: 'c', evidence: [], existingCode: '', suggestionCode: '', comment: 'cm',
+      source: 'rule', status: 'draft', ...over,
+    };
+  }
+
+  it('summarizes counts and lists findings', () => {
+    const text = buildSummaryComment([
+      finding({}),
+      finding({ id: 'f2', severity: 'low', source: 'model', path: 'src/b.ts', line: 9, title: '调试日志' }),
+    ]);
+    expect(text).toContain('共 2 个问题');
+    expect(text).toContain('严重 0 · 高 1 · 中 0 · 低 1');
+    expect(text).toContain('[高][规则] 硬编码密钥 — `src/a.ts:3`');
+    expect(text).toContain('[低][AI] 调试日志 — `src/b.ts:9`');
+  });
+
+  it('marks corroborated findings as 规则+AI', () => {
+    const text = buildSummaryComment([finding({ corroborated: 'model' })]);
+    expect(text).toContain('[高][规则+AI]');
   });
 });
