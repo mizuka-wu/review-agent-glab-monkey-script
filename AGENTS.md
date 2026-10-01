@@ -14,7 +14,12 @@
 ```bash
 pnpm typecheck        # TypeScript 类型检查
 pnpm test:unit        # 单元测试（195 个）
-pnpm test:e2e         # Playwright E2E（mock 5 个 + 真实 GitLab 2 个，需环境变量）
+pnpm test:e2e         # Playwright E2E（mock 5 个）
+# 真实 GitLab（可选，含真实本地模型混合评审）：
+GITLAB_URL=http://127.0.0.1:8929 \
+GITLAB_MR_URL=http://127.0.0.1:8929/test/y-mxgraph/-/merge_requests/1/diffs \
+MODEL_BASE_URL=http://localhost:8000/v1 MODEL_NAME=qwen35-a3b \
+pnpm test:e2e
 pnpm build            # 构建油猴脚本（含 typecheck）
 pnpm dev              # 开发模式（原型页面）
 EVAL_VERBOSE=1 npx vitest run tests/eval/  # 评测基准报告
@@ -120,7 +125,7 @@ Finding 的 `source`（rule/model）与 `corroborated` 决定 UI 的来源徽标
 - 评测测试放在 `tests/eval/`
 - E2E 测试放在 `tests/e2e/`
 - 新功能必须有对应测试
-- 现有 195 个单元测试 + 7 个 E2E 不能减少
+- 现有 195 个单元测试 + 9 个 E2E（mock 5 + 真实 4）不能减少
 
 ### 代码风格
 - 不写注释（除非 WHY 不明显）

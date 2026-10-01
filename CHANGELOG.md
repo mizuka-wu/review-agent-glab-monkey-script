@@ -13,6 +13,10 @@
 - Fix markdown rendering (ordered lists, tables, blockquotes, safe URLs) and preserve multi-line comments through finding normalization.
 - Add a local repository index (opfs-worker OPFS cache with worker → main-thread → memory fallback): symbol search, heuristic call chains, `symbol_search` / `call_chain` agent tools, and "callers outside the diff" context injected into review prompts; same-ref caches restore without network.
 - Add an index manager: per-ref namespaces with a registry (ref / branch label / project / files / bytes / symbols), load + per-index delete + clear-all in the 索引 tab, `maxIndexes` pruning of the oldest entries, site storage usage/quota display, and a stale-index warning that also blocks repo context injection into review prompts.
+- Gate the debug tab behind 设置 → 调试 → 显示调试标签页 (default off); settings tab shows a dot when error logs exist.
+- Add a 本地 oMLX :8000 quick preset in model settings with automatic /v1/models fetch for localhost endpoints, plus a 关闭思考输出 toggle that sends `chat_template_kwargs.enable_thinking=false` for omlx/vLLM-style servers.
+- Harden `parseModelFindings` with candidate-based JSON extraction so leaked reasoning text can no longer break review parsing.
+- Add a real-model E2E (env `MODEL_BASE_URL` / `MODEL_NAME`, defaults to local omlx on :8000) that runs a hybrid review against a live GitLab and asserts the AI stage, network and prompt records.
 - Add a four-pane debugger (logs / network / prompts / state) backed by a framework-agnostic debug bus: every GitLab API, model, MCP and index request is recorded with status/latency/bytes; every model call records full system + messages, tools and token usage; console.warn/error are mirrored; logs survive reloads; one-click JSON debug bundle export with redacted settings.
 - Route model and MCP requests through GM.xmlHttpRequest to survive gitlab.com's `connect-src 'self'` CSP, with streaming fetch and automatic fallback.
 - Add `docs/10-opencodereview-gap-analysis.md` comparing this project with alibaba/open-code-review.

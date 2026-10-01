@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Cpu, Database, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
+  Bug, Cpu, Database, Globe, Shield, Package, Puzzle, TestTube, X, Eye, EyeOff, ShieldCheck,
   RefreshCw, Check, Save, Download, Upload, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import type { RuntimeSettings } from '../core/types';
@@ -27,6 +27,7 @@ interface SettingsViewProps {
   onUpdateRulePack: (id: string, patch: Partial<RulePack>) => void;
   onToggleRule: (packId: string, ruleId: string) => void;
   onNewRulePack: () => void;
+  onOpenDebug: () => void;
   importError: string;
   usageSummary: UsageSummary | null;
   onClearUsage: () => void;
@@ -47,6 +48,7 @@ export function SettingsView(props: SettingsViewProps) {
       {props.usageSummary && props.usageSummary.callCount > 0 && <UsageSection {...props} />}
       <RulePackSection {...props} />
       <McpSection {...props} />
+      <DebugSection {...props} />
     </div>
   );
 }
@@ -144,12 +146,44 @@ function ModelSection({ settings, onSettingsChange, onSave, onTestModel, onClear
             />
           </Field>
 
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[
+              { label: '官方 OpenAI', url: 'https://api.openai.com/v1' },
+              { label: '本地 oMLX :8000', url: 'http://localhost:8000/v1' },
+            ].map(preset => (
+              <button
+                key={preset.url} type="button"
+                onClick={() => onSettingsChange({ ...settings, modelBaseUrl: preset.url })}
+                style={{
+                  padding: '3px 9px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
+                  border: `1px solid ${settings.modelBaseUrl === preset.url ? C.primary : C.border}`,
+                  background: settings.modelBaseUrl === preset.url ? C.primaryLight : C.bg,
+                  color: settings.modelBaseUrl === preset.url ? C.primary : C.textSecondary,
+                  fontWeight: settings.modelBaseUrl === preset.url ? 700 : 500,
+                }}
+              >{preset.label}</button>
+            ))}
+          </div>
+
           <ModelPicker
             value={settings.model}
             baseUrl={settings.modelBaseUrl}
             apiKey={settings.apiKey}
             onChange={m => onSettingsChange({ ...settings, model: m })}
           />
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>关闭思考输出</div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                通过 chat_template_kwargs.enable_thinking=false 关闭 omlx / vLLM 系服务端的思考过程
+              </div>
+            </div>
+            <Toggle
+              checked={settings.thinking === 'off'}
+              onChange={v => onSettingsChange({ ...settings, thinking: v ? 'off' : 'default' })}
+            />
+          </div>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <Btn variant="ghost" icon={<X size={14} />} onClick={onClearApiKey}>清除密钥</Btn>
@@ -174,6 +208,15 @@ function ModelPicker({ value, baseUrl, apiKey, onChange }: {
   const [error, setError] = useState('');
   const [manual, setManual] = useState(false);
 
+  const isLocal = (() => {
+    try {
+      const host = new URL(baseUrl).hostname;
+      return host === 'localhost' || host === '127.0.0.1';
+    } catch {
+      return false;
+    }
+  })();
+
   const fetchModels = async () => {
     if (!baseUrl) return;
     setLoading(true); setError('');
@@ -192,8 +235,13 @@ function ModelPicker({ value, baseUrl, apiKey, onChange }: {
     }
   };
 
+  useEffect(() => {
+    if (isLocal && models.length === 0) void fetchModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseUrl, isLocal]);
+
   return (
-    <Field label="模型" hint={models.length > 0 ? `${models.length} 个可用` : '点击刷新获取'}>
+    <Field label="模型" hint={models.length > 0 ? `${models.length} 个可用` : isLocal ? '本地服务自动获取' : '点击刷新获取'}>
       <div style={{ display: 'flex', gap: 6 }}>
         {manual ? (
           <Input value={value} onChange={onChange} placeholder="gpt-4o-mini" style={{ flex: 1 }} mono />
@@ -497,6 +545,42 @@ function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRuleP
             <Btn variant="outline" icon={<Upload size={14} />} onClick={() => { onImportRulePack(importText); setImportText(''); }}>导入规则包</Btn>
             <Btn variant="ghost" icon={<Download size={14} />} onClick={onExportSiteConfig}>导出站点配置</Btn>
           </div>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ─── Debug ───
+function DebugSection({ settings, onSettingsChange, onOpenDebug }: SettingsViewProps) {
+  return (
+    <Card>
+      <CardHeader
+        icon={<Bug size={16} />}
+        title="调试"
+        desc="日志 / 网络 / 提示词 / 状态四面板，默认关闭"
+        badge={settings.debugEnabled ? { text: '已打开', color: 'success' } : undefined}
+      />
+      <CardBody>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>显示调试标签页</div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                记录 GitLab / 模型 / MCP / 索引的每次请求、发给模型的完整提示词、console 报错与运行时快照
+              </div>
+            </div>
+            <Toggle
+              checked={settings.debugEnabled}
+              onChange={v => {
+                onSettingsChange({ ...settings, debugEnabled: v });
+                if (v) onOpenDebug();
+              }}
+            />
+          </div>
+          {settings.debugEnabled && (
+            <Btn variant="outline" size="sm" icon={<Bug size={13} />} onClick={onOpenDebug}>打开调试面板</Btn>
+          )}
         </div>
       </CardBody>
     </Card>

@@ -14,6 +14,9 @@ const bundle = readFileSync(bundlePath, 'utf8');
 //   pnpm test:e2e
 
 const realGitlabUrl = process.env.GITLAB_URL || '';
+const modelBaseUrl = process.env.MODEL_BASE_URL || 'http://localhost:8000/v1';
+const modelName = process.env.MODEL_NAME || 'qwen35-a3b';
+const modelApiKey = process.env.MODEL_API_KEY || '';
 const realMrUrl = process.env.GITLAB_MR_URL || '';
 const gitlabUser = process.env.GITLAB_USER || 'root';
 const gitlabPass = process.env.GITLAB_PASS || '5iveRage';
@@ -341,6 +344,35 @@ test.describe('real GitLab mode', () => {
     await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
   });
 
+  test('runs hybrid review against a real local model (omlx)', async ({ page }) => {
+    const reachable = await fetch(`${modelBaseUrl}/models`).then((r) => r.ok).catch(() => false);
+    test.skip(!reachable, `本地模型服务 ${modelBaseUrl} 不可达`);
+    test.setTimeout(240_000);
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, realMrUrl, {
+      provider: 'openai', modelBaseUrl, model: modelName, apiKey: modelApiKey,
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN', thinking: 'off',
+      repoIndex: { enabled: true, maxFiles: 150, maxBytes: 8 * 1024 * 1024, maxIndexes: 4 },
+      repoContext: true, debugEnabled: true,
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
+    await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
+
+    await expect(page.getByText(/个问题|没有发现需要处理的问题/).first()).toBeVisible({ timeout: 200_000 });
+    await expect(page.getByText('AI 未运行')).toHaveCount(0);
+    await expect(page.getByText('AI 评审失败')).toHaveCount(0);
+    // 结果页的来源计数里 AI 应有非零命中
+    await expect(page.getByRole('button', { name: /^AI [1-9]/ }).first()).toBeVisible();
+
+    // 调试面板里应能看到模型请求与提示词记录（设置中已打开调试）
+    const panel = page.locator('aside[aria-label="Review Agent"]');
+    await page.getByRole('tab', { name: /调试/ }).click();
+    await page.getByRole('button', { name: /网络 \d+/ }).click();
+    await expect(panel.getByText(/chat\/completions/).first()).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: /提示词 \d+/ }).click();
+    await expect(panel.getByText(modelName).first()).toBeVisible({ timeout: 10000 });
+  });
+
   test('builds repo index on real GitLab, searches symbols and manages registry', async ({ page }) => {
     test.setTimeout(120_000);
     await loginToGitLab(page, realGitlabUrl);
@@ -348,7 +380,7 @@ test.describe('real GitLab mode', () => {
       provider: 'openai', modelBaseUrl: 'https://model.invalid/v1', model: 'unused', apiKey: '',
       gitlabToken: '', effort: 'balanced', language: 'zh-CN',
       repoIndex: { enabled: true, maxFiles: 120, maxBytes: 6 * 1024 * 1024, maxIndexes: 3 },
-      repoContext: true,
+      repoContext: true, debugEnabled: true,
     });
     await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await page.getByRole('tab', { name: /索引/ }).click();

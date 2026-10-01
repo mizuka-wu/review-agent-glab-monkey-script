@@ -151,28 +151,43 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
 }
 
 export function parseModelFindings(content: string, files: FileDiff[]) {
-  const withoutFence = content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
-  const firstArray = withoutFence.indexOf('[');
-  const lastArray = withoutFence.lastIndexOf(']');
-  const firstObject = withoutFence.indexOf('{');
-  const lastObject = withoutFence.lastIndexOf('}');
-  const json =
-    firstArray >= 0 && lastArray > firstArray
-      ? withoutFence.slice(firstArray, lastArray + 1)
-      : firstObject >= 0 && lastObject > firstObject
-        ? withoutFence.slice(firstObject, lastObject + 1)
-        : withoutFence;
+  const candidates = jsonCandidates(content);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed) || (parsed && typeof parsed === 'object' && Array.isArray((parsed as { findings?: unknown }).findings))) {
+        return normalizeFindings(parsed, files);
+      }
+    } catch {
+      // 继续尝试下一个候选片段（思考过程里也可能出现方括号）
+    }
+  }
+  throw new Error('模型未返回有效 JSON Finding：无法从响应中解析出 JSON 数组');
+}
 
-  if (!json.trim()) {
-    throw new Error('模型返回内容中未找到 JSON Finding 数据');
+/** 从可能混有思考过程的文本里按可信度提取 JSON 候选片段。 */
+function jsonCandidates(content: string): string[] {
+  const text = content.trim();
+  const candidates: string[] = [text];
+
+  for (const fence of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    candidates.push(fence[1].trim());
   }
 
-  try {
-    return normalizeFindings(JSON.parse(json), files);
-  } catch (error) {
-    throw new Error(`模型未返回有效 JSON Finding：${String(error)}`);
+  const firstArray = text.indexOf('[');
+  const lastArray = text.lastIndexOf(']');
+  if (firstArray >= 0 && lastArray > firstArray) candidates.push(text.slice(firstArray, lastArray + 1));
+  const firstObject = text.indexOf('{');
+  const lastObject = text.lastIndexOf('}');
+  if (firstObject >= 0 && lastObject > firstObject) candidates.push(text.slice(firstObject, lastObject + 1));
+
+  // 思考过程常以 "findings" 数组结尾：取最后一个看起来像数组起点的位置
+  const lateArray = text.lastIndexOf('"findings"');
+  if (lateArray >= 0) {
+    const open = text.lastIndexOf('[', lateArray);
+    const brace = text.lastIndexOf('{', open >= 0 ? open : 0);
+    const start = brace >= 0 ? brace : open;
+    if (start >= 0 && lastObject > start) candidates.push(text.slice(start, lastObject + 1));
   }
+  return candidates;
 }

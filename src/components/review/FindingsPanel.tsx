@@ -208,7 +208,7 @@ export function FindingsPanel(props: FindingsPanelProps) {
       {/* List */}
       <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '8px 10px 12px', scrollPaddingTop: 34 }}>
         {visible.length === 0 && running ? (
-          <EmptyState icon={<Loader2 size={18} className="ra-spin" />} title="Review 进行中">
+          <EmptyState icon={<Loader2 size={18} className="ra-spin" />} title="正在收集结果">
             规则检查在本地执行，模型分析可能需要十几秒。结果会按来源分组出现在这里。
           </EmptyState>
         ) : visible.length === 0 ? (

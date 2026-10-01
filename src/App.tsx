@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Bug, CheckSquare, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare,
   Database, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X,
@@ -874,6 +874,15 @@ export default function App({ page }: AppProps) {
     setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
   }, []);
 
+  const hasErrorLogs = useSyncExternalStore(
+    useCallback((listener: () => void) => debugBus.subscribe(listener), []),
+    () => debugBus.getLogs().reduce((total, entry) => total + (entry.level === 'error' ? 1 : 0), 0),
+  ) > 0;
+
+  useEffect(() => {
+    if (!settings.debugEnabled && tab === 'debug') setTab('review');
+  }, [settings.debugEnabled, tab]);
+
   const running = reviewStatus === 'running' || reviewStatus === 'preparing';
   const publishDisabledReason = !mergeRequestRef || !mrContext
     ? '当前页面不是 MR，无法创建行级 Discussion'
@@ -994,8 +1003,10 @@ export default function App({ page }: AppProps) {
             { value: 'review', label: '结果', icon: <CheckSquare size={13} />, count: findings.length },
             { value: 'chat', label: '对话', icon: <MessageSquare size={13} />, dot: responding },
             { value: 'repo', label: '索引', icon: <Database size={13} />, dot: repoStatus?.state === 'ready' },
-            { value: 'settings', label: '设置', icon: <SettingsIcon size={13} />, dot: !modelReady && settingsLoaded },
-            { value: 'debug', label: '调试', icon: <Bug size={13} />, dot: debugBus.getLogs().some((entry) => entry.level === 'error') },
+            { value: 'settings', label: '设置', icon: <SettingsIcon size={13} />, dot: (!modelReady && settingsLoaded) || hasErrorLogs },
+            ...(settings.debugEnabled
+              ? [{ value: 'debug' as Tab, label: '调试', icon: <Bug size={13} />, dot: hasErrorLogs }]
+              : []),
           ]}
         />
 
@@ -1219,6 +1230,7 @@ export default function App({ page }: AppProps) {
                   setToast('站点配置已复制到剪贴板（已剔除密钥）');
                 }}
                 onNewRulePack={() => void createNewPack()}
+                onOpenDebug={() => setTab('debug')}
                 testing={testing}
               />
             </div>

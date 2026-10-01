@@ -176,6 +176,7 @@ export class OpenAIRuntime {
         temperature: this.settings.effort === 'fast' ? 0 : 0.2,
         stream: useStream,
         ...(options.json ? { response_format: { type: 'json_object' } } : {}),
+        ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       });
       const requestHeaders = this.headers();
       const startedAt = Date.now();
@@ -398,6 +399,7 @@ ${background}` : '',
         messages: openaiMessages,
         tools: openaiTools,
         temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+        ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       }),
       signal: options.signal,
     });

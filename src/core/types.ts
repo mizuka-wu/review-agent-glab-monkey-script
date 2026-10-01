@@ -187,6 +187,10 @@ export interface RuntimeSettings {
   repoIndex: RepoIndexSettings;
   /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */
   repoContext: boolean;
+  /** 调试标签页开关（默认关闭，在设置中打开）。 */
+  debugEnabled: boolean;
+  /** 'off' 时通过 chat_template_kwargs 关闭 omlx/vLLM 系服务端的思考输出。 */
+  thinking: 'default' | 'off';
 }
 
 export interface AdapterCapabilities {
