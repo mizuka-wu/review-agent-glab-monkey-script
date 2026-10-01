@@ -115,3 +115,30 @@ describe('contextForFiles', () => {
     expect(contextForFiles(index(), ['src/auth.ts'], 10)).toHaveLength(0);
   });
 });
+
+describe('import-aware symbol precision', () => {
+  const a = { path: 'src/a.ts', language: 'ts' as const, bytes: 10, content: 'export function loadConfig() {\n  return 1;\n}\n', defs: [] as never[] };
+  function indexed() {
+    const files = [
+      { path: 'src/a.ts', language: 'ts' as const, bytes: 40, content: 'export function loadConfig() {\n  return 1;\n}\n', defs: extractFileSymbols('src/a.ts', 'export function loadConfig() {\n  return 1;\n}\n').defs },
+      { path: 'src/b.ts', language: 'ts' as const, bytes: 60, content: "import { loadConfig } from './a';\nexport function run() {\n  return loadConfig();\n}\n", defs: extractFileSymbols('src/b.ts', "import { loadConfig } from './a';\nexport function run() {\n  return loadConfig();\n}\n").defs },
+      { path: 'src/c.ts', language: 'ts' as const, bytes: 60, content: 'function loadConfig() {\n  return 2;\n}\nexport function other() {\n  return loadConfig();\n}\n', defs: extractFileSymbols('src/c.ts', 'function loadConfig() {\n  return 2;\n}\nexport function other() {\n  return loadConfig();\n}\n').defs },
+    ];
+    return buildSymbolIndex({ ref: 'r1', files });
+  }
+
+  it('resolves imported bindings to their defining file', () => {
+    const index = indexed();
+    const refs = index.refs['loadConfig'] ?? [];
+    const fromB = refs.find((ref) => ref.path === 'src/b.ts' && ref.call);
+    expect(fromB?.resolvedPath).toBe('src/a.ts');
+  });
+
+  it('excludes same-name local definitions from call chains', () => {
+    const index = indexed();
+    const chain = buildCallChain(index, 'loadConfig');
+    const callerPaths = chain.callers.map((caller) => caller.path);
+    expect(callerPaths).toContain('src/b.ts');
+    expect(callerPaths).not.toContain('src/c.ts');
+  });
+});
