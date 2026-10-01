@@ -15,7 +15,7 @@
     "check": "pnpm typecheck && pnpm test",
     "preview": "vite preview",
     "docs:dev": "vitepress dev docs-site",
-    "docs:build": "vitepress build docs-site",
+    "docs:build": "vitepress build docs-site && node scripts/copy-doc-redirects.mjs",
     "docs:preview": "vitepress preview docs-site"
   },
   "imports": {
