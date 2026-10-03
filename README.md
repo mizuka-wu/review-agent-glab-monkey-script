@@ -106,6 +106,24 @@
 不配置 API Key 也可以直接使用规则检查、划词定位、Finding 编辑和评论草稿复制；
 在「设置」中填写 OpenAI 兼容的 Base URL / 模型 / API Key 后即可叠加 AI 评审与对话。
 
+## 发布与同步渠道
+
+主源是 **GitHub Releases**（`v*` tag 触发 Release workflow 上传 `.user.js` / `.meta.js`）。其他平台作为镜像，用「拉取同步」接入，避免多处手维护：
+
+| 渠道 | 安装/同步地址 | 更新方式 |
+| --- | --- | --- |
+| GitHub Release（主源） | `releases/latest/download/review-agent-glab-monkey-script.user.js` | 打 tag 自动发版 |
+| Greasy Fork | 脚本管理页「从 URL 同步」填主源地址 | GF 定期拉取，按 `@version` 发更新 |
+| OpenUserJS | 从 GitHub 仓库导入 + 手动/Webhook 更新 | 同上 |
+| GitHub Pages（边缘通道） | `https://mizuka-wu.github.io/review-agent-glab-monkey-script/review-agent-glab-monkey-script.user.js` | main 每次构建（适合跟开发版） |
+
+Greasy Fork 上架步骤：
+1. 用 GitHub 账号登录 greasyfork.org → 「提交脚本」→ 先创建条目（名称/命名空间与仓库一致：`Review Agent for GitLab` / `review-agent-glab`）；
+2. 脚本管理页 → 代码 → 「从 URL 同步」填入主源 `.user.js` 地址；同步后 GF 会把 `@updateURL/@downloadURL` 指向 GF 自身，从 GF 安装的用户走 GF 更新；
+3. 之后每次发版只需 `git tag v0.x.y && git push --tags`，GF 会在下次同步时按 `@version` 发布更新（也可在管理页手动触发同步）。
+
+平台合规要点（已满足）：MIT `@license`、稳定 `@namespace`、语义化 `@version`、源码仓库链接（`@homepage`/`@supportURL`）、无混淆代码（构建产物未压缩且仓库公开）、无外部 `@require`。
+
 ## 开发
 
 ```bash

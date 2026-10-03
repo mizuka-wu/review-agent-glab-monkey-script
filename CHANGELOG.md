@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.1 — 2026-10-03
+- Add localized userscript descriptions (`@description:zh-CN` / `:en`) for script-index platforms and a README runbook for publishing/syncing to Greasy Fork and OpenUserJS from the GitHub Release asset.
+
 ## 0.4.0 — 2026-10-02
 - Thinking pane is now structured: bullet extraction plus a prose/JSON/code segment timeline, with the raw compacted stream behind a toggle.
 - Session viewer parity: read-only replay of historical sessions with mark fixed/ignored/back-to-draft, a hide-handled filter and restore-as-current; findings gain a `fixed` status surfaced in cards and filters.
