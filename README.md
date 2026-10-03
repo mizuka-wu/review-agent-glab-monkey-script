@@ -117,10 +117,28 @@
 | OpenUserJS | 从 GitHub 仓库导入 + 手动/Webhook 更新 | 同上 |
 | GitHub Pages（边缘通道） | `https://mizuka-wu.github.io/review-agent-glab-monkey-script/review-agent-glab-monkey-script.user.js` | main 每次构建（适合跟开发版） |
 
-Greasy Fork 上架步骤：
-1. 用 GitHub 账号登录 greasyfork.org → 「提交脚本」→ 先创建条目（名称/命名空间与仓库一致：`Review Agent for GitLab` / `review-agent-glab`）；
-2. 脚本管理页 → 代码 → 「从 URL 同步」填入主源 `.user.js` 地址；同步后 GF 会把 `@updateURL/@downloadURL` 指向 GF 自身，从 GF 安装的用户走 GF 更新；
-3. 之后每次发版只需 `git tag v0.x.y && git push --tags`，GF 会在下次同步时按 `@version` 发布更新（也可在管理页手动触发同步）。
+列表页完整说明（特性/权限与隐私逐条/@match 理由/截图建议/FAQ/数据清理）见 [GREASYFORK.md](GREASYFORK.md)，可直接粘贴到平台描述框。
+
+Greasy Fork 上架步骤（逐字段）：
+1. 用 GitHub 账号登录 greasyfork.org → 「提交脚本」→ 创建条目：
+   - **Name**：`Review Agent for GitLab`（与 `@name` 一致）；
+   - **Namespace**：`review-agent-glab`（与 `@namespace` 一致，决定更新匹配）；
+   - **Summary/Description**：粘贴 GREASYFORK.md 的简介与特性部分；
+   - **Categories**：Code review / Developer tools；
+   - **License**：MIT（与 `@license` 一致）；
+   - **Adult content / Ads**：均选否。
+2. 脚本管理页 → 代码 → 「从 URL 同步」填入主源 `.user.js` 地址并开启自动同步；同步后 GF 会把 `@updateURL/@downloadURL` 指向 GF 自身，从 GF 安装的用户走 GF 更新；
+3. 管理页补充：截图（建议 GREASYFORK.md 列的 5 张）、Additional info 粘贴 FAQ 与权限说明、Support 链接填仓库 issues；
+4. 之后每次发版只需 `git tag v0.x.y && git push --tags`，GF 会在下次同步时按 `@version` 发布更新（也可在管理页手动触发同步）。
+
+排障：
+| 现象 | 原因与处理 |
+| --- | --- |
+| 同步被拒「version not changed」 | 代码变了但 `@version` 没 bump：bump 版本再 tag |
+| 同步拉到的描述是旧文案 | GF 缓存：管理页手动触发同步；描述字段需手动更新一次 |
+| 审核询问宽 `@match` | 回复「自部署 GitLab 域名不可枚举；脚本仅在识别到 GitLab 页面时挂载，其余页面零请求」，并指向 GREASYFORK.md 的说明 |
+| 审核询问代码可读性 | 产物未压缩且源码仓库公开（`@homepage`），符合反混淆规则 |
+| OUJS 未自动更新 | OUJS 需配置 GitHub webhook 或手动 Update；确认仓库 raw/release URL 可达 |
 
 平台合规要点（已满足）：MIT `@license`、稳定 `@namespace`、语义化 `@version`、源码仓库链接（`@homepage`/`@supportURL`）、无混淆代码（构建产物未压缩且仓库公开）、无外部 `@require`。
 

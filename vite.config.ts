@@ -17,7 +17,7 @@ export default defineConfig({
       userscript: {
         name: 'Review Agent for GitLab',
         namespace: 'review-agent-glab',
-        description: 'Real GitLab diff review, selection chat, and confirmed discussion publishing.',
+        description: 'GitLab MR review: local deterministic rules (zero tokens, no API key needed) plus optional streamed AI review, symbol search/call chains, draft-then-publish line discussions.',
         author: 'Review Agent contributors',
         icon: 'https://about.gitlab.com/images/press/press-kit-icon.svg',
         homepage: 'https://github.com/mizuka-wu/review-agent-glab-monkey-script',

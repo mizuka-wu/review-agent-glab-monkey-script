@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.2 — 2026-10-03
+- Fuller localized userscript descriptions for script-index platforms, a paste-ready Greasy Fork/OpenUserJS listing document (`GREASYFORK.md`: features, per-grant privacy notes, broad-@match rationale, screenshot suggestions, FAQ, data cleanup), and a field-by-field publishing runbook with a troubleshooting table in README.
+
 ## 0.4.1 — 2026-10-03
 - Add localized userscript descriptions (`@description:zh-CN` / `:en`) for script-index platforms and a README runbook for publishing/syncing to Greasy Fork and OpenUserJS from the GitHub Release asset.
 
