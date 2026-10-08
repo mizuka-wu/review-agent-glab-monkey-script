@@ -40,6 +40,10 @@ export interface FindingsPanelProps {
   enabledRuleCount: number;
   canPublish: boolean;
   publishDisabledReason?: string;
+  /** 单条 Finding 自身的发布阻断原因（行号无法在 Diff 中定位等）。 */
+  publishBlockReason: (finding: Finding) => string | undefined;
+  /** 能否参与「一键行内评论 / 批量发布」：位置可定位且评论内容非空。 */
+  inlinePublishable: (finding: Finding) => boolean;
   canApprove: boolean;
   quickBusy: boolean;
   onApprove: () => void;
@@ -68,7 +72,8 @@ export interface FindingsPanelProps {
 export function FindingsPanel(props: FindingsPanelProps) {
   const {
     findings, running, stages, warnings, error, modelReady, rulesOnlyMode, enabledRuleCount,
-    canPublish, publishDisabledReason, canApprove, quickBusy, expandedId, selectedIds,
+    canPublish, publishDisabledReason, publishBlockReason, inlinePublishable,
+    canApprove, quickBusy, expandedId, selectedIds,
   } = props;
 
   const [source, setSource] = useState<SourceFilter>('all');
@@ -114,7 +119,9 @@ export function FindingsPanel(props: FindingsPanelProps) {
   }, [source, visible]);
 
   const filterActive = source !== 'all' || severity !== 'all' || category !== 'all' || status !== 'all';
-  const publishableCount = findings.filter((f) => f.status === 'draft' && f.anchor?.publishable !== false).length;
+  const publishableCount = findings.filter(inlinePublishable).length;
+  const selectedPublishable = findings.filter((f) => selectedIds.has(f.id) && inlinePublishable(f)).length;
+  const inlineBlockHint = '没有可发布为行级评论的 Finding：行号无法在 Diff 中定位，或评论内容为空';
 
   if (error && findings.length === 0) {
     return (
@@ -246,27 +253,29 @@ export function FindingsPanel(props: FindingsPanelProps) {
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {group.items.slice(0, limit).map((finding) => (
-                  <FindingCard
-                    key={finding.id}
-                    finding={finding}
-                    expanded={expandedId === finding.id}
-                    selected={selectedIds.has(finding.id)}
-                    publishDisabled={!canPublish || finding.anchor?.publishable === false}
-                    publishDisabledReason={
-                      finding.anchor?.publishable === false ? '该 Finding 只锚定到完整文件，无法作为行级评论发布'
-                        : publishDisabledReason
-                    }
-                    onToggle={() => props.onToggleExpand(finding.id)}
-                    onSelect={() => props.onToggleSelect(finding.id)}
-                    onLocate={() => props.onLocate(finding)}
-                    onCopy={() => props.onCopy(finding)}
-                    onPublish={() => props.onPublish(finding)}
-                    onIgnore={() => props.onIgnore(finding)}
-                    onMarkFixed={() => props.onMarkFixed(finding)}
-                    onEdit={(edit) => props.onEdit(finding.id, edit)}
-                  />
-                ))}
+                {group.items.slice(0, limit).map((finding) => {
+                  const issue = publishBlockReason(finding);
+                  const reason = canPublish ? issue : publishDisabledReason;
+                  return (
+                    <FindingCard
+                      key={finding.id}
+                      finding={finding}
+                      expanded={expandedId === finding.id}
+                      selected={selectedIds.has(finding.id)}
+                      publishDisabled={Boolean(reason)}
+                      publishDisabledReason={reason}
+                      publishIssue={issue}
+                      onToggle={() => props.onToggleExpand(finding.id)}
+                      onSelect={() => props.onToggleSelect(finding.id)}
+                      onLocate={() => props.onLocate(finding)}
+                      onCopy={() => props.onCopy(finding)}
+                      onPublish={() => props.onPublish(finding)}
+                      onIgnore={() => props.onIgnore(finding)}
+                      onMarkFixed={() => props.onMarkFixed(finding)}
+                      onEdit={(edit) => props.onEdit(finding.id, edit)}
+                    />
+                  );
+                })}
               </div>
             </section>
           );
@@ -291,12 +300,16 @@ export function FindingsPanel(props: FindingsPanelProps) {
           <ConfirmButton
             label={publishableCount > 0 ? `一键行内评论 (${publishableCount})` : '一键行内评论'}
             confirmLabel="确认发布？" icon={<MessageSquarePlus size={13} />}
-            disabled={publishableCount === 0 || !canPublish || quickBusy} onConfirm={props.onPublishAllInline}
+            disabled={publishableCount === 0 || !canPublish || quickBusy}
+            title={!canPublish ? publishDisabledReason : publishableCount === 0 ? inlineBlockHint : undefined}
+            onConfirm={props.onPublishAllInline}
           />
           <span style={{ flex: 1 }} />
           <ConfirmButton
             label="总评论" confirmLabel="确认发布？" icon={<FileText size={13} />}
-            disabled={findings.length === 0 || !canPublish || quickBusy} onConfirm={props.onSummaryComment}
+            disabled={findings.length === 0 || !canPublish || quickBusy}
+            title={canPublish ? undefined : publishDisabledReason}
+            onConfirm={props.onSummaryComment}
           />
           <Btn size="sm" variant="ghost" icon={<Download size={13} />} disabled={findings.length === 0} onClick={props.onExportFindings}>
             导出 JSON
@@ -316,15 +329,30 @@ export function FindingsPanel(props: FindingsPanelProps) {
           {selectedIds.size > 0 ? (
             <>
               <span style={{ fontSize: 11, fontWeight: 700, color: C.primary }}>已选 {selectedIds.size}</span>
+              {selectedPublishable < selectedIds.size && (
+                <span title={inlineBlockHint} style={{ fontSize: 11, color: C.warning }}>
+                  可发布 {selectedPublishable}
+                </span>
+              )}
               <Btn size="sm" variant="ghost" onClick={props.onClearSelection}>取消选择</Btn>
               <span style={{ flex: 1 }} />
-              <Btn size="sm" variant="primary" icon={<CheckCheck size={13} />} disabled={!canPublish} onClick={props.onBatchPublish}>
-                批量发布
+              <Btn
+                size="sm" variant="primary" icon={<CheckCheck size={13} />}
+                disabled={!canPublish || selectedPublishable === 0}
+                title={!canPublish ? publishDisabledReason : selectedPublishable === 0 ? inlineBlockHint : undefined}
+                onClick={props.onBatchPublish}
+              >
+                批量发布{selectedPublishable > 0 ? ` (${selectedPublishable})` : ''}
               </Btn>
             </>
           ) : (
             <>
-              <Btn size="sm" variant="ghost" icon={<SquareCheckBig size={13} />} disabled={!canPublish} onClick={props.onSelectPublishable}>
+              <Btn
+                size="sm" variant="ghost" icon={<SquareCheckBig size={13} />}
+                disabled={!canPublish || publishableCount === 0}
+                title={!canPublish ? publishDisabledReason : publishableCount === 0 ? inlineBlockHint : undefined}
+                onClick={props.onSelectPublishable}
+              >
                 选择全部可发布
               </Btn>
               <span style={{ flex: 1 }} />

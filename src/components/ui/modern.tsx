@@ -489,10 +489,10 @@ export function InjectAnimations() {
 export const tokens = C;
 
 // ─── ConfirmButton（两步确认，防误触的高影响操作）───
-export function ConfirmButton({ label, confirmLabel = '确认？', onConfirm, disabled, icon, variant = 'outline', size = 'sm' }: {
+export function ConfirmButton({ label, confirmLabel = '确认？', onConfirm, disabled, icon, variant = 'outline', size = 'sm', title }: {
   label: string; confirmLabel?: string; onConfirm: () => void;
   disabled?: boolean; icon?: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg'; title?: string;
 }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -506,6 +506,7 @@ export function ConfirmButton({ label, confirmLabel = '确认？', onConfirm, di
       size={size}
       icon={icon}
       disabled={disabled}
+      title={title}
       ariaLabel={armed ? confirmLabel : label}
       onClick={() => {
         if (armed) { setArmed(false); onConfirm(); } else { setArmed(true); }

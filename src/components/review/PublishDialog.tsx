@@ -47,11 +47,13 @@ function Dialog({ labelId, title, subtitle, onClose, children, footer }: {
   );
 }
 
-export function PublishDialog({ finding, body, onBodyChange, publishing, meta, onCancel, onConfirm }: {
+export function PublishDialog({ finding, body, onBodyChange, publishing, blockReason, meta, onCancel, onConfirm }: {
   finding: Finding;
   body: string;
   onBodyChange: (value: string) => void;
   publishing: boolean;
+  /** 会导致发布失败的状态；非空时确认按钮直接禁用。 */
+  blockReason?: string;
   meta: { projectPath: string; mergeRequestIid?: number; headSha?: string };
   onCancel: () => void;
   onConfirm: () => void;
@@ -65,7 +67,12 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, meta, o
       footer={
         <>
           <Btn variant="outline" onClick={onCancel}>返回修改</Btn>
-          <Btn variant="primary" icon={<MessageSquare size={13} />} loading={publishing} disabled={!body.trim()} onClick={onConfirm}>
+          <Btn
+            variant="primary" icon={<MessageSquare size={13} />} loading={publishing}
+            disabled={!body.trim() || Boolean(blockReason)}
+            title={!body.trim() ? '评论内容不能为空' : blockReason}
+            onClick={onConfirm}
+          >
             {publishing ? '发布中…' : '确认发布'}
           </Btn>
         </>
@@ -79,9 +86,15 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, meta, o
           </div>
         </div>
 
-        {finding.anchor?.publishable === false && (
-          <Banner tone="warning" icon={<AlertTriangle size={14} />} title="无法作为行级评论">
-            该 Finding 只锚定到完整文件，不在当前 Diff 行上。发布将退化为 MR 级评论。
+        {blockReason && (
+          <Banner tone="danger" icon={<AlertTriangle size={14} />} title="无法作为行级评论发布">
+            {blockReason}
+          </Banner>
+        )}
+
+        {!blockReason && finding.anchor?.corrected && (
+          <Banner tone="info" title="评论位置已自动修正">
+            原行号不在当前 Diff 行内，已按 Finding 内容重新定位到 {finding.path}:{finding.line}。
           </Banner>
         )}
 
@@ -102,9 +115,13 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, meta, o
   );
 }
 
-export function BatchPublishDialog({ findings, publishing, meta, onCancel, onConfirm }: {
+export function BatchPublishDialog({ findings, publishing, skipped = 0, blockReason, meta, onCancel, onConfirm }: {
   findings: Finding[];
   publishing: boolean;
+  /** 已勾选但无法发布、会被跳过的条数。 */
+  skipped?: number;
+  /** 会导致发布失败的状态；非空时确认按钮直接禁用。 */
+  blockReason?: string;
   meta: { projectPath: string; mergeRequestIid?: number; headSha?: string };
   onCancel: () => void;
   onConfirm: () => void;
@@ -119,7 +136,12 @@ export function BatchPublishDialog({ findings, publishing, meta, onCancel, onCon
       footer={
         <>
           <Btn variant="outline" onClick={onCancel}>取消</Btn>
-          <Btn variant="primary" icon={<MessageSquare size={13} />} loading={publishing} disabled={findings.length === 0} onClick={onConfirm}>
+          <Btn
+            variant="primary" icon={<MessageSquare size={13} />} loading={publishing}
+            disabled={findings.length === 0 || Boolean(blockReason)}
+            title={blockReason ?? (findings.length === 0 ? '没有可发布为行级评论的 Finding' : undefined)}
+            onClick={onConfirm}
+          >
             {publishing ? '发布中…' : `确认批量发布 ${findings.length} 条`}
           </Btn>
         </>
@@ -129,6 +151,14 @@ export function BatchPublishDialog({ findings, publishing, meta, onCancel, onCon
         <div style={{ fontSize: 12, color: C.textSecondary }}>
           将为选中的 {findings.length} 个 Finding 逐条创建行级 Discussion，失败的条目会保留在列表中。
         </div>
+        {blockReason && (
+          <Banner tone="danger" icon={<AlertTriangle size={14} />} title="当前无法发布">{blockReason}</Banner>
+        )}
+        {skipped > 0 && (
+          <Banner tone="warning" icon={<AlertTriangle size={14} />} title={`已跳过 ${skipped} 条选中的 Finding`}>
+            它们的行号无法在 Diff 中定位，或评论内容为空。
+          </Banner>
+        )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {preview.map((finding) => (
             <div key={finding.id} style={{

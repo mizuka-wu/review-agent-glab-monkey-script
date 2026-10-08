@@ -24,6 +24,8 @@ interface FindingCardProps {
   selected?: boolean;
   publishDisabled: boolean;
   publishDisabledReason?: string;
+  /** 本条 Finding 自身不可发布的原因（行号无法修正等），会直接显示在卡片上。 */
+  publishIssue?: string;
   onToggle: () => void;
   onSelect?: () => void;
   onLocate: () => void;
@@ -59,7 +61,7 @@ function ActionButton({ icon, children, onClick, disabled, title, primary, dange
 }
 
 export function FindingCard({
-  finding, expanded, selected, publishDisabled, publishDisabledReason,
+  finding, expanded, selected, publishDisabled, publishDisabledReason, publishIssue,
   onToggle, onSelect, onLocate, onCopy, onPublish, onIgnore, onMarkFixed, onEdit,
 }: FindingCardProps) {
   const [edit, setEdit] = useState<FindingEdit | undefined>();
@@ -215,9 +217,14 @@ export function FindingCard({
                 </div>
               )}
 
-              {finding.anchor && !finding.anchor.publishable && (
+              {publishIssue && (
                 <div style={{ marginTop: 8 }}>
-                  <Badge text="仅锚定到完整文件，不能发布为行级评论" color="warning" />
+                  <Badge text={publishIssue} color="warning" />
+                </div>
+              )}
+              {finding.anchor?.corrected && (
+                <div style={{ marginTop: 8, fontSize: 11, color: C.textMuted }}>
+                  原行号不在当前 Diff 内，已按 Finding 内容自动修正到第 {finding.line} 行。
                 </div>
               )}
               {finding.anchor?.relocatedFromPath && (

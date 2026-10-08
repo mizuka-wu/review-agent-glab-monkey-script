@@ -22,6 +22,8 @@ export interface FindingAnchor {
   source: 'diff' | 'full-file';
   publishable: boolean;
   relocatedFromPath?: string;
+  /** 原行号不在 diff 行内，发布前按 Finding 内容重新定位过。 */
+  corrected?: boolean;
 }
 
 export interface Finding {

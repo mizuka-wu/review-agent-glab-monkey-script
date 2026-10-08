@@ -14,6 +14,7 @@ import { SettingsView, ModelPicker } from './components/SettingsView';
 import {
   Banner, Btn, IconButton, InjectAnimations, Pill, Select, Tabs, Toggle, tokens as C,
 } from './components/ui/modern';
+import { resolvePublishPosition, type PublishPosition } from './core/anchor';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
 import { CompositeToolExecutor, GitLabToolExecutor, RepoIndexToolExecutor } from './core/agent-tools';
 import { debugBus } from './core/debug-bus';
@@ -186,7 +187,43 @@ export default function App({ page }: AppProps) {
   const config = useMemo(() => inspectConfiguration(settings), [settings]);
   const modelReady = config.modelReady;
   const enabledRuleCount = useMemo(() => countEnabledRules(rulePacks), [rulePacks]);
-  const canPublish = !scanMode && Boolean(mergeRequestRef && mrContext && (capabilities?.canCreateDiscussions !== false));
+  const running = reviewStatus === 'running' || reviewStatus === 'preparing';
+
+  /** 发布位置校验：行号必须落在该文件真实 diff 行内，否则先按内容自动修正。扫描结果没有 diff 位置，整体跳过。 */
+  const publishPositions = useMemo(() => {
+    const positions = new Map<string, PublishPosition>();
+    if (scanMode) return positions;
+    for (const finding of findings) positions.set(finding.id, resolvePublishPosition(finding, files));
+    return positions;
+  }, [findings, files, scanMode]);
+
+  const resolvedFindings = useMemo(
+    () => findings.map((finding) => publishPositions.get(finding.id)?.finding ?? finding),
+    [findings, publishPositions],
+  );
+
+  const publishBlockReason = useCallback((finding: Finding) => {
+    const position = publishPositions.get(finding.id);
+    return position && !position.publishable ? position.reason ?? '无法确定行级评论位置' : undefined;
+  }, [publishPositions]);
+
+  const inlinePublishable = useCallback((finding: Finding) =>
+    finding.status === 'draft' && !publishBlockReason(finding) && Boolean(finding.comment.trim()),
+  [publishBlockReason]);
+
+  /** 任何点了必失败的状态都在这里禁用发布入口，而不是等 GitLab 返回 4xx。 */
+  const publishDisabledReason = scanMode
+    ? '扫描模式结果无 diff 位置，不能发布为行级评论'
+    : !mergeRequestRef || !mrContext
+      ? '当前页面不是 MR，无法创建行级 Discussion'
+      : capabilities && !capabilities.canCreateDiscussions
+        ? 'GitLab Token 没有创建 Discussion 的权限'
+        : running
+          ? '评审进行中，请等本次 Review 结束后再发布'
+          : publishing || batchPublishing || quickBusy
+            ? '正在执行发布操作，请稍候'
+            : undefined;
+  const canPublish = publishDisabledReason === undefined;
 
   const persistUi = useCallback((next: UiPrefs) => {
     setUi(next);
@@ -1005,8 +1042,8 @@ export default function App({ page }: AppProps) {
   };
 
   const handlePublishAllInline = async () => {
-    if (!mergeRequestRef || !mrContext) return;
-    const targets = findings.filter((finding) => finding.status === 'draft' && finding.anchor?.publishable !== false);
+    if (!mergeRequestRef || !mrContext || !canPublish) return;
+    const targets = resolvedFindings.filter(inlinePublishable);
     if (targets.length === 0) return;
     setQuickBusy(true);
     const succeeded = new Set<string>();
@@ -1102,21 +1139,24 @@ export default function App({ page }: AppProps) {
 
   // --- Publishing ---
 
-  const buildDraft = (finding: Finding, body: string) => ({
-    body,
-    path: finding.path,
-    oldPath: finding.oldPath ?? finding.path,
-    newPath: finding.newPath ?? finding.path,
-    startLine: finding.line,
-    endLine: finding.endLine,
-    side: finding.side,
-    newFile: finding.newFile,
-    deletedFile: finding.deletedFile,
-    diffRefs: mrContext!.diffRefs,
-  });
+  const buildDraft = (input: Finding, body: string) => {
+    const finding = publishPositions.get(input.id)?.finding ?? input;
+    return {
+      body,
+      path: finding.path,
+      oldPath: finding.oldPath ?? finding.path,
+      newPath: finding.newPath ?? finding.path,
+      startLine: finding.line,
+      endLine: finding.endLine,
+      side: finding.side,
+      newFile: finding.newFile,
+      deletedFile: finding.deletedFile,
+      diffRefs: mrContext!.diffRefs,
+    };
+  };
 
   const confirmPublish = async () => {
-    if (!publishFinding || !mergeRequestRef || !mrContext) return;
+    if (!publishFinding || !mergeRequestRef || !mrContext || !canPublish || publishBlockReason(publishFinding)) return;
     setPublishing(true);
     try {
       await api.createDiscussion(mergeRequestRef, buildDraft(publishFinding, publishBody));
@@ -1135,12 +1175,12 @@ export default function App({ page }: AppProps) {
     }
   };
 
-  const publishableSelected = findings.filter((finding) => selectedFindings.has(finding.id) && finding.status === 'draft');
+  const publishableSelected = resolvedFindings.filter(
+    (finding) => selectedFindings.has(finding.id) && inlinePublishable(finding),
+  );
 
   const selectAllPublishable = () => {
-    setSelectedFindings(new Set(findings
-      .filter((finding) => finding.status === 'draft' && finding.anchor?.publishable !== false)
-      .map((finding) => finding.id)));
+    setSelectedFindings(new Set(resolvedFindings.filter(inlinePublishable).map((finding) => finding.id)));
   };
 
   const toggleFindingSelection = (id: string) => {
@@ -1152,7 +1192,7 @@ export default function App({ page }: AppProps) {
   };
 
   const batchConfirmPublish = async () => {
-    if (publishableSelected.length === 0 || !mergeRequestRef || !mrContext) return;
+    if (publishableSelected.length === 0 || !mergeRequestRef || !mrContext || !canPublish) return;
     setBatchPublishing(true);
     const succeeded = new Set<string>();
     let failed = 0;
@@ -1225,15 +1265,6 @@ export default function App({ page }: AppProps) {
   useEffect(() => {
     if (!settings.debugEnabled && tab === 'debug') setTab('review');
   }, [settings.debugEnabled, tab]);
-
-  const running = reviewStatus === 'running' || reviewStatus === 'preparing';
-    const publishDisabledReason = scanMode
-    ? '扫描模式结果无 diff 位置，不能发布为行级评论'
-    : !mergeRequestRef || !mrContext
-    ? '当前页面不是 MR，无法创建行级 Discussion'
-    : capabilities && !capabilities.canCreateDiscussions
-      ? 'GitLab Token 没有创建 Discussion 的权限'
-      : undefined;
 
   return (
     <div ref={hostRef} className="ra-host" style={{ position: 'relative' }}>
@@ -1501,7 +1532,7 @@ export default function App({ page }: AppProps) {
 
               {findings.length > 0 || reviewError || reviewStatus !== 'idle' ? (
                 <FindingsPanel
-                  findings={findings}
+                  findings={resolvedFindings}
                   running={running}
                   stages={stages}
                   warnings={reviewWarnings}
@@ -1511,6 +1542,8 @@ export default function App({ page }: AppProps) {
                   enabledRuleCount={enabledRuleCount}
                   canPublish={canPublish}
                   publishDisabledReason={publishDisabledReason}
+                  publishBlockReason={publishBlockReason}
+                  inlinePublishable={inlinePublishable}
                   canApprove={Boolean(mergeRequestRef)}
                   quickBusy={quickBusy}
                   onApprove={() => void handleApprove()}
@@ -1785,10 +1818,11 @@ export default function App({ page }: AppProps) {
 
       {publishFinding && mergeRequestRef && (
         <PublishDialog
-          finding={publishFinding}
+          finding={publishPositions.get(publishFinding.id)?.finding ?? publishFinding}
           body={publishBody}
           onBodyChange={setPublishBody}
           publishing={publishing}
+          blockReason={publishDisabledReason ?? publishBlockReason(publishFinding)}
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
           onCancel={() => setPublishFinding(undefined)}
           onConfirm={() => void confirmPublish()}
@@ -1799,6 +1833,8 @@ export default function App({ page }: AppProps) {
         <BatchPublishDialog
           findings={publishableSelected}
           publishing={batchPublishing}
+          skipped={selectedFindings.size - publishableSelected.length}
+          blockReason={publishDisabledReason}
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef?.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
           onCancel={() => setBatchConfirm(false)}
           onConfirm={() => void batchConfirmPublish()}
