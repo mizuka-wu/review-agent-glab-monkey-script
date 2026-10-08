@@ -217,7 +217,7 @@ export function ChatThread({
         }}>
           <textarea
             ref={textareaRef}
-            aria-label="消息输入框"
+            aria-label="消息输入框" autoComplete="off"
             rows={1}
             value={draft}
             placeholder={modelReady ? '提问，或粘贴代码…（Enter 发送 / Shift+Enter 换行）' : '未配置模型，暂不能对话；可先运行规则检查'}

@@ -162,6 +162,7 @@ function ModelSection({ settings, onSettingsChange, onSettingsCommit, onSave, on
               value={settings.apiKey}
               onChange={v => onSettingsChange({ ...settings, apiKey: v })}
               placeholder="sk-..."
+              autoComplete="new-password"
               rightIcon={
                 <button type="button" onClick={() => setShowKey(!showKey)}
                   style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.textMuted, display: 'flex', padding: 0 }}>
@@ -383,6 +384,7 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
           </Btn>
         </div>
         <textarea
+          autoComplete="off"
           value={prompts[effectiveKey] ?? ''}
           onChange={(e) => setPrompt(effectiveKey, e.target.value)}
           disabled={!effectiveKey}
@@ -654,7 +656,7 @@ function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRuleP
                       {pack.rules.map((rule, i) => (
                         <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: i > 0 ? `1px solid ${C.border}` : 'none', fontSize: 11 }}>
                           <input
-                            type="checkbox" checked={rule.enabled} aria-label={`启用规则 ${rule.title}`}
+                            type="checkbox" checked={rule.enabled} autoComplete="off" aria-label={`启用规则 ${rule.title}`}
                             onChange={() => onToggleRule(pack.id, rule.id)}
                             style={{ width: 13, height: 13, accentColor: C.primary, cursor: 'pointer', flexShrink: 0 }}
                           />
@@ -680,6 +682,7 @@ function RulePackSection({ rulePacks, onToggleRulePack, onToggleRule, onNewRuleP
           <Divider label="导入" />
           <Field label="规则包 JSON">
             <textarea
+              autoComplete="off"
               value={importText}
               onChange={e => setImportText(e.target.value)}
               placeholder="粘贴规则包 JSON…"

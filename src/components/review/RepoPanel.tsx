@@ -173,7 +173,7 @@ export function RepoPanel(props: RepoPanelProps) {
             <input
               value={query} onChange={(event) => { setQuery(event.target.value); setChain(undefined); }}
               placeholder="搜索符号：函数 / 方法 / 类 / 类型…"
-              aria-label="符号搜索"
+              aria-label="符号搜索" autoComplete="off"
               style={{
                 width: '100%', height: 32, padding: '0 10px 0 28px', borderRadius: C.radius,
                 border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 12, color: C.text, outline: 'none', ...mono,

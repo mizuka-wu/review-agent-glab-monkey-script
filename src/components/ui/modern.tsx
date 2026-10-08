@@ -169,9 +169,10 @@ export function CopyBtn({ text, label = '复制', size = 'sm', variant = 'outlin
 }
 
 // ─── Input ───
-export function Input({ value, onChange, placeholder, type = 'text', icon, rightIcon, style, mono, list }: {
+export function Input({ value, onChange, placeholder, type = 'text', icon, rightIcon, style, mono, list, autoComplete }: {
   value: string; onChange: (v: string) => void; placeholder?: string;
   type?: string; icon?: ReactNode; rightIcon?: ReactNode; style?: CSSProperties; mono?: boolean; list?: string;
+  autoComplete?: string;
 }) {
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState(false);
@@ -192,6 +193,7 @@ export function Input({ value, onChange, placeholder, type = 'text', icon, right
       <input
         type={type} value={value} onChange={e => onChange(e.target.value)}
         placeholder={placeholder} list={list}
+        autoComplete={autoComplete ?? (type === 'password' ? 'new-password' : 'off')}
         onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
         style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: C.text, fontFamily: mono ? 'ui-monospace, monospace' : 'inherit', minWidth: 0 }}
       />

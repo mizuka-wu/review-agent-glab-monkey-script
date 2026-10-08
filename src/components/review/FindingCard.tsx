@@ -96,7 +96,7 @@ export function FindingCard({
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '7px 9px 7px 8px' }}>
         {onSelect && (
           <input
-            type="checkbox" checked={selected ?? false} onChange={onSelect}
+            type="checkbox" checked={selected ?? false} autoComplete="off" onChange={onSelect}
             aria-label="选择此 Finding" title="选择后可批量发布"
             style={{ marginTop: 4, width: 13, height: 13, accentColor: C.primary, cursor: 'pointer', flexShrink: 0 }}
           />
@@ -152,27 +152,27 @@ export function FindingCard({
           {edit ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
               <EditField label="标题" id={`finding-title-${finding.id}`}>
-                <input id={`finding-title-${finding.id}`} value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} style={inputStyle} />
+                <input id={`finding-title-${finding.id}`} autoComplete="off" value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} style={inputStyle} />
               </EditField>
               <EditField label="说明" id={`finding-content-${finding.id}`}>
-                <textarea id={`finding-content-${finding.id}`} value={edit.content} rows={4} onChange={(e) => setEdit({ ...edit, content: e.target.value })} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                <textarea id={`finding-content-${finding.id}`} autoComplete="off" value={edit.content} rows={4} onChange={(e) => setEdit({ ...edit, content: e.target.value })} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
               </EditField>
               <EditField label="评论草稿" id={`finding-comment-${finding.id}`} hint="发布到 GitLab 的正文，支持 Markdown">
-                <textarea id={`finding-comment-${finding.id}`} value={edit.comment} rows={6} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                <textarea id={`finding-comment-${finding.id}`} autoComplete="off" value={edit.comment} rows={6} onChange={(e) => setEdit({ ...edit, comment: e.target.value })} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
               </EditField>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                 <EditField label="分类" id={`finding-category-${finding.id}`}>
-                  <select id={`finding-category-${finding.id}`} value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value as FindingEdit['category'] })} style={inputStyle}>
+                  <select id={`finding-category-${finding.id}`} autoComplete="off" value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value as FindingEdit['category'] })} style={inputStyle}>
                     {Object.entries(categoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </EditField>
                 <EditField label="严重度" id={`finding-severity-${finding.id}`}>
-                  <select id={`finding-severity-${finding.id}`} value={edit.severity} onChange={(e) => setEdit({ ...edit, severity: e.target.value as FindingEdit['severity'] })} style={inputStyle}>
+                  <select id={`finding-severity-${finding.id}`} autoComplete="off" value={edit.severity} onChange={(e) => setEdit({ ...edit, severity: e.target.value as FindingEdit['severity'] })} style={inputStyle}>
                     {Object.entries(severityLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </EditField>
                 <EditField label="置信度" id={`finding-confidence-${finding.id}`}>
-                  <select id={`finding-confidence-${finding.id}`} value={edit.confidence} onChange={(e) => setEdit({ ...edit, confidence: e.target.value as FindingEdit['confidence'] })} style={inputStyle}>
+                  <select id={`finding-confidence-${finding.id}`} autoComplete="off" value={edit.confidence} onChange={(e) => setEdit({ ...edit, confidence: e.target.value as FindingEdit['confidence'] })} style={inputStyle}>
                     {Object.entries(confidenceLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </EditField>

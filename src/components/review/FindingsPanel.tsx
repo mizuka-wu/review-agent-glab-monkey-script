@@ -188,19 +188,19 @@ export function FindingsPanel(props: FindingsPanelProps) {
             ]}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <select aria-label="严重度筛选" value={severity} onChange={(e) => { setSeverity(e.target.value); setLimit(30); }} style={selectStyle}>
+          <select autoComplete="off" aria-label="严重度筛选" value={severity} onChange={(e) => { setSeverity(e.target.value); setLimit(30); }} style={selectStyle}>
             <option value="all">全部严重度</option>
             {Object.entries(severityLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
-          <select aria-label="分类筛选" value={category} onChange={(e) => { setCategory(e.target.value); setLimit(30); }} style={selectStyle}>
+          <select autoComplete="off" aria-label="分类筛选" value={category} onChange={(e) => { setCategory(e.target.value); setLimit(30); }} style={selectStyle}>
             <option value="all">全部分类</option>
             {Object.entries(categoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
-          <select aria-label="状态筛选" value={status} onChange={(e) => { setStatus(e.target.value); setLimit(30); }} style={selectStyle}>
+          <select autoComplete="off" aria-label="状态筛选" value={status} onChange={(e) => { setStatus(e.target.value); setLimit(30); }} style={selectStyle}>
             <option value="all">全部状态</option>
             {Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
-          <select aria-label="排序方式" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={selectStyle}>
+          <select autoComplete="off" aria-label="排序方式" value={sort} onChange={(e) => setSort(e.target.value as SortKey)} style={selectStyle}>
             <option value="severity">按严重度</option>
             <option value="source">按来源</option>
             <option value="path">按文件</option>

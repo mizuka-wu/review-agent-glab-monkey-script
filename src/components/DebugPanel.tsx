@@ -138,14 +138,14 @@ export function DebugPanel(props: DebugPanelProps) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <input
               value={query} onChange={(event) => setQuery(event.target.value)} placeholder="过滤关键字…"
-              aria-label="过滤调试记录"
+              aria-label="过滤调试记录" autoComplete="off"
               style={{
                 flex: 1, minWidth: 0, height: 26, padding: '0 8px', borderRadius: C.radiusSm, border: `1px solid ${C.border}`,
                 fontSize: 11, color: C.text, background: C.bg, outline: 'none', ...mono,
               }}
             />
             {pane === 'logs' && (
-              <select value={level} onChange={(event) => setLevel(event.target.value as typeof level)} aria-label="日志级别"
+              <select value={level} onChange={(event) => setLevel(event.target.value as typeof level)} aria-label="日志级别" autoComplete="off"
                 style={{ height: 26, borderRadius: C.radiusSm, border: `1px solid ${C.border}`, fontSize: 11, color: C.textSecondary, background: C.bg }}>
                 <option value="all">全部级别</option>
                 <option value="debug">debug</option>
@@ -155,7 +155,7 @@ export function DebugPanel(props: DebugPanelProps) {
               </select>
             )}
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.textMuted, cursor: 'pointer', flexShrink: 0 }}>
-              <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} style={{ accentColor: C.primary }} />
+              <input type="checkbox" checked={autoScroll} autoComplete="off" onChange={(event) => setAutoScroll(event.target.checked)} style={{ accentColor: C.primary }} />
               自动滚动
             </label>
           </div>

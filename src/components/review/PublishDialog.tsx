@@ -88,7 +88,7 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, meta, o
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <label htmlFor="publish-body" style={{ fontSize: 12, fontWeight: 600, color: C.text }}>评论内容</label>
           <textarea
-            id="publish-body" value={body} rows={10} onChange={(event) => onBodyChange(event.target.value)}
+            id="publish-body" autoComplete="off" value={body} rows={10} onChange={(event) => onBodyChange(event.target.value)}
             style={{
               width: '100%', padding: '8px 10px', borderRadius: C.radiusSm, border: `1.5px solid ${C.border}`,
               fontSize: 12, lineHeight: 1.6, color: C.text, background: C.bg, outline: 'none',

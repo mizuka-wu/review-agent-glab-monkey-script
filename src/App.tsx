@@ -1860,6 +1860,7 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
               项目补充要求（按 {projectKey} 记住，注入混合评审 system prompt）
             </div>
             <textarea
+              autoComplete="off"
               value={projectPrompt}
               onChange={(e) => onProjectPromptChange(e.target.value)}
               placeholder="可选：本项目评审的额外约束，例如「金额计算必须用 decimal」「不要评论命名风格」。"
