@@ -19,7 +19,10 @@ function Dialog({ labelId, title, subtitle, onClose, children, footer }: {
   children: ReactNode; footer: ReactNode;
 }) {
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return; // IME 组合输入中不关弹窗
+      if (event.key === 'Escape') onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);

@@ -1127,6 +1127,7 @@ export default function App({ page }: AppProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return; // IME 组合输入中，快捷键全部让位
       if (event.key === 'Escape') {
         if (publishFinding) setPublishFinding(undefined);
         else if (batchConfirm) setBatchConfirm(false);

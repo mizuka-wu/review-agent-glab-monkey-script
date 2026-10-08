@@ -155,6 +155,7 @@ export function ChatThread({
             placeholder={modelReady ? '提问，或粘贴代码…（Enter 发送 / Shift+Enter 换行）' : '未配置模型，暂不能对话；可先运行规则检查'}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return; // IME 选词回车不发送
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 submit();
