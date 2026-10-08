@@ -1,12 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState , type ReactNode } from 'react';
-import { Bot, FileText, Send, Settings2, Sparkles, Square, User, Wrench, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Bot, FileText, History, Plus, Send, Settings2, Sparkles, Square, Trash2, User, Wrench, X } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { Btn, EmptyState, tokens as C } from './ui/modern';
 import type { AgentLoopEvent } from '../core/agent-loop';
+import type { ChatSession } from '../core/chat-sessions';
 import type { ChatMessage, CodeSelection } from '../core/types';
 
 export interface ChatThreadProps {
   messages: ChatMessage[];
+  sessions: ChatSession[];
+  activeSessionId: string;
+  onNewSession: () => void;
+  onSwitchSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
   responding: boolean;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -24,12 +30,21 @@ export interface ChatThreadProps {
 const COMPOSER_MAX_HEIGHT = 140;
 
 export function ChatThread({
-  messages, responding, draft, onDraftChange, onSend, onStop,
+  messages, sessions, activeSessionId, onNewSession, onSwitchSession, onDeleteSession,
+  responding, draft, onDraftChange, onSend, onStop,
   attachment, onClearAttachment, toolEvents = [], suggestions = [], modelReady, onOpenSettings, modelPicker,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showTrace, setShowTrace] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
+
+  const activeSession = sessions.find((session) => session.id === activeSessionId);
+  const headerIconBtn: CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, border: 0,
+    background: 'transparent', cursor: responding ? 'default' : 'pointer', color: C.textSecondary, padding: 0,
+    borderRadius: C.radiusSm, flexShrink: 0, opacity: responding ? 0.4 : 1,
+  };
 
   useLayoutEffect(() => {
     const node = scrollRef.current;
@@ -56,6 +71,59 @@ export function ChatThread({
       {modelPicker && (
         <div style={{ padding: '8px 12px 0', flexShrink: 0 }}>{modelPicker}</div>
       )}
+      {/* 会话栏：标题 + 历史 + 新建 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.border}`, flexShrink: 0, position: 'relative' }}>
+        <span
+          style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 600, color: C.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={activeSession?.title}
+        >
+          {activeSession?.title ?? '新会话'}
+        </span>
+        <button type="button" aria-label="会话历史" disabled={responding} onClick={() => setShowSessions((value) => !value)} style={headerIconBtn}>
+          <History size={13} />
+        </button>
+        <button type="button" aria-label="新建会话" disabled={responding} onClick={onNewSession} style={headerIconBtn}>
+          <Plus size={13} />
+        </button>
+        {showSessions && (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 20 }} onClick={() => setShowSessions(false)} />
+            <div
+              className="ra-scroll"
+              style={{
+                position: 'absolute', top: '100%', right: 12, marginTop: 4, zIndex: 21, width: 270, maxHeight: 280,
+                overflowY: 'auto', background: C.bgSubtle, border: `1px solid ${C.border}`, borderRadius: C.radiusSm,
+                boxShadow: '0 10px 28px rgba(0,0,0,.2)', padding: 4,
+              }}
+            >
+              {sessions.map((session) => (
+                <div
+                  key={session.id}
+                  onClick={() => { onSwitchSession(session.id); setShowSessions(false); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '5px 7px', borderRadius: C.radiusSm,
+                    cursor: 'pointer', background: session.id === activeSessionId ? C.primaryLight : 'transparent',
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {session.title}
+                  </span>
+                  <span style={{ fontSize: 9.5, color: C.textMuted, flexShrink: 0 }}>
+                    {session.updatedAt.slice(5, 16).replace('T', ' ')}
+                  </span>
+                  <button
+                    type="button" aria-label="删除会话" disabled={responding}
+                    onClick={(event) => { event.stopPropagation(); onDeleteSession(session.id); }}
+                    style={{ ...headerIconBtn, width: 18, height: 18, color: C.textMuted }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <div ref={scrollRef} className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '10px 12px 4px' }}>
         {messages.length === 0 ? (
           <EmptyState icon={<Bot size={18} />} title="向 Review Agent 提问">

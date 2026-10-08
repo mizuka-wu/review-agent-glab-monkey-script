@@ -37,6 +37,10 @@ import {
   saveReviewSession, summarizeReviewContext, toSessionFinding, updateReviewSession,
   type ReviewSessionManifest,
 } from './core/session';
+import {
+  CHAT_STORAGE_KEY, deriveChatTitle, loadChatSessions, newChatSession, saveChatSessions, trimSessionMessages,
+  type ChatSession,
+} from './core/chat-sessions';
 import { clearSensitiveSettings, defaultSettings, loadSettings, inspectConfiguration, saveSettings } from './core/settings';
 import { httpTransport } from './core/http';
 import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
@@ -52,7 +56,6 @@ interface AppProps {
   page: PageContext;
 }
 
-const CHAT_STORAGE_KEY = 'review-agent-chat-v1';
 const UI_STORAGE_KEY = 'review-agent-ui-v1';
 const SESSION_STORAGE_KEY = 'review-agent-review-sessions-v1';
 const MIN_WIDTH = 380;
@@ -123,6 +126,8 @@ export default function App({ page }: AppProps) {
 
   const [tab, setTab] = useState<Tab>('review');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState('');
   const [draft, setDraft] = useState('');
   const [attachment, setAttachment] = useState<CodeSelection | undefined>(undefined);
   const [selection, setSelection] = useState<CodeSelection | null>(null);
@@ -193,32 +198,81 @@ export default function App({ page }: AppProps) {
   useEffect(() => {
     let active = true;
     void (async () => {
-      const [loaded, packs, summary, stored] = await Promise.all([
+      const [loaded, packs, summary] = await Promise.all([
         loadSettings(),
         loadScopedRulePacks(PUBLIC_RULE_PACK_SCOPE),
         getUsageSummary().catch(() => null),
-        Promise.resolve(localStorage.getItem(CHAT_STORAGE_KEY)),
       ]);
       if (!active) return;
       setSettings(loaded);
       setSettingsLoaded(true);
       setPublicPacks(packs);
       if (summary && summary.callCount > 0) setUsageSummary(summary);
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored) as ChatMessage[];
-          if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed.slice(-50));
-        } catch { /* 忽略损坏的历史记录 */ }
-      }
       addLog('info', 'settings', `模型${inspectConfiguration(loaded).modelReady ? '已配置' : '未配置'} · 规则 ${countEnabledRules(packs)} 条`);
     })();
     return () => { active = false; };
   }, [addLog]);
 
+  // 载入聊天会话（全局池，与 MR 无关），激活最近一条
   useEffect(() => {
-    if (messages.length === 0) return;
-    try { localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-50))); } catch { /* 忽略存储失败 */ }
+    const sessions = loadChatSessions(CHAT_STORAGE_KEY);
+    const active = sessions[0] ?? newChatSession();
+    const list = sessions.length > 0 ? sessions : [active];
+    setChatSessions(list);
+    setActiveChatId(active.id);
+    setMessages(trimSessionMessages(active.messages));
+  }, []);
+
+  // 消息变化 → 落盘当前会话
+  useEffect(() => {
+    if (!activeChatId) return;
+    const now = new Date().toISOString();
+    const trimmed = trimSessionMessages(messages);
+    const next: ChatSession[] = chatSessions.some((session) => session.id === activeChatId)
+      ? chatSessions.map((session) => (session.id === activeChatId
+        ? { ...session, title: deriveChatTitle(messages), updatedAt: now, messages: trimmed }
+        : session))
+      : [...chatSessions, { ...newChatSession(), id: activeChatId, title: deriveChatTitle(messages), updatedAt: now, messages: trimmed }];
+    saveChatSessions(CHAT_STORAGE_KEY, next);
+    setChatSessions(next);
   }, [messages]);
+
+  const startNewChat = useCallback(() => {
+    const session = newChatSession();
+    setChatSessions((prev) => [session, ...prev]);
+    setActiveChatId(session.id);
+    setMessages([]);
+    setDraft('');
+  }, []);
+
+  const switchChat = useCallback((id: string) => {
+    if (id === activeChatId) return;
+    const session = chatSessions.find((item) => item.id === id);
+    if (!session) return;
+    setActiveChatId(id);
+    setMessages(trimSessionMessages(session.messages));
+    setDraft('');
+  }, [chatSessions, activeChatId]);
+
+  const deleteChat = useCallback((id: string) => {
+    const remaining = chatSessions.filter((session) => session.id !== id);
+    if (remaining.length === 0) {
+      const fresh = newChatSession();
+      saveChatSessions(CHAT_STORAGE_KEY, [fresh]);
+      setChatSessions([fresh]);
+      setActiveChatId(fresh.id);
+      setMessages([]);
+      setDraft('');
+      return;
+    }
+    saveChatSessions(CHAT_STORAGE_KEY, remaining);
+    setChatSessions(remaining);
+    if (id === activeChatId) {
+      setActiveChatId(remaining[0].id);
+      setMessages(trimSessionMessages(remaining[0].messages));
+      setDraft('');
+    }
+  }, [chatSessions, activeChatId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1531,6 +1585,11 @@ export default function App({ page }: AppProps) {
           {tab === 'chat' && (
             <ChatThread
               messages={messages}
+              sessions={chatSessions}
+              activeSessionId={activeChatId}
+              onNewSession={startNewChat}
+              onSwitchSession={switchChat}
+              onDeleteSession={deleteChat}
               responding={responding}
               draft={draft}
               onDraftChange={setDraft}
