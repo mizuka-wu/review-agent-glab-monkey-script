@@ -231,11 +231,11 @@ export class GitLabAdapter {
   ): Promise<FileDiff[]> {
     // Fetch first page to determine total
     const firstPage = await this.request<RawDiff[]>(
-      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=1`,
+      `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=20&page=1`,
       { signal: options.signal },
     );
 
-    if (firstPage.length < 100) {
+    if (firstPage.length < 20) {
       options.onPage?.(firstPage.length, false);
       return firstPage.map(normalizeFileDiff);
     }
@@ -246,9 +246,9 @@ export class GitLabAdapter {
     let hasMore = true;
     const CONCURRENCY = 3;
 
-    while (hasMore && page <= 50) {
+    while (hasMore && page <= 250) {
       const batchPages: number[] = [];
-      for (let i = 0; i < CONCURRENCY && page <= 50; i += 1) {
+      for (let i = 0; i < CONCURRENCY && page <= 250; i += 1) {
         batchPages.push(page);
         page += 1;
       }
@@ -256,7 +256,7 @@ export class GitLabAdapter {
       const batchResults = await Promise.all(
         batchPages.map((p) =>
           this.request<RawDiff[]>(
-            `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=100&page=${p}`,
+            `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/diffs?per_page=20&page=${p}`,
             { signal: options.signal },
           ).catch(() => null),
         ),
@@ -272,7 +272,7 @@ export class GitLabAdapter {
           break;
         }
         allRaw.push(result);
-        if (result.length < 100) {
+        if (result.length < 20) {
           hasMore = false;
           break;
         }
@@ -338,12 +338,12 @@ export class GitLabAdapter {
 
   async listDiscussions(ref: MergeRequestRef) {
     const discussions: { id: string; notes?: { id: number; body: string; author?: { username?: string } }[] }[] = [];
-    for (let page = 1; page <= 50; page += 1) {
+    for (let page = 1; page <= 250; page += 1) {
       const data = await this.request<{ id: string; notes?: { id: number; body: string; author?: { username?: string } }[] }[]>(
-        `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions?per_page=100&page=${page}`,
+        `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions?per_page=20&page=${page}`,
       );
       discussions.push(...data);
-      if (data.length < 100) break;
+      if (data.length < 20) break;
     }
     return discussions;
   }
@@ -385,25 +385,25 @@ export class GitLabAdapter {
     options: { signal?: AbortSignal } = {},
   ): Promise<{ path: string; type: string }[]> {
     const entries: { path: string; type: string }[] = [];
-    for (let page = 1; page <= 100; page += 1) {
+    for (let page = 1; page <= 500; page += 1) {
       const data = await this.request<{ path: string; type: string }[]>(
-        `/api/v4/projects/${this.projectRef()}/repository/tree?ref=${encodeURIComponent(ref)}&recursive=true&per_page=100&page=${page}`,
+        `/api/v4/projects/${this.projectRef()}/repository/tree?ref=${encodeURIComponent(ref)}&recursive=true&per_page=20&page=${page}`,
         { signal: options.signal },
       );
       entries.push(...data);
-      if (data.length < 100) break;
+      if (data.length < 20) break;
     }
     return entries;
   }
 
   async listCommitDiffs(sha: string): Promise<FileDiff[]> {
     const files: FileDiff[] = [];
-    for (let page = 1; page <= 50; page += 1) {
+    for (let page = 1; page <= 250; page += 1) {
       const data = await this.request<RawDiff[]>(
-        `/api/v4/projects/${this.projectRef()}/repository/commits/${encodeURIComponent(sha)}/diff?per_page=100&page=${page}`,
+        `/api/v4/projects/${this.projectRef()}/repository/commits/${encodeURIComponent(sha)}/diff?per_page=20&page=${page}`,
       );
       files.push(...data.map(normalizeFileDiff));
-      if (data.length < 100) break;
+      if (data.length < 20) break;
     }
     return files;
   }
@@ -445,7 +445,7 @@ export class GitLabAdapter {
 
   async getGitLog(path: string, ref: string, signal?: AbortSignal) {
     const data = await this.request<{ id: string; short_id: string; title: string; created_at: string; author_name: string }[]>(
-      `/api/v4/projects/${this.projectRef()}/repository/commits?ref_name=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}&per_page=10`,
+      `/api/v4/projects/${this.projectRef()}/repository/commits?ref_name=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}&per_page=20`,
       { signal },
     );
     return data.map((commit) => ({
