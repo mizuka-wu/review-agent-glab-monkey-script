@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Copy, MessageSquare, Sparkles, X } from 'lucide-react';
 import { tokens as C } from '../ui/modern';
+import { selectionLabel } from '../../core/selection';
 import type { CodeSelection } from '../../core/types';
 
 interface Props {
@@ -32,7 +33,6 @@ function ToolButton({ icon, label, onClick, primary }: {
 }
 
 export function SelectionToolbar({ state, onAsk, onReview, onCopy, onClose }: Props) {
-  const lines = state.endLine - state.startLine + 1;
   return (
     <div
       role="toolbar" aria-label="代码选区操作"
@@ -46,7 +46,7 @@ export function SelectionToolbar({ state, onAsk, onReview, onCopy, onClose }: Pr
       onMouseDown={(event) => event.preventDefault()}
     >
       <span style={{ fontSize: 10, color: C.headerMuted, padding: '0 6px 0 4px', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
-        {state.filePath.replace(/^.*\//, '')}:{state.startLine}{lines > 1 ? `-${state.endLine}` : ''}
+        {selectionLabel(state)}
       </span>
       <ToolButton primary icon={<MessageSquare size={13} />} label="问一下" onClick={onAsk} />
       <ToolButton icon={<Sparkles size={13} />} label="Review 这段" onClick={onReview} />

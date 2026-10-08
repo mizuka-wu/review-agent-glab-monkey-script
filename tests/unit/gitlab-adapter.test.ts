@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildDiscussionPayload, GitLabAdapter, GitLabApiError } from '../../src/core/gitlab-adapter';
+import { RequestTimeoutError } from '../../src/core/http';
 import type { MergeRequestRef } from '../../src/core/types';
 
 describe('GitLab discussion payload', () => {
@@ -89,5 +90,20 @@ describe('GitLabAdapter', () => {
 
     await expect(adapter.createDiscussion(ref, { ...draft, body: 'different', diffRefs: { baseSha: 'base', headSha: 'old', startSha: 'start' } }))
       .rejects.toBeInstanceOf(GitLabApiError);
+  });
+
+  it('把超时归类为 timeout，而不是「无法连接」', async () => {
+    const fetcher = vi.fn(async () => {
+      throw new RequestTimeoutError('请求超时（60s 未完成）：https://gitlab.test/api/v4/projects', true);
+    });
+    const adapter = new GitLabAdapter({ origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 }, '', fetcher);
+
+    const jsonError = await adapter.listDiscussions(ref).catch((cause: unknown) => cause) as GitLabApiError;
+    expect(jsonError).toBeInstanceOf(GitLabApiError);
+    expect(jsonError.code).toBe('timeout');
+    expect(jsonError.message).toContain('请求超时');
+    expect(jsonError.message).not.toContain('无法连接');
+
+    await expect(adapter.getFile('a.ts', 'head sha')).rejects.toMatchObject({ code: 'timeout' });
   });
 });

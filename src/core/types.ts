@@ -123,8 +123,9 @@ export interface PageContext {
 export interface CodeSelection {
   filePath: string;
   side: 'old' | 'new' | 'unified';
-  startLine: number;
-  endLine: number;
+  /** 页面 DOM 读不到行号时为 undefined：引用降级为无行号，不编造行号。 */
+  startLine?: number;
+  endLine?: number;
   text: string;
   top: number;
   left: number;

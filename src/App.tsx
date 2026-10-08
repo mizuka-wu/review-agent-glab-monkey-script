@@ -32,7 +32,7 @@ import {
   PUBLIC_RULE_PACK_SCOPE, removeScopedRulePack, saveScopedRulePacks,
   type RuleDef, type RulePack, type RulePackScope,
 } from './core/rule-packs';
-import { captureCodeSelection } from './core/selection';
+import { captureCodeSelection, selectionLabel, selectionRef } from './core/selection';
 import {
   createReviewSession, fromSessionFinding, loadLatestReviewSession, resumeReviewSession, reviewSessionKey, updateSessionFindingStatus,
   saveReviewSession, summarizeReviewContext, toSessionFinding, updateReviewSession,
@@ -580,7 +580,7 @@ export default function App({ page }: AppProps) {
           .map((message) => ({
             role: message.role as 'user' | 'assistant',
             content: message.attachment
-              ? `${message.content}\n\n[代码选区: ${message.attachment.filePath}:L${message.attachment.startLine}-${message.attachment.endLine}]\n\`\`\`\n${message.attachment.text}\n\`\`\``
+              ? `${message.content}\n\n[代码选区: ${selectionRef(message.attachment)}]\n\`\`\`\n${message.attachment.text}\n\`\`\``
               : message.content,
           }));
         const result = await runAgentLoop(runtime, executor, agentMessages, {
@@ -1366,7 +1366,7 @@ export default function App({ page }: AppProps) {
           ) : (
             <span style={{ fontSize: 11, color: C.headerMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {attachment || selection
-                ? `${(attachment ?? selection)!.filePath.replace(/^.*\//, '')}:${(attachment ?? selection)!.startLine}-${(attachment ?? selection)!.endLine}`
+                ? selectionLabel((attachment ?? selection)!)
                 : loading ? '读取中…' : `${files.length} 个变更文件 · ${enabledRuleCount} 条规则`}
             </span>
           )}

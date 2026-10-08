@@ -99,8 +99,10 @@ export async function runAgentLoop(
       response = await runtime.callWithTools(messages, tools, buildToolSystemPrompt(tools, language), { signal: options.signal });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
-      emit({ type: 'error', message: `模型调用失败: ${error instanceof Error ? error.message : String(error)}` });
-      break;
+      // 超时 / 网络失败直接把原因带回会话，避免只显示一句无信息的兜底文案。
+      const message = error instanceof Error ? error.message : String(error);
+      emit({ type: 'error', message: `模型调用失败: ${message}` });
+      return { text: `模型调用失败：${message}`, toolCalls: allToolCalls, toolResults: allToolResults, events, iterations };
     }
 
     if (response.type === 'text') {

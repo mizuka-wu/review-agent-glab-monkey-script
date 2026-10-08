@@ -4,6 +4,7 @@ import { Markdown } from './Markdown';
 import { Btn, EmptyState, tokens as C } from './ui/modern';
 import type { AgentLoopEvent } from '../core/agent-loop';
 import type { ChatSession } from '../core/chat-sessions';
+import { selectionLabel } from '../core/selection';
 import type { ChatMessage, CodeSelection } from '../core/types';
 
 export interface ChatThreadProps {
@@ -174,7 +175,7 @@ export function ChatThread({
           }}>
             <FileText size={12} style={{ color: C.primary, flexShrink: 0 }} />
             <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.primary, fontFamily: 'ui-monospace, monospace' }}>
-              {attachment.filePath}:{attachment.startLine}-{attachment.endLine}
+              {selectionLabel(attachment)}
             </span>
             {onClearAttachment && (
               <button type="button" aria-label="移除代码附件" onClick={onClearAttachment}
@@ -274,7 +275,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             background: C.bgSubtle, border: `1px solid ${C.border}`,
             fontSize: 10, color: C.textMuted, fontFamily: 'ui-monospace, monospace',
           }}>
-            {message.attachment.filePath}:{message.attachment.startLine}-{message.attachment.endLine}
+            {selectionLabel(message.attachment)}
           </div>
         )}
         <div style={{

@@ -18,18 +18,23 @@ export function fileOmissionReason(file: FileDiff): NonNullable<ReviewContextFil
   return undefined;
 }
 
+/** 选区当作单文件 diff 参与评审；行号未知时不带行号，不编造行号。 */
 export function selectionFile(selection: CodeSelection): FileDiff {
+  const removed = selection.side === 'old';
+  const lines = selection.text.split('\n');
   return {
     oldPath: selection.filePath,
     newPath: selection.filePath,
-    diff: selection.text.split('\n').map((line) => `+${line}`).join('\n'),
+    diff: lines.map((line) => `${removed ? '-' : '+'}${line}`).join('\n'),
     newFile: false,
     deletedFile: false,
     renamedFile: false,
-    lines: selection.text.split('\n').map((text, index) => ({
+    lines: lines.map((text, index) => ({
       hunkId: 'selection',
-      newLine: selection.startLine + index,
-      kind: 'added',
+      ...(selection.startLine === undefined
+        ? {}
+        : removed ? { oldLine: selection.startLine + index } : { newLine: selection.startLine + index }),
+      kind: removed ? 'removed' as const : 'added' as const,
       text,
     })),
   };

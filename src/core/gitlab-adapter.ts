@@ -1,7 +1,7 @@
 import { normalizeFileDiff } from './diff';
 import { projectApiIdentifier } from './gitlab-url';
 import { debugBus } from './debug-bus';
-import { httpRequest } from './http';
+import { httpRequest, RequestTimeoutError } from './http';
 import type {
   AdapterCapabilities,
   DiffRefs,
@@ -125,6 +125,12 @@ export class GitLabAdapter {
       });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
+      // 超时单列：不能和「连不上」混为一谈，UI 要能明示超时。
+      if (error instanceof RequestTimeoutError) {
+        debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'timeout' });
+        debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} 超时`, error.message);
+        throw new GitLabApiError(0, error.message, 'timeout');
+      }
       debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'network_error' });
       debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} 连接失败`, String(error));
       throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
@@ -168,6 +174,11 @@ export class GitLabAdapter {
       });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
+      if (error instanceof RequestTimeoutError) {
+        debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'timeout' });
+        debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} 超时`, error.message);
+        throw new GitLabApiError(0, error.message, 'timeout');
+      }
       debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'network_error' });
       throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
     }

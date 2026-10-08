@@ -1,6 +1,7 @@
 import { diffContext } from './diff';
+import { selectionLines } from './selection';
 import { isModelConfigured } from './settings';
-import { httpRequest, httpTransport, type HttpResponse } from './http';
+import { httpRequest, httpTransport, RequestTimeoutError, TimeoutSignal, timeoutSeconds, type HttpResponse } from './http';
 import { debugBus, type DebugExchangeInput } from './debug-bus';
 import type { ToolCall, ToolDefinition } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
@@ -44,6 +45,21 @@ function shouldRetry(status: number) {
   return status === 408 || status === 429 || (status >= 500 && status !== 507);
 }
 
+/** 非流式模型调用的总超时（GM 传输此前也是这个量级，避免大 Review 被过早掐断）。 */
+export const MODEL_REQUEST_TIMEOUT_MS = 180_000;
+/** 流式首包超时：连接建立后一直没有第一个 chunk。 */
+export const MODEL_STREAM_FIRST_CHUNK_TIMEOUT_MS = 120_000;
+/** 流式空闲超时：中途长时间没有任何新数据（思考阶段的 reasoning chunk 也算数据）。 */
+export const MODEL_STREAM_IDLE_TIMEOUT_MS = 120_000;
+/** 探测类请求（/models、测试连接）快速失败。 */
+export const MODEL_PROBE_TIMEOUT_MS = 15_000;
+/** 超时最多尝试 2 次：网络黑洞时不能让用户在 running 状态里等太久。 */
+const TIMEOUT_MAX_ATTEMPTS = 2;
+
+function streamTimeoutMessage(detail: string) {
+  return `模型流式响应超时（${timeoutSeconds(MODEL_STREAM_IDLE_TIMEOUT_MS)} ${detail}）`;
+}
+
 interface StreamLikeResponse {
   ok: boolean;
   status: number;
@@ -57,14 +73,21 @@ async function fetchStream(
   url: string,
   headers: Record<string, string>,
   body: string,
-  signal?: AbortSignal,
+  guard: TimeoutSignal,
 ): Promise<StreamLikeResponse> {
+  guard.arm(MODEL_STREAM_FIRST_CHUNK_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { method: 'POST', headers, body, signal });
+    const response = await fetch(url, { method: 'POST', headers, body, signal: guard.signal });
     return { ok: response.ok, status: response.status, body: response.body, text: '', contentType: response.headers.get('content-type') ?? '' };
   } catch (error) {
-    if (signal?.aborted || (error as Error).name === 'AbortError') throw error;
-    const fallback = await httpRequest(url, { method: 'POST', headers, body, signal });
+    // 首包超时不降级到 GM：服务端没回应，换成一次性请求只会等更久。
+    if (guard.timedOut) {
+      throw guard.attribute(error, `模型服务首包超时（${timeoutSeconds(MODEL_STREAM_FIRST_CHUNK_TIMEOUT_MS)} 未收到任何数据）`, true);
+    }
+    if (guard.signal.aborted || (error as Error).name === 'AbortError') throw error;
+    const fallback = await httpRequest(url, {
+      method: 'POST', headers, body, signal: guard.signal, timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+    });
     return { ok: fallback.status >= 200 && fallback.status < 300, status: fallback.status, body: null, text: fallback.text, contentType: '' };
   }
 }
@@ -79,11 +102,13 @@ function wait(milliseconds: number, signal?: AbortSignal) {
   });
 }
 
+/** 选区进提示词：页面 DOM 取不到行号时明示未知，绝不给模型编造行号。 */
 function selectionContext(selection?: CodeSelection) {
   if (!selection) return '';
+  const lines = selectionLines(selection);
   return [
     `Selected file: ${selection.filePath}`,
-    `Location: ${selection.side}:${selection.startLine}-${selection.endLine}`,
+    `Location: ${lines ? `${selection.side}:${lines}` : 'unknown (the page exposed no line number; do not invent one)'}`,
     '```text',
     selection.text,
     '```',
@@ -191,205 +216,232 @@ export class OpenAIRuntime {
     this.lastThinking = '';
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const useStream = Boolean(options.onToken);
+      // 用户取消与超时共用一个 signal：guard.timedOut 区分两者，取消不会被当成超时。
+      const guard = new TimeoutSignal(options.signal);
 
-      const payloadBody = JSON.stringify({
-        model: this.settings.model,
-        messages,
-        temperature: this.settings.effort === 'fast' ? 0 : 0.2,
-        stream: useStream,
-        ...(options.json ? { response_format: { type: 'json_object' } } : {}),
-        ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
-      });
-      const requestHeaders = this.headers();
-      const requestUrl = this.buildUrl('/chat/completions');
-      const startedAt = Date.now();
-      const exchange: DebugExchangeInput = {
-        stage: options.stage ?? 'chat',
-        model: this.settings.model,
-        stream: useStream,
-        attempt: attempt + 1,
-        url: requestUrl,
-        headers: requestHeaders,
-        body: payloadBody,
-        transport: useStream ? 'fetch' : httpTransport(),
-        ms: 0,
-        responseText: '',
-        content: '',
-        reasoning: '',
-        chunks: [],
-      };
-
-      let response: StreamLikeResponse;
       try {
-        response = useStream
-          ? await fetchStream(requestUrl, requestHeaders, payloadBody, options.signal)
-          : await httpRequest(requestUrl, {
-            method: 'POST',
-            headers: requestHeaders,
-            body: payloadBody,
-            signal: options.signal,
-          }).then((result) => ({
-            ok: result.status >= 200 && result.status < 300,
-            status: result.status,
-            body: null,
-            text: result.text,
-            contentType: '',
-          }));
-      } catch (error) {
-        this.commitExchange(exchange, startedAt, { error: error instanceof Error ? error.message : String(error) });
-        throw error;
-      }
-      exchange.status = response.status;
+        const payloadBody = JSON.stringify({
+          model: this.settings.model,
+          messages,
+          temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+          stream: useStream,
+          ...(options.json ? { response_format: { type: 'json_object' } } : {}),
+          ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+        });
+        const requestHeaders = this.headers();
+        const requestUrl = this.buildUrl('/chat/completions');
+        const startedAt = Date.now();
+        const exchange: DebugExchangeInput = {
+          stage: options.stage ?? 'chat',
+          model: this.settings.model,
+          stream: useStream,
+          attempt: attempt + 1,
+          url: requestUrl,
+          headers: requestHeaders,
+          body: payloadBody,
+          transport: useStream ? 'fetch' : httpTransport(),
+          ms: 0,
+          responseText: '',
+          content: '',
+          reasoning: '',
+          chunks: [],
+        };
 
-      if (useStream && response.ok && response.body && response.contentType.includes('text/event-stream')) {
-        // Parse SSE stream
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let content = '';
-        let buffer = '';
-        let done = false;
-        let streamUsage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
-
+        let response: StreamLikeResponse;
         try {
-          while (!done) {
-            const { done: streamDone, value } = await reader.read();
-            if (streamDone) break;
-            buffer += decoder.decode(value, { stream: true });
+          response = useStream
+            ? await fetchStream(requestUrl, requestHeaders, payloadBody, guard)
+            : await httpRequest(requestUrl, {
+              method: 'POST',
+              headers: requestHeaders,
+              body: payloadBody,
+              signal: guard.signal,
+              timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+            }).then((result) => ({
+              ok: result.status >= 200 && result.status < 300,
+              status: result.status,
+              body: null,
+              text: result.text,
+              contentType: '',
+            }));
+        } catch (error) {
+          this.commitExchange(exchange, startedAt, { error: error instanceof Error ? error.message : String(error) });
+          // 超时与 429/5xx 一样进重试，但次数更少：网络黑洞时不能一直转圈。
+          if (attempt + 1 < TIMEOUT_MAX_ATTEMPTS && error instanceof RequestTimeoutError && error.retryable) {
+            await wait(250 * 2 ** attempt, options.signal);
+            continue;
+          }
+          throw error;
+        }
+        exchange.status = response.status;
 
-            const lines = buffer.split('\n');
-            buffer = lines.pop() ?? '';
+        if (useStream && response.ok && response.body && response.contentType.includes('text/event-stream')) {
+          // Parse SSE stream
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let content = '';
+          let buffer = '';
+          let done = false;
+          let streamUsage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue;
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') { done = true; break; }
-              try {
-                const chunk = JSON.parse(data) as StreamChunk;
-                if (chunk.usage) streamUsage = chunk.usage;
-                const choice = chunk.choices?.[0];
-                const finishReason = choice?.finish_reason ?? undefined;
-                if (finishReason) exchange.finishReason = finishReason;
-                const delta = choice?.delta?.content ?? choice?.message?.content ?? '';
-                if (delta) {
-                  content += delta;
-                  exchange.chunks.push({ kind: 'content', text: delta, finishReason });
-                  options.onToken?.(delta);
+          try {
+            while (!done) {
+              const { done: streamDone, value } = await reader.read();
+              // 收到数据后把「首包超时」换成「空闲超时」。
+              guard.arm(MODEL_STREAM_IDLE_TIMEOUT_MS);
+              if (streamDone) break;
+              buffer += decoder.decode(value, { stream: true });
+
+              const lines = buffer.split('\n');
+              buffer = lines.pop() ?? '';
+
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const data = line.slice(6).trim();
+                if (data === '[DONE]') { done = true; break; }
+                try {
+                  const chunk = JSON.parse(data) as StreamChunk;
+                  if (chunk.usage) streamUsage = chunk.usage;
+                  const choice = chunk.choices?.[0];
+                  const finishReason = choice?.finish_reason ?? undefined;
+                  if (finishReason) exchange.finishReason = finishReason;
+                  const delta = choice?.delta?.content ?? choice?.message?.content ?? '';
+                  if (delta) {
+                    content += delta;
+                    exchange.chunks.push({ kind: 'content', text: delta, finishReason });
+                    options.onToken?.(delta);
+                  }
+                  const reasoning = choice?.delta?.reasoning_content ?? choice?.message?.reasoning_content ?? '';
+                  if (reasoning) {
+                    this.lastThinking += reasoning;
+                    exchange.chunks.push({ kind: 'reasoning', text: reasoning });
+                    options.onThinking?.(reasoning);
+                  }
+                } catch {
+                  // Skip malformed chunks
                 }
-                const reasoning = choice?.delta?.reasoning_content ?? choice?.message?.reasoning_content ?? '';
-                if (reasoning) {
-                  this.lastThinking += reasoning;
-                  exchange.chunks.push({ kind: 'reasoning', text: reasoning });
-                  options.onThinking?.(reasoning);
-                }
-              } catch {
-                // Skip malformed chunks
               }
             }
+            // Flush remaining decoder buffer
+            buffer += decoder.decode();
+          } catch (streamError) {
+            const timedOut = guard.timedOut;
+            const aborted = !timedOut && (streamError as Error).name === 'AbortError';
+            const failure = timedOut ? new RequestTimeoutError(streamTimeoutMessage('没有新数据'), false) : streamError;
+            this.commitExchange(exchange, startedAt, {
+              content,
+              reasoning: this.lastThinking,
+              usage: streamUsage && { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 },
+              error: aborted
+                ? '已取消'
+                : timedOut && content
+                  ? '流式响应超时，已保留部分内容'
+                  : failure instanceof Error ? failure.message : String(failure),
+            });
+            if (aborted) throw streamError;
+            if (content) return content; // Return partial content
+            throw failure;
           }
-          // Flush remaining decoder buffer
-          buffer += decoder.decode();
-        } catch (streamError) {
-          const aborted = (streamError as Error).name === 'AbortError';
+
+          debugBus.network({
+            kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream)`,
+            status: response.status, ms: Date.now() - startedAt, transport: 'fetch',
+          });
+          if (streamUsage?.prompt_tokens || streamUsage?.completion_tokens) {
+            this.lastTokens = { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 };
+            void recordUsage('openai', this.settings.model, this.lastTokens.input, this.lastTokens.output);
+          }
           this.commitExchange(exchange, startedAt, {
             content,
             reasoning: this.lastThinking,
             usage: streamUsage && { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 },
-            error: aborted ? '已取消' : streamError instanceof Error ? streamError.message : String(streamError),
+            error: content ? undefined : '模型服务没有返回文本内容',
           });
-          if (aborted) throw streamError;
-          if (content) return content; // Return partial content
-          throw streamError;
+          if (!content) throw new Error('模型服务没有返回文本内容');
+          return content;
         }
 
-        debugBus.network({
-          kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream)`,
-          status: response.status, ms: Date.now() - startedAt, transport: 'fetch',
-        });
-        if (streamUsage?.prompt_tokens || streamUsage?.completion_tokens) {
-          this.lastTokens = { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 };
-          void recordUsage('openai', this.settings.model, this.lastTokens.input, this.lastTokens.output);
-        }
-        this.commitExchange(exchange, startedAt, {
-          content,
-          reasoning: this.lastThinking,
-          usage: streamUsage && { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 },
-          error: content ? undefined : '模型服务没有返回文本内容',
-        });
-        if (!content) throw new Error('模型服务没有返回文本内容');
-        return content;
-      }
-
-      if (useStream && response.ok) {
-        // 服务端忽略 stream 或未返回 SSE：一次性读完并整体回调，保证 UI 仍有输出。
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-        let fullText = response.body ? '' : response.text;
-        if (response.body) {
-          for (;;) {
-            const { done: readDone, value } = await reader.read();
-            if (readDone) break;
-            fullText += decoder.decode(value, { stream: true });
+        if (useStream && response.ok) {
+          // 服务端忽略 stream 或未返回 SSE：一次性读完并整体回调，保证 UI 仍有输出。
+          const reader = response.body!.getReader();
+          const decoder = new TextDecoder();
+          let fullText = response.body ? '' : response.text;
+          if (response.body) {
+            try {
+              for (;;) {
+                const { done: readDone, value } = await reader.read();
+                guard.arm(MODEL_STREAM_IDLE_TIMEOUT_MS);
+                if (readDone) break;
+                fullText += decoder.decode(value, { stream: true });
+              }
+              fullText += decoder.decode();
+            } catch (readError) {
+              const timedOut = guard.timedOut;
+              this.commitExchange(exchange, startedAt, { responseText: fullText, error: timedOut ? '流式响应超时' : '已取消' });
+              throw timedOut ? new RequestTimeoutError(streamTimeoutMessage('没有新数据'), false) : readError;
+            }
           }
-          fullText += decoder.decode();
+          const parsed = (JSON.parse(fullText || 'null') ?? {}) as ChatCompletionResponse;
+          const content = parsed.choices?.[0]?.message?.content ?? fullText;
+          const usage = parseOpenAIUsage(parsed as unknown as Record<string, unknown>);
+          this.lastTokens = { input: usage.inputTokens, output: usage.outputTokens };
+          debugBus.network({
+            kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream-fallback)`,
+            status: response.status, ms: Date.now() - startedAt, bytes: fullText.length, transport: 'fetch',
+          });
+          if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+            void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
+          }
+          this.commitExchange(exchange, startedAt, {
+            responseText: fullText,
+            content,
+            reasoning: this.lastThinking,
+            finishReason: parsed.choices?.[0]?.finish_reason ?? undefined,
+            usage: { input: usage.inputTokens, output: usage.outputTokens },
+            error: content ? undefined : '模型服务没有返回文本内容',
+          });
+          if (!content) throw new Error('模型服务没有返回文本内容');
+          options.onToken?.(content);
+          return content;
         }
-        const parsed = (JSON.parse(fullText || 'null') ?? {}) as ChatCompletionResponse;
-        const content = parsed.choices?.[0]?.message?.content ?? fullText;
-        const usage = parseOpenAIUsage(parsed as unknown as Record<string, unknown>);
+
+        const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
+        if (!response.ok || payload.error) {
+          const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}（${requestUrl}）`;
+          this.commitExchange(exchange, startedAt, { responseText: response.text, error: message });
+          if (attempt < 2 && shouldRetry(response.status)) {
+            await wait(250 * 2 ** attempt, options.signal);
+            continue;
+          }
+          throw new Error(message);
+        }
+
+        const content = payload.choices?.[0]?.message?.content;
+
+        // Record usage
+        const usage = parseOpenAIUsage(payload as unknown as Record<string, unknown>);
         this.lastTokens = { input: usage.inputTokens, output: usage.outputTokens };
         debugBus.network({
-          kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream-fallback)`,
-          status: response.status, ms: Date.now() - startedAt, bytes: fullText.length, transport: 'fetch',
+          kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions`,
+          status: response.status, ms: Date.now() - startedAt,
+          bytes: response.text.length, transport: httpTransport(),
         });
         if (usage.inputTokens > 0 || usage.outputTokens > 0) {
           void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
         }
         this.commitExchange(exchange, startedAt, {
-          responseText: fullText,
-          content,
-          reasoning: this.lastThinking,
-          finishReason: parsed.choices?.[0]?.finish_reason ?? undefined,
+          responseText: response.text,
+          content: content ?? '',
+          finishReason: payload.choices?.[0]?.finish_reason ?? undefined,
           usage: { input: usage.inputTokens, output: usage.outputTokens },
           error: content ? undefined : '模型服务没有返回文本内容',
         });
         if (!content) throw new Error('模型服务没有返回文本内容');
-        options.onToken?.(content);
+
         return content;
+      } finally {
+        guard.dispose();
       }
-
-      const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
-      if (!response.ok || payload.error) {
-        const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}（${requestUrl}）`;
-        this.commitExchange(exchange, startedAt, { responseText: response.text, error: message });
-        if (attempt < 2 && shouldRetry(response.status)) {
-          await wait(250 * 2 ** attempt, options.signal);
-          continue;
-        }
-        throw new Error(message);
-      }
-
-      const content = payload.choices?.[0]?.message?.content;
-
-      // Record usage
-      const usage = parseOpenAIUsage(payload as unknown as Record<string, unknown>);
-      this.lastTokens = { input: usage.inputTokens, output: usage.outputTokens };
-      debugBus.network({
-        kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions`,
-        status: response.status, ms: Date.now() - startedAt,
-        bytes: response.text.length, transport: httpTransport(),
-      });
-      if (usage.inputTokens > 0 || usage.outputTokens > 0) {
-        void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
-      }
-      this.commitExchange(exchange, startedAt, {
-        responseText: response.text,
-        content: content ?? '',
-        finishReason: payload.choices?.[0]?.finish_reason ?? undefined,
-        usage: { input: usage.inputTokens, output: usage.outputTokens },
-        error: content ? undefined : '模型服务没有返回文本内容',
-      });
-      if (!content) throw new Error('模型服务没有返回文本内容');
-
-      return content;
     }
     throw new Error('模型服务重试次数已用尽');
   }
@@ -469,13 +521,13 @@ export class OpenAIRuntime {
   }
 
   async testConnection(signal?: AbortSignal) {
-    const response = await httpRequest(this.buildUrl('/models'), { headers: this.headers(), signal });
+    const response = await httpRequest(this.buildUrl('/models'), { headers: this.headers(), signal, timeoutMs: MODEL_PROBE_TIMEOUT_MS });
     if (response.status < 200 || response.status >= 300) throw new Error(`模型服务返回 HTTP ${response.status}`);
     return true;
   }
 
   async listModels(signal?: AbortSignal): Promise<string[]> {
-    const response = await httpRequest(this.buildUrl('/models'), { headers: this.headers(), signal });
+    const response = await httpRequest(this.buildUrl('/models'), { headers: this.headers(), signal, timeoutMs: MODEL_PROBE_TIMEOUT_MS });
     if (response.status < 200 || response.status >= 300) throw new Error(`模型服务返回 HTTP ${response.status}`);
     const data = JSON.parse(response.text || 'null') as { data?: Array<{ id: string }> } | null;
     return (data?.data ?? []).map(m => m.id).sort();
@@ -524,6 +576,7 @@ export class OpenAIRuntime {
         headers: requestHeaders,
         body: payloadBody,
         signal: options.signal,
+        timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
       });
     } catch (error) {
       this.commitExchange(exchange, startedAt, { error: error instanceof Error ? error.message : String(error) });

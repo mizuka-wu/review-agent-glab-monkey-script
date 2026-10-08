@@ -280,7 +280,9 @@ test.describe('mock mode', () => {
 
     // Click "问一下" to open chat with attachment
     await page.getByRole('button', { name: '问一下' }).click();
-    await expect(page.getByText('src/payment.ts:1-1')).toBeVisible();
+    // 会话附件用「文件名:行号」引用；页面 DOM 读不到行号时会显示「行号未知」而不是编造行号。
+    const attachmentChip = page.locator('div:has(> button[aria-label="移除代码附件"]) > span');
+    await expect(attachmentChip).toHaveText('payment.ts:1');
 
     // Verify composer is available
     await expect(page.getByLabel('消息输入框')).toBeVisible();
