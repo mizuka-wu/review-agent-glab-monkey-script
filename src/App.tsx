@@ -543,6 +543,8 @@ export default function App({ page }: AppProps) {
     chatAbort.current = controller;
     setResponding(true);
     setToolEvents([]);
+    const streamId = `stream-${Date.now()}`;
+    let streamed = '';
     addLog('debug', 'chat', `发送对话请求（${content.length} 字）`);
     try {
       if (mergeRequestRef && mrContext) {
@@ -597,9 +599,7 @@ export default function App({ page }: AppProps) {
         }]);
         addLog('info', 'chat', `对话完成（${result.iterations} 轮，${result.toolCalls.length} 次工具调用）`);
       } else {
-        const streamId = `stream-${Date.now()}`;
         setMessages((current) => [...current, { id: streamId, role: 'assistant', content: '' }]);
-        let streamed = '';
         const answer = await runtime.chat(history, attachment, controller.signal, (token) => {
           streamed += token;
           setMessages((current) => current.map((message) => message.id === streamId ? { ...message, content: streamed } : message));
@@ -609,10 +609,18 @@ export default function App({ page }: AppProps) {
         addLog('info', 'chat', '对话完成');
       }
     } catch (error) {
-      if (controller.signal.aborted || (error as Error).name === 'AbortError') return;
+      const cancelled = controller.signal.aborted || (error as Error).name === 'AbortError';
       const message = error instanceof Error ? error.message : String(error);
-      setMessages((current) => [...current, { id: `error-${Date.now()}`, role: 'assistant', error: true, content: `模型调用失败：${message}` }]);
-      addLog('error', 'chat', '模型调用失败', message);
+      // 流式占位必须收拾干净：空占位移除，半截内容保留并标记失败，绝不残留空转圈气泡。
+      setMessages((current) => {
+        const kept = current.filter((item) => item.id !== streamId);
+        if (cancelled) return streamed ? current : kept;
+        return [...kept, {
+          id: `error-${Date.now()}`, role: 'assistant' as const, error: true,
+          content: streamed ? `${streamed}\n\n---\n模型响应中断：${message}` : `模型调用失败：${message}`,
+        }];
+      });
+      if (!cancelled) addLog('error', 'chat', '模型调用失败', message);
     } finally {
       setResponding(false);
       chatAbort.current = undefined;
