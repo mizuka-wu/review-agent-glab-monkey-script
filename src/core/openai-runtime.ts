@@ -1,7 +1,7 @@
 import { diffContext } from './diff';
 import { isModelConfigured } from './settings';
-import { httpRequest, httpTransport } from './http';
-import { debugBus } from './debug-bus';
+import { httpRequest, httpTransport, type HttpResponse } from './http';
+import { debugBus, type DebugExchangeInput } from './debug-bus';
 import type { ToolCall, ToolDefinition } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
 import { reflectSystemPrompt } from './reflection';
@@ -21,12 +21,17 @@ interface OpenAIToolCall {
 }
 
 interface ChatCompletionResponse {
-  choices?: { message?: { content?: string; tool_calls?: OpenAIToolCall[] } }[];
+  choices?: { message?: { content?: string; tool_calls?: OpenAIToolCall[] }; finish_reason?: string | null }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 }
 
 interface StreamChunk {
-  choices?: { delta?: { content?: string; reasoning_content?: string }; message?: { content?: string; reasoning_content?: string } }[];
+  choices?: {
+    delta?: { content?: string; reasoning_content?: string };
+    message?: { content?: string; reasoning_content?: string };
+    finish_reason?: string | null;
+  }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
@@ -170,6 +175,15 @@ export class OpenAIRuntime {
   private lastTokens: { input: number; output: number } | undefined;
   private lastThinking = '';
 
+  /** 把一次 HTTP 往返的完整请求 / 响应交给调试总线（响应字段在调用点补齐）。 */
+  private commitExchange(
+    exchange: DebugExchangeInput,
+    startedAt: number,
+    patch: Partial<Pick<DebugExchangeInput, 'status' | 'responseText' | 'content' | 'reasoning' | 'finishReason' | 'usage' | 'error'>>,
+  ) {
+    debugBus.exchange({ ...exchange, ...patch, ms: Date.now() - startedAt });
+  }
+
   private async runComplete(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
     options: { json?: boolean; signal?: AbortSignal; onToken?: (token: string) => void; onThinking?: (token: string) => void; stage?: string } = {},
@@ -187,21 +201,45 @@ export class OpenAIRuntime {
         ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       });
       const requestHeaders = this.headers();
+      const requestUrl = this.buildUrl('/chat/completions');
       const startedAt = Date.now();
-      const response: StreamLikeResponse = useStream
-        ? await fetchStream(this.buildUrl('/chat/completions'), requestHeaders, payloadBody, options.signal)
-        : await httpRequest(this.buildUrl('/chat/completions'), {
-          method: 'POST',
-          headers: requestHeaders,
-          body: payloadBody,
-          signal: options.signal,
-        }).then((result) => ({
-          ok: result.status >= 200 && result.status < 300,
-          status: result.status,
-          body: null,
-          text: result.text,
-          contentType: '',
-        }));
+      const exchange: DebugExchangeInput = {
+        stage: options.stage ?? 'chat',
+        model: this.settings.model,
+        stream: useStream,
+        attempt: attempt + 1,
+        url: requestUrl,
+        headers: requestHeaders,
+        body: payloadBody,
+        transport: useStream ? 'fetch' : httpTransport(),
+        ms: 0,
+        responseText: '',
+        content: '',
+        reasoning: '',
+        chunks: [],
+      };
+
+      let response: StreamLikeResponse;
+      try {
+        response = useStream
+          ? await fetchStream(requestUrl, requestHeaders, payloadBody, options.signal)
+          : await httpRequest(requestUrl, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: payloadBody,
+            signal: options.signal,
+          }).then((result) => ({
+            ok: result.status >= 200 && result.status < 300,
+            status: result.status,
+            body: null,
+            text: result.text,
+            contentType: '',
+          }));
+      } catch (error) {
+        this.commitExchange(exchange, startedAt, { error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+      exchange.status = response.status;
 
       if (useStream && response.ok && response.body && response.contentType.includes('text/event-stream')) {
         // Parse SSE stream
@@ -229,14 +267,18 @@ export class OpenAIRuntime {
                 const chunk = JSON.parse(data) as StreamChunk;
                 if (chunk.usage) streamUsage = chunk.usage;
                 const choice = chunk.choices?.[0];
+                const finishReason = choice?.finish_reason ?? undefined;
+                if (finishReason) exchange.finishReason = finishReason;
                 const delta = choice?.delta?.content ?? choice?.message?.content ?? '';
                 if (delta) {
                   content += delta;
+                  exchange.chunks.push({ kind: 'content', text: delta, finishReason });
                   options.onToken?.(delta);
                 }
                 const reasoning = choice?.delta?.reasoning_content ?? choice?.message?.reasoning_content ?? '';
                 if (reasoning) {
                   this.lastThinking += reasoning;
+                  exchange.chunks.push({ kind: 'reasoning', text: reasoning });
                   options.onThinking?.(reasoning);
                 }
               } catch {
@@ -247,7 +289,14 @@ export class OpenAIRuntime {
           // Flush remaining decoder buffer
           buffer += decoder.decode();
         } catch (streamError) {
-          if ((streamError as Error).name === 'AbortError') throw streamError;
+          const aborted = (streamError as Error).name === 'AbortError';
+          this.commitExchange(exchange, startedAt, {
+            content,
+            reasoning: this.lastThinking,
+            usage: streamUsage && { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 },
+            error: aborted ? '已取消' : streamError instanceof Error ? streamError.message : String(streamError),
+          });
+          if (aborted) throw streamError;
           if (content) return content; // Return partial content
           throw streamError;
         }
@@ -256,11 +305,17 @@ export class OpenAIRuntime {
           kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (stream)`,
           status: response.status, ms: Date.now() - startedAt, transport: 'fetch',
         });
-        if (!content) throw new Error('模型服务没有返回文本内容');
         if (streamUsage?.prompt_tokens || streamUsage?.completion_tokens) {
           this.lastTokens = { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 };
           void recordUsage('openai', this.settings.model, this.lastTokens.input, this.lastTokens.output);
         }
+        this.commitExchange(exchange, startedAt, {
+          content,
+          reasoning: this.lastThinking,
+          usage: streamUsage && { input: streamUsage.prompt_tokens ?? 0, output: streamUsage.completion_tokens ?? 0 },
+          error: content ? undefined : '模型服务没有返回文本内容',
+        });
+        if (!content) throw new Error('模型服务没有返回文本内容');
         return content;
       }
 
@@ -279,8 +334,6 @@ export class OpenAIRuntime {
         }
         const parsed = (JSON.parse(fullText || 'null') ?? {}) as ChatCompletionResponse;
         const content = parsed.choices?.[0]?.message?.content ?? fullText;
-        if (!content) throw new Error('模型服务没有返回文本内容');
-        options.onToken?.(content);
         const usage = parseOpenAIUsage(parsed as unknown as Record<string, unknown>);
         this.lastTokens = { input: usage.inputTokens, output: usage.outputTokens };
         debugBus.network({
@@ -290,12 +343,23 @@ export class OpenAIRuntime {
         if (usage.inputTokens > 0 || usage.outputTokens > 0) {
           void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
         }
+        this.commitExchange(exchange, startedAt, {
+          responseText: fullText,
+          content,
+          reasoning: this.lastThinking,
+          finishReason: parsed.choices?.[0]?.finish_reason ?? undefined,
+          usage: { input: usage.inputTokens, output: usage.outputTokens },
+          error: content ? undefined : '模型服务没有返回文本内容',
+        });
+        if (!content) throw new Error('模型服务没有返回文本内容');
+        options.onToken?.(content);
         return content;
       }
 
       const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
       if (!response.ok || payload.error) {
-        const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}（${this.buildUrl('/chat/completions')}）`;
+        const message = payload.error?.message ?? `模型服务返回 HTTP ${response.status}（${requestUrl}）`;
+        this.commitExchange(exchange, startedAt, { responseText: response.text, error: message });
         if (attempt < 2 && shouldRetry(response.status)) {
           await wait(250 * 2 ** attempt, options.signal);
           continue;
@@ -304,7 +368,6 @@ export class OpenAIRuntime {
       }
 
       const content = payload.choices?.[0]?.message?.content;
-      if (!content) throw new Error('模型服务没有返回文本内容');
 
       // Record usage
       const usage = parseOpenAIUsage(payload as unknown as Record<string, unknown>);
@@ -317,6 +380,14 @@ export class OpenAIRuntime {
       if (usage.inputTokens > 0 || usage.outputTokens > 0) {
         void recordUsage('openai', this.settings.model, usage.inputTokens, usage.outputTokens);
       }
+      this.commitExchange(exchange, startedAt, {
+        responseText: response.text,
+        content: content ?? '',
+        finishReason: payload.choices?.[0]?.finish_reason ?? undefined,
+        usage: { input: usage.inputTokens, output: usage.outputTokens },
+        error: content ? undefined : '模型服务没有返回文本内容',
+      });
+      if (!content) throw new Error('模型服务没有返回文本内容');
 
       return content;
     }
@@ -431,23 +502,50 @@ export class OpenAIRuntime {
     ];
 
     const startedAt = Date.now();
-    const response = await httpRequest(this.buildUrl('/chat/completions'), {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: this.settings.model,
-        messages: openaiMessages,
-        tools: openaiTools,
-        temperature: this.settings.effort === 'fast' ? 0 : 0.2,
-        ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
-      }),
-      signal: options.signal,
+    const requestUrl = this.buildUrl('/chat/completions');
+    const requestHeaders = this.headers();
+    const payloadBody = JSON.stringify({
+      model: this.settings.model,
+      messages: openaiMessages,
+      tools: openaiTools,
+      temperature: this.settings.effort === 'fast' ? 0 : 0.2,
+      ...(this.settings.thinking === 'off' ? { chat_template_kwargs: { enable_thinking: false } } : {}),
     });
+    const exchange: DebugExchangeInput = {
+      stage: 'tools', model: this.settings.model, stream: false, attempt: 1,
+      url: requestUrl, headers: requestHeaders, body: payloadBody,
+      transport: httpTransport(), ms: 0, responseText: '', content: '', reasoning: '', chunks: [],
+    };
+
+    let response: HttpResponse;
+    try {
+      response = await httpRequest(requestUrl, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: payloadBody,
+        signal: options.signal,
+      });
+    } catch (error) {
+      this.commitExchange(exchange, startedAt, { error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    exchange.status = response.status;
 
     const payload = (JSON.parse(response.text || 'null') ?? {}) as ChatCompletionResponse;
     debugBus.network({
       kind: 'model', method: 'POST', url: `${this.settings.modelBaseUrl}/chat/completions (tools)`,
       status: response.status, ms: Date.now() - startedAt, bytes: response.text.length, transport: httpTransport(),
+    });
+    const message = payload.choices?.[0]?.message;
+    const usage = parseOpenAIUsage(payload as unknown as Record<string, unknown>);
+    this.commitExchange(exchange, startedAt, {
+      responseText: response.text,
+      content: message?.content ?? JSON.stringify(message?.tool_calls ?? []),
+      finishReason: payload.choices?.[0]?.finish_reason ?? undefined,
+      usage: { input: usage.inputTokens, output: usage.outputTokens },
+      error: response.status < 200 || response.status >= 300 || payload.error
+        ? payload.error?.message ?? `模型服务返回 HTTP ${response.status}`
+        : undefined,
     });
     if (response.status < 200 || response.status >= 300 || payload.error) {
       debugBus.prompt({
@@ -460,10 +558,9 @@ export class OpenAIRuntime {
     debugBus.prompt({
       stage: 'tools', model: this.settings.model, system, messages,
       tools: tools.map((tool) => tool.name),
-      response: JSON.stringify(payload.choices?.[0]?.message ?? {}).slice(0, 4000),
+      response: JSON.stringify(message ?? {}).slice(0, 4000),
     });
 
-    const message = payload.choices?.[0]?.message;
     if (message?.tool_calls && message.tool_calls.length > 0) {
       return {
         type: 'tool_calls',

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, type CSSProperties } from 'react';
-import { ChevronDown, Check, X } from 'lucide-react';
+import { ChevronDown, Check, Copy, X } from 'lucide-react';
 
 // ─── Design tokens ───
 const C = {
@@ -116,6 +116,55 @@ export function Btn({ children, variant = 'secondary', size = 'md', icon, onClic
 export function Spinner({ size = 16, color = C.primary }: { size?: number; color?: string }) {
   return (
     <span style={{ display: 'inline-block', width: size, height: size, border: `2px solid ${color}33`, borderTopColor: color, borderRadius: '50%', animation: 'ra-spin 0.6s linear infinite' }} />
+  );
+}
+
+// ─── Copy ───
+/** 非安全上下文（http 自建 GitLab）没有 navigator.clipboard，退回 execCommand。 */
+export async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.top = '-1000px';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand('copy');
+  area.remove();
+  return copied;
+}
+
+export function CopyBtn({ text, label = '复制', size = 'sm', variant = 'outline', style }: {
+  text: string | (() => string); label?: string; size?: 'sm' | 'md' | 'lg';
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'; style?: CSSProperties;
+}) {
+  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = setTimeout(() => setState('idle'), 1800);
+    return () => clearTimeout(timer);
+  }, [state]);
+
+  const labels = { idle: label, ok: '已复制', fail: '复制失败' };
+  const caption = labels[state];
+  return (
+    <Btn
+      size={size}
+      variant={state === 'ok' ? 'primary' : state === 'fail' ? 'danger' : variant}
+      icon={state === 'ok' ? <Check size={12} /> : state === 'fail' ? <X size={12} /> : <Copy size={12} />}
+      title={caption}
+      ariaLabel={caption}
+      style={style}
+      onClick={() => {
+        const value = typeof text === 'function' ? text() : text;
+        void copyText(value).then((ok) => setState(ok ? 'ok' : 'fail'), () => setState('fail'));
+      }}
+    >{caption}</Btn>
   );
 }
 
