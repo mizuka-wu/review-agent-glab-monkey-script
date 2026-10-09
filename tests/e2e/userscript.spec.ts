@@ -148,6 +148,41 @@ const diff = {
   renamed_file: false,
 };
 
+// --- Mock：应用修复链路 ---
+
+/** mock diff 对应的完整文件内容：修复流程会按源分支读它，补丁必须能落在上面。 */
+const paymentFile = [
+  'export function pay() {',
+  '  const apiKey = "sk-live-123";',
+  '  console.log(apiKey);',
+  '  return handle(error as any);',
+  '}',
+  '',
+].join('\n');
+
+const paymentFixed = paymentFile.replace('"sk-live-123"', 'process.env.PAYMENT_API_KEY');
+
+const paymentFixPatch = [
+  '@@ -1,5 +1,5 @@',
+  ' export function pay() {',
+  '-  const apiKey = "sk-live-123";',
+  '+  const apiKey = process.env.PAYMENT_API_KEY;',
+  '   console.log(apiKey);',
+  '   return handle(error as any);',
+  ' }',
+].join('\n');
+
+/** 低置信度的泛泛建议：即使开关打开也不给「应用修复」入口。 */
+const vagueFinding = {
+  title: '错误处理策略需要整体重构', severity: 'medium', category: 'maintainability', confidence: 'low',
+  path: 'src/payment.ts', line: 4, endLine: 4, existingCode: 'return handle(error as any);',
+  content: '整个模块的错误处理策略不统一，建议引入统一的错误分层与降级路径。',
+  evidence: [{ path: 'src/payment.ts', line: 4, snippet: 'return handle(error as any);' }],
+  comment: '错误处理策略需要统一。',
+};
+
+interface MockCommit { status: number; body: Record<string, unknown> }
+
 // --- Mock：另一个 GitLab 实例上的配套 MR（跨项目 / 跨 origin 的参考变更）---
 
 const companionHost = 'https://companion.test';
@@ -200,10 +235,25 @@ async function routeCompanion(page: Page, requests: string[] = [], options?: { s
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[] }) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[]; fixResponse?: string; commitStatus?: number; commits?: MockCommit[] }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
+    const asked = route.request().postData() ?? '';
+    // 修复模块和评审模块打同一个端点：按 system prompt 分流，测试里可以随时改掉修复回答
+    if (asked.includes('\u4f60\u662f\u4ee3\u7801\u8bc4\u5ba1\u7ba1\u7ebf\u7684\u4fee\u590d\u6a21\u5757') || asked.includes('你是代码评审管线的修复模块')) {
+      await route.fulfill({
+        json: {
+          id: 'mock-fix', object: 'chat.completion', model: 'test-model',
+          choices: [{
+            index: 0, finish_reason: 'stop',
+            message: { role: 'assistant', content: options?.fixResponse ?? JSON.stringify({ patch: paymentFixPatch }) },
+          }],
+          usage: { prompt_tokens: 80, completion_tokens: 30, total_tokens: 110 },
+        },
+      });
+      return;
+    }
     const body = {
       id: 'mock-completion',
       object: 'chat.completion',
@@ -291,11 +341,28 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
     }
     if (url.pathname.includes('/repository/files/') && url.pathname.endsWith('/raw')) {
       const path = decodeURIComponent(url.pathname.split('/repository/files/')[1].split('/raw')[0]);
+      if (path === 'src/payment.ts') {
+        await route.fulfill({ contentType: 'text/plain', body: paymentFile });
+        return;
+      }
       if (path in repoFiles) {
         await route.fulfill({ contentType: 'text/plain', body: repoFiles[path] });
         return;
       }
       await route.fulfill({ status: 404, body: 'not found' });
+      return;
+    }
+    if (url.pathname.endsWith('/repository/commits') && route.request().method() === 'POST') {
+      const status = options?.commitStatus ?? 201;
+      const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+      options?.commits?.push({ status, body });
+      await route.fulfill({
+        status,
+        contentType: 'application/json',
+        body: JSON.stringify(status < 300
+          ? { id: 'c0ffee1234567890', short_id: 'c0ffee12', title: body.commit_message, web_url: 'https://gitlab.test/acme/app/-/commit/c0ffee12' }
+          : { message: `${status} Forbidden` }),
+      });
       return;
     }
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'GET') {
@@ -718,7 +785,9 @@ test.describe('mock mode', () => {
 
     await dialog.getByRole('button', { name: '恢复为当前会话' }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.locator('article').first().getByText('已修复')).toBeVisible({ timeout: 10000 });
+    // 卡片头部有「已修复」状态标签，操作区还有同名按钮
+    await expect(page.locator('article[data-finding-status="fixed"]').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('article').first().getByText('已修复').first()).toBeVisible({ timeout: 10000 });
   });
 
   // --- 参考 MR：其他 MR 只作为只读上下文拼进当前这次评审 ---
@@ -945,6 +1014,105 @@ test.describe('mock mode', () => {
     await expect.poll(async () => page.evaluate(
       () => JSON.parse(localStorage.getItem('review-agent-prompt-history-v1') ?? '[]') as string[],
     )).toEqual(['第二次提问：并发与幂等性怎么保证', '第一次提问：这段变更的失败路径']);
+  });
+
+  // --- 应用修复：开关显隐 + 提交形态 + 失败提示 ---
+
+  const FIX_SETTINGS = {
+    provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+    gitlabToken: '', language: 'zh-CN', reviewMode: 'hybrid',
+  };
+
+  test('turns the apply-fix entry on from settings and commits the fix to the source branch', async ({ page }) => {
+    const commits: MockCommit[] = [];
+    const requests: string[] = [];
+    await routeGitLab(page, requests, { commits, extraFindings: [vagueFinding] });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      ...FIX_SETTINGS, effort: 'thorough',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText(/个问题/).first()).toBeVisible({ timeout: 20000 });
+
+    const secret = page.locator('article').filter({ hasText: '硬编码 API Key 应移至安全配置' });
+    await expect(secret.getByText('行内 L2')).toBeVisible({ timeout: 20000 });
+    // 开关默认关闭：入口一个都不渲染
+    await expect(page.getByRole('button', { name: '应用修复' })).toHaveCount(0);
+
+    await page.getByRole('tab', { name: '设置' }).click();
+    await page.getByRole('switch', { name: '允许应用修复' }).click();
+    await page.getByRole('button', { name: '保存' }).click();
+    await expect(page.getByText('设置已保存')).toBeVisible();
+    await page.getByRole('tab', { name: /^结果/ }).click();
+
+    await expect(secret.getByRole('button', { name: '应用修复' })).toBeVisible();
+    // 低置信度的泛泛建议：开关开了也不给入口
+    const vague = page.locator('article').filter({ hasText: '错误处理策略需要整体重构' });
+    await expect(vague.first()).toBeVisible();
+    await expect(vague.getByRole('button', { name: '应用修复' })).toHaveCount(0);
+
+    await secret.getByRole('button', { name: '应用修复' }).click();
+    const dialog = page.getByRole('dialog', { name: '应用修复' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('提交到源分支 feature/payment');
+    await expect(dialog).toContainText('src/payment.ts');
+    await expect(dialog.getByLabel('修复 Diff 预览')).toContainText('-  const apiKey = "sk-live-123";');
+    await expect(dialog.getByLabel('修复 Diff 预览')).toContainText('+  const apiKey = process.env.PAYMENT_API_KEY;');
+    await expect(dialog).toContainText('Commit 信息（直接复用 Finding）');
+
+    await dialog.getByRole('button', { name: '确认提交' }).click();
+    await expect(page.getByText('已提交修复 c0ffee12 到 feature/payment')).toBeVisible({ timeout: 20000 });
+
+    expect(commits).toHaveLength(1);
+    expect(commits[0].status).toBe(201);
+    // commit message 直接复用 finding：标题当 message，证据正文当 description
+    expect(commits[0].body.branch).toBe('feature/payment');
+    expect(String(commits[0].body.commit_message).split('\n')[0]).toBe('硬编码 API Key 应移至安全配置');
+    expect(String(commits[0].body.commit_message)).toContain('src/payment.ts L2');
+    expect(commits[0].body.actions).toEqual([
+      { action: 'update', file_path: 'src/payment.ts', content: paymentFixed },
+    ]);
+    await expect(page.locator('article[data-finding-status="fixed"]').first()).toBeVisible();
+    // 读了源分支上的当前文件，且没有任何一次提交写向目标分支
+    expect(requests.some((path) => path.includes('/repository/files/'))).toBe(true);
+    expect(commits.every((commit) => commit.body.branch !== 'main')).toBe(true);
+  });
+
+  test('explains why a fix was dropped instead of committing half of it', async ({ page }) => {
+    const commits: MockCommit[] = [];
+    const options: { fixResponse: string; commitStatus: number; commits: MockCommit[] } = {
+      fixResponse: '这里应该改成从环境变量读取密钥。', commitStatus: 201, commits,
+    };
+    await routeGitLab(page, [], options);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      ...FIX_SETTINGS, effort: 'balanced', applyFixEnabled: true,
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+
+    await expect(page.getByText(/个问题/).first()).toBeVisible({ timeout: 20000 });
+    const secret = page.locator('article').filter({ hasText: '硬编码 API Key 应移至安全配置' });
+    await expect(secret.getByRole('button', { name: '应用修复' })).toBeVisible({ timeout: 20000 });
+    await secret.getByRole('button', { name: '应用修复' }).click();
+
+    const dialog = page.getByRole('dialog', { name: '应用修复' });
+    await expect(dialog).toContainText('模型没有返回可解析的 JSON 修复结果', { timeout: 20000 });
+    await expect(dialog.getByRole('button', { name: '确认提交' })).toBeDisabled();
+    expect(commits).toHaveLength(0);
+
+    // 换成能应用的补丁，但 GitLab 拒绝写入（保护分支 / 权限不足）
+    options.fixResponse = JSON.stringify({ patch: paymentFixPatch });
+    options.commitStatus = 403;
+    await dialog.getByRole('button', { name: '重新生成' }).click();
+    await expect(dialog.getByLabel('修复 Diff 预览')).toContainText('+  const apiKey = process.env.PAYMENT_API_KEY;', { timeout: 20000 });
+
+    await dialog.getByRole('button', { name: '确认提交' }).click();
+    await expect(dialog).toContainText('没有向该分支推送的权限', { timeout: 20000 });
+    expect(commits).toHaveLength(1);
+    expect(commits[0].status).toBe(403);
+    // 提交没成功就不能把 Finding 标成已修复，弹窗也要留着让用户看到原因
+    await expect(dialog).toBeVisible();
+    await expect(page.locator('article[data-finding-status="fixed"]')).toHaveCount(0);
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
@@ -1780,5 +1948,176 @@ test.describe('real GitLab mode', () => {
     await expect(list.getByRole('option')).toHaveCount(2, { timeout: 20000 });
     await list.getByRole('option').nth(1).click();
     await expect(reloaded).toHaveValue('真实环境的第一条 prompt');
+  });
+  // --- 应用修复：真实提交到专用沙箱分支 ---
+
+  const fixBranch = 'ra-e2e-fix';
+  const fixPath = 'src/fix-target.ts';
+  const fixRuleTitle = '代码中疑似硬编码敏感信息';
+  const fixProject = encodeURIComponent(companionProjectPath);
+  const fixSeed = [
+    'export function pay(amount: number) {',
+    '  const apiKey = "sk-live-ra-e2e";',
+    '  return charge(apiKey, amount);',
+    '}',
+    '',
+  ].join('\n');
+  const fixPatch = [
+    '@@ -1,4 +1,4 @@',
+    ' export function pay(amount: number) {',
+    '-  const apiKey = "sk-live-ra-e2e";',
+    '+  const apiKey = process.env.PAYMENT_API_KEY;',
+    '   return charge(apiKey, amount);',
+    ' }',
+  ].join('\n');
+
+  function commitFixFile(action: 'create' | 'update', content: string, message: string) {
+    return gitlabApi(`/projects/${fixProject}/repository/commits`, {
+      method: 'POST',
+      body: { branch: fixBranch, commit_message: message, actions: [{ action, file_path: fixPath, content }] },
+    });
+  }
+
+  function readFixFile() {
+    return gitlabApi(`/projects/${fixProject}/repository/files/${encodeURIComponent(fixPath)}/raw?ref=${fixBranch}`);
+  }
+
+  /**
+   * 修复要真的往分支上写：在 test/test 里准备一个专用沙箱分支 + MR（和参考 MR 沙箱一个套路，
+   * 建过就复用），每次跑之前把文件复位，跑完再还原，不把测试提交留在真实 MR 上。
+   */
+  async function ensureFixSandboxMr(): Promise<{ url: string; iid: number } | undefined> {
+    if (!gitlabPat) return undefined;
+    const branches = await gitlabApi(`/projects/${fixProject}/repository/branches?per_page=100`);
+    if (!Array.isArray(branches.data)) return undefined;
+    const names = (branches.data as { name: string }[]).map((branch) => branch.name);
+    if (!names.includes('main')) {
+      await gitlabApi(`/projects/${fixProject}/repository/commits`, {
+        method: 'POST',
+        body: {
+          branch: 'main', commit_message: 'chore: seed review-agent e2e sandbox',
+          actions: [{ action: 'create', file_path: 'README.md', content: '# review-agent e2e sandbox\n' }],
+        },
+      });
+    }
+    if (!names.includes(fixBranch)) {
+      await gitlabApi(`/projects/${fixProject}/repository/branches?branch=${fixBranch}&ref=main`, { method: 'POST' });
+    }
+    const current = await readFixFile();
+    if (current.status !== 200) await commitFixFile('create', fixSeed, 'chore: seed apply-fix sandbox file');
+    else if (current.data !== fixSeed) await commitFixFile('update', fixSeed, 'chore: reset apply-fix sandbox file');
+
+    const opened = await gitlabApi(`/projects/${fixProject}/merge_requests?state=opened&source_branch=${fixBranch}`);
+    const existing = Array.isArray(opened.data) ? opened.data as { web_url: string; iid: number }[] : [];
+    if (existing.length > 0) return { url: existing[0].web_url, iid: existing[0].iid };
+
+    const created = await gitlabApi(`/projects/${fixProject}/merge_requests`, {
+      method: 'POST',
+      body: { source_branch: fixBranch, target_branch: 'main', title: 'test: review-agent e2e apply-fix MR' },
+    });
+    const mr = created.data as { web_url?: string; iid?: number };
+    if (!mr?.web_url || !mr.iid) return undefined;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const diffs = await gitlabApi(`/projects/${fixProject}/merge_requests/${mr.iid}/diffs?per_page=20`);
+      if (Array.isArray(diffs.data) && (diffs.data as unknown[]).length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return { url: mr.web_url, iid: mr.iid };
+  }
+
+  test('commits a real fix to the MR source branch and leaves the sandbox clean', async ({ page }) => {
+    test.setTimeout(300_000);
+    const sandbox = await ensureFixSandboxMr();
+    test.skip(sandbox === undefined, `${companionProjectPath} 上没能准备好修复沙箱（需要 GITLAB_PAT）`);
+    await loginToGitLab(page, realGitlabUrl);
+
+    // 修复生成走模型端点：这里给一份确定的补丁，GitLab 侧（读文件 / 提交 / 刷新 diff）全是真的
+    await page.route(`${modelBaseUrl}/**`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'e2e-fix', object: 'chat.completion', model: modelName,
+          choices: [{
+            index: 0, finish_reason: 'stop',
+            message: { role: 'assistant', content: JSON.stringify({ patch: fixPatch }) },
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+        }),
+      });
+    });
+
+    await mountUserscript(page, `${sandbox!.url}/diffs`, {
+      provider: 'openai', modelBaseUrl, model: modelName, apiKey: modelApiKey,
+      gitlabToken: gitlabPat, effort: 'balanced', language: 'zh-CN', reviewMode: 'rules',
+      applyFixEnabled: true, repoIndex: { enabled: false },
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 20000 });
+
+    const card = page.locator('aside[aria-label="Review Agent"] article').filter({ hasText: fixRuleTitle }).first();
+    await expect(card).toBeVisible({ timeout: 120000 });
+    // 卡片出现只说明规则阶段跑完了：收尾时还会覆盖一次「展开哪一条」，等它真的结束再动卡片
+    await expect(page.getByRole('button', { name: 'Review 中', exact: true })).toBeHidden({ timeout: 120000 });
+    await card.scrollIntoViewIfNeeded();
+
+    const fixEntry = card.getByRole('button', { name: '应用修复' });
+    await expect(async () => {
+      const header = card.locator('button[aria-expanded]').first();
+      if (await header.getAttribute('aria-expanded') === 'false') await header.click();
+      await expect(fixEntry).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 60000 });
+    await fixEntry.click();
+
+    const dialog = page.getByRole('dialog', { name: '应用修复' });
+    await expect(dialog).toBeVisible({ timeout: 30000 });
+    await expect(dialog).toContainText(`提交到源分支 ${fixBranch}`);
+    await expect(dialog).toContainText(fixPath);
+    await expect(dialog.getByLabel('修复 Diff 预览'))
+      .toContainText('+  const apiKey = process.env.PAYMENT_API_KEY;', { timeout: 90000 });
+    // commit 信息直接复用 Finding：标题就是内置规则的标题
+    await expect(dialog).toContainText(fixRuleTitle);
+
+    const posted = page.waitForResponse(
+      (response) => response.url().includes('/repository/commits') && response.request().method() === 'POST',
+      { timeout: 90000 },
+    );
+    await dialog.getByRole('button', { name: '确认提交' }).click();
+    const response = await posted;
+    const raw = await response.text();
+    const created = response.status() < 300 ? JSON.parse(raw) as { id: string; short_id: string } : undefined;
+    const sent = JSON.parse(response.request().postData() ?? '{}') as { branch?: string; commit_message?: string };
+
+    // 先把沙箱还原、把证据读出来，再做断言：断言失败也不把测试提交留在分支上
+    const fixed = await readFixFile();
+    const detail = created
+      ? await gitlabApi(`/projects/${fixProject}/repository/commits/${created.id}`)
+      : undefined;
+    const needsRevert = String(fixed.data) !== fixSeed;
+    const restored = needsRevert
+      ? await commitFixFile('update', fixSeed, 'chore: revert review-agent e2e fix')
+      : { status: 200 };
+    const reverted = await readFixFile();
+
+    expect(response.url()).toContain(`/projects/${fixProject}/repository/commits`);
+    expect(response.status(), raw).toBe(201);
+    // 只写源分支
+    expect(sent.branch).toBe(fixBranch);
+    // commit 标题就是 finding.title，正文是 finding 的证据/建议原文
+    expect(String(sent.commit_message).split('\n')[0]).toBe(fixRuleTitle);
+    expect(String(sent.commit_message)).toContain(fixPath);
+    // 文件内容真的变了
+    expect(String(fixed.data)).toContain('process.env.PAYMENT_API_KEY');
+    expect(String(fixed.data)).not.toContain('sk-live-ra-e2e');
+    // commit message 复用了 finding 标题，正文带上了文件与证据
+    const commitDetail = detail?.data as { title?: string; message?: string } | undefined;
+    expect(commitDetail?.title).toBe(fixRuleTitle);
+    expect(commitDetail?.message ?? '').toContain(fixPath);
+    // UI 侧标记为已修复，并刷新了 MR 变更
+    await expect(page.getByText(`已提交修复 ${created?.short_id ?? ''} 到 ${fixBranch}`)).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('article[data-finding-status="fixed"]').first()).toBeVisible({ timeout: 30000 });
+    // 沙箱还原干净
+    expect(restored.status).toBe(201);
+    expect(reverted.data).toBe(fixSeed);
   });
 });
