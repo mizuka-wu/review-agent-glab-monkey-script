@@ -135,28 +135,83 @@ export function FindingsPanel(props: FindingsPanelProps) {
   const publishBlockHint = '没有可发布的 Finding：评论内容为空';
   const modeHint = '行内评论挂在具体 diff 行上，全文评论发布到 MR 评论区（不带行位置）';
 
+  /** 底部工具栏：Review 结束后一直留在面板底部，空态与失败态也要能一键 Approve。
+      控件多或面板窄时整排横向滚动，不换行、也不把横向滚动条推给页面。 */
+  const quickBar = (canApprove || findings.length > 0) && (
+    <div
+      role="toolbar" aria-label="评审快捷操作" className="ra-scroll"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+        borderTop: `1px solid ${C.border}`, background: C.bg, flexShrink: 0,
+        minWidth: 0, maxWidth: '100%', whiteSpace: 'nowrap',
+        flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden',
+      }}
+    >
+      <ConfirmButton
+        label="一键 Approve" confirmLabel="确认 Approve？" icon={<ThumbsUp size={13} />}
+        disabled={!canApprove || quickBusy} title={canApprove ? '在 GitLab 上 Approve 这个 MR' : '当前页面没有可用的 MR 引用'}
+        onConfirm={props.onApprove}
+      />
+      <ConfirmButton
+        label={`${publishModeLabel('一键', allModes.inline, allModes.full)}${publishableCount > 0 ? ` (${publishableCount})` : ''}`}
+        confirmLabel="确认发布？" icon={<MessageSquarePlus size={13} />}
+        disabled={publishableCount === 0 || !canPublish || quickBusy}
+        title={!canPublish ? publishDisabledReason
+          : publishableCount === 0 ? publishBlockHint
+            : `${modeHint}：${publishModeSummary(allModes.inline, allModes.full)}`}
+        onConfirm={props.onPublishAll}
+      />
+      {allModes.inline > 0 && allModes.full > 0 && (
+        <span title={modeHint} style={{ fontSize: 10, color: C.textMuted, whiteSpace: 'nowrap' }}>
+          {publishModeSummary(allModes.inline, allModes.full)}
+        </span>
+      )}
+      <span style={{ flex: 1 }} />
+      <ConfirmButton
+        label="总评论" confirmLabel="确认发布？" icon={<FileText size={13} />}
+        disabled={findings.length === 0 || !canPublish || quickBusy}
+        title={canPublish ? undefined : publishDisabledReason}
+        onConfirm={props.onSummaryComment}
+      />
+      <Btn size="sm" variant="ghost" icon={<Download size={13} />} disabled={findings.length === 0} onClick={props.onExportFindings}>
+        导出 JSON
+      </Btn>
+      <Btn size="sm" variant="ghost" icon={<Share2 size={13} />} disabled={!props.canDelegate} onClick={props.onExportDelegation}>
+        Delegation
+      </Btn>
+    </div>
+  );
+
   if (error && findings.length === 0) {
     return (
-      <div style={{ padding: 12 }}>
-        <Banner tone="danger" icon={<AlertTriangle size={14} />} title="Review 未能完成" onDismiss={props.onDismissError}>
-          {error}
-        </Banner>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 }}>
+        <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: 12 }}>
+          <Banner tone="danger" icon={<AlertTriangle size={14} />} title="Review 未能完成" onDismiss={props.onDismissError}>
+            {error}
+          </Banner>
+        </div>
+        {quickBar}
       </div>
     );
   }
 
   if (findings.length === 0 && !running) {
     return (
-      <EmptyState
-        icon={<Inbox size={18} />}
-        title={stages ? '没有发现需要处理的问题' : '还没有运行 Review'}
-      >
-        {stages
-          ? <>规则检查{stages.rules.ran ? `已执行 ${stages.rules.rules} 条规则` : '未执行'}
-            {stages.model.ran ? `，AI 评审已完成` : modelReady ? '' : '；未配置模型，AI 评审已跳过'}。当前变更没有命中任何问题。</>
-          : <>点击「开始 Review」：先在浏览器本地跑确定性规则检查（{enabledRuleCount} 条规则，零 token）
-            {modelReady ? '，再叠加 AI 深度评审。' : '。配置 API Key 后可叠加 AI 深度评审。'}</>}
-      </EmptyState>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 }}>
+        <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
+          <EmptyState
+            icon={<Inbox size={18} />}
+            title={stages ? '没有发现需要处理的问题' : '还没有运行 Review'}
+          >
+            {stages
+              ? <>规则检查{stages.rules.ran ? `已执行 ${stages.rules.rules} 条规则` : '未执行'}
+                {stages.model.ran ? `，AI 评审已完成` : modelReady ? '' : '；未配置模型，AI 评审已跳过'}。当前变更没有命中任何问题。</>
+              : <>点击「开始 Review」：先在浏览器本地跑确定性规则检查（{enabledRuleCount} 条规则，零 token）
+                {modelReady ? '，再叠加 AI 深度评审。' : '。配置 API Key 后可叠加 AI 深度评审。'}</>}
+          </EmptyState>
+        </div>
+        {quickBar}
+      </div>
     );
   }
 
@@ -297,51 +352,19 @@ export function FindingsPanel(props: FindingsPanelProps) {
       </div>
 
       {/* Quick actions */}
-      {(canApprove || findings.length > 0) && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
-          borderTop: `1px solid ${C.border}`, background: C.bg, flexShrink: 0,
-        }}>
-          <ConfirmButton
-            label="一键 Approve" confirmLabel="确认 Approve？" icon={<ThumbsUp size={13} />}
-            disabled={!canApprove || quickBusy} onConfirm={props.onApprove}
-          />
-          <ConfirmButton
-            label={`${publishModeLabel('一键', allModes.inline, allModes.full)}${publishableCount > 0 ? ` (${publishableCount})` : ''}`}
-            confirmLabel="确认发布？" icon={<MessageSquarePlus size={13} />}
-            disabled={publishableCount === 0 || !canPublish || quickBusy}
-            title={!canPublish ? publishDisabledReason
-              : publishableCount === 0 ? publishBlockHint
-                : `${modeHint}：${publishModeSummary(allModes.inline, allModes.full)}`}
-            onConfirm={props.onPublishAll}
-          />
-          {allModes.inline > 0 && allModes.full > 0 && (
-            <span title={modeHint} style={{ fontSize: 10, color: C.textMuted, whiteSpace: 'nowrap' }}>
-              {publishModeSummary(allModes.inline, allModes.full)}
-            </span>
-          )}
-          <span style={{ flex: 1 }} />
-          <ConfirmButton
-            label="总评论" confirmLabel="确认发布？" icon={<FileText size={13} />}
-            disabled={findings.length === 0 || !canPublish || quickBusy}
-            title={canPublish ? undefined : publishDisabledReason}
-            onConfirm={props.onSummaryComment}
-          />
-          <Btn size="sm" variant="ghost" icon={<Download size={13} />} disabled={findings.length === 0} onClick={props.onExportFindings}>
-            导出 JSON
-          </Btn>
-          <Btn size="sm" variant="ghost" icon={<Share2 size={13} />} disabled={!props.canDelegate} onClick={props.onExportDelegation}>
-            Delegation
-          </Btn>
-        </div>
-      )}
+      {quickBar}
 
       {/* Batch bar */}
       {counts.draft > 0 && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '7px 10px',
-          borderTop: `1px solid ${C.border}`, background: C.bgSubtle, flexShrink: 0,
-        }}>
+        <div
+          role="toolbar" aria-label="批量发布操作" className="ra-scroll"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+            borderTop: `1px solid ${C.border}`, background: C.bgSubtle, flexShrink: 0,
+            minWidth: 0, maxWidth: '100%', whiteSpace: 'nowrap',
+            flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden',
+          }}
+        >
           {selectedIds.size > 0 ? (
             <>
               <span style={{ fontSize: 11, fontWeight: 700, color: C.primary }}>已选 {selectedIds.size}</span>

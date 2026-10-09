@@ -71,7 +71,7 @@ const diff = {
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean }) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[] }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -144,7 +144,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/diffs')) {
-      await route.fulfill({ json: [diff] });
+      await route.fulfill({ json: options?.diffs ?? [diff] });
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248')) {
@@ -383,6 +383,36 @@ test.describe('mock mode', () => {
     expect(requests.some((path) => path.endsWith('/approve'))).toBe(true);
   });
 
+  test('keeps one-click approve after a review that found nothing', async ({ page }) => {
+    const requests: string[] = [];
+    // 换成不命中任何内置规则的干净变更：Review 完成后是 0 findings 的空态
+    await routeGitLab(page, requests, { diffs: [{
+      old_path: 'src/payment.test.ts', new_path: 'src/payment.test.ts',
+      new_file: false, deleted_file: false, renamed_file: false,
+      diff: [
+        '@@ -1,4 +1,5 @@ describe("orderTotal", () => {',
+        ' describe("orderTotal", () => {',
+        '+  const items = [{ price: 2 }, { price: 3 }];',
+        '   it("sums the item prices", () => {',
+        '     expect(orderTotal(items)).toBe(5);',
+      ].join('\n'),
+    }] });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+
+    // 0 findings 的空态以前会把整条底部工具栏一起带走，Approve 就此消失
+    await expect(page.getByText('没有发现需要处理的问题')).toBeVisible({ timeout: 15000 });
+    const bar = page.getByRole('toolbar', { name: '评审快捷操作' });
+    await expect(bar).toBeVisible();
+    await expect(bar.getByRole('button', { name: '总评论' })).toBeDisabled();
+
+    await bar.getByRole('button', { name: '一键 Approve' }).click();
+    await bar.getByRole('button', { name: '确认 Approve？' }).click();
+    await expect(page.getByText('已 Approve 该 MR')).toBeVisible({ timeout: 15000 });
+    expect(requests.some((path) => path.endsWith('/approve'))).toBe(true);
+  });
+
   test('streams model review output live into the panel', async ({ page }) => {
     const requests: string[] = [];
     await routeGitLab(page, requests, { stream: true });
@@ -572,6 +602,106 @@ test.describe('real GitLab mode', () => {
     await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
     await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
+  });
+
+  // --- 底部工具栏：Approve 常驻 + 整排控件横向可滚（不把横向滚动推给页面）---
+
+  /** 面板收到最小宽度：控件一定溢出，才能验证底部栏是自己横滑而不是撑破布局。 */
+  async function useNarrowPanel(page: Page) {
+    const prefs = { width: 380, top: 72, right: 16, open: false, hintDismissed: true };
+    await page.addInitScript({
+      content: `localStorage.setItem('review-agent-ui-v1', ${JSON.stringify(JSON.stringify(prefs))});`,
+    });
+  }
+
+  /** Approve 用完就撤：真实 MR 不能留下测试的批准记录。API 的非 GET 走 cookie 会话时要带 CSRF。 */
+  async function setApproved(page: Page, approved: boolean) {
+    const csrf = await page.evaluate(
+      () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '',
+    ).catch(() => '');
+    const headers: Record<string, string> = {};
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+    if (gitlabPat) headers['PRIVATE-TOKEN'] = gitlabPat;
+    const response = await page.request
+      .post(`${realMrApi}/${approved ? 'approve' : 'unapprove'}`, { headers })
+      .catch(() => undefined);
+    return response?.status();
+  }
+
+  const pageHOverflow = (page: Page) =>
+    page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+
+  test('keeps the bottom bar scrollable and approves the real MR from it', async ({ page }) => {
+    test.setTimeout(180_000);
+    test.skip(!realMrRef, 'GITLAB_MR_URL 不是可解析的 MR 地址');
+    await loginToGitLab(page, realGitlabUrl);
+    await useNarrowPanel(page);
+    await mountUserscript(page, realMrUrl);
+    const baselineOverflow = await pageHOverflow(page);
+
+    // 上一轮留下的批准会让 POST /approve 直接失败，先复位（未批准时返回 404，忽略）
+    await setApproved(page, false);
+
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    const panel = page.locator('aside[aria-label="Review Agent"]');
+    await expect(panel).toHaveCSS('width', '380px');
+
+    await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 20000 });
+    await expect(page.getByRole('button', { name: 'Review 中', exact: true })).toBeHidden({ timeout: 120000 });
+    await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/).first()).toBeVisible({ timeout: 20000 });
+
+    // Review 结束后底部工具栏必须还在，且一键 Approve 可点（有 MR 引用就够）
+    const bar = page.getByRole('toolbar', { name: '评审快捷操作' });
+    await expect(bar).toBeVisible();
+    const approve = bar.getByRole('button', { name: '一键 Approve' });
+    await expect(approve).toBeEnabled();
+
+    const metrics = await bar.evaluate((node) => ({
+      scrollWidth: node.scrollWidth,
+      clientWidth: node.clientWidth,
+      overflowX: getComputedStyle(node).overflowX,
+    }));
+    expect(metrics.overflowX).toBe('auto');
+    expect(metrics.scrollWidth, '窄面板下底部工具栏应当溢出').toBeGreaterThan(metrics.clientWidth);
+
+    const last = bar.getByRole('button', { name: 'Delegation' });
+    const barBox = (await bar.boundingBox())!;
+    const before = (await last.boundingBox())!;
+    expect(before.x + before.width, '溢出的控件一开始就该落在可视区外')
+      .toBeGreaterThan(barBox.x + barBox.width);
+
+    await bar.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
+    expect(await bar.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+    const after = (await last.boundingBox())!;
+    expect(after.x + after.width, '横滑到底后最后一个控件要完全可见')
+      .toBeLessThanOrEqual(barBox.x + barBox.width + 1);
+
+    // 横滑只发生在底部栏内部：面板和页面都不该多出横向滚动
+    const overflow = await page.evaluate(() => {
+      const aside = document.getElementById('review-agent-glab-root')?.shadowRoot
+        ?.querySelector('aside[aria-label="Review Agent"]');
+      return aside ? aside.scrollWidth - aside.clientWidth : Number.NaN;
+    });
+    expect(overflow, '面板被底部栏撑出横向滚动').toBeLessThanOrEqual(0);
+    expect(await pageHOverflow(page), '页面被底部栏撑出横向滚动').toBeLessThanOrEqual(baselineOverflow);
+
+    await bar.evaluate((node) => { node.scrollLeft = 0; });
+    const posted = page.waitForResponse(
+      (response) => response.url().endsWith('/approve') && response.request().method() === 'POST',
+      { timeout: 60000 },
+    );
+    await approve.click();
+    await bar.getByRole('button', { name: '确认 Approve？' }).click();
+    const response = await posted;
+    const status = response.status();
+    const raw = await response.text();
+    // 清理放在断言之前：断言失败也不把批准留在真实 MR 上
+    const cleanup = await setApproved(page, false);
+
+    expect(status, raw).toBe(201);
+    expect(JSON.parse(raw)).toMatchObject({ user_has_approved: true, approved: true });
+    await expect(page.getByText('已 Approve 该 MR')).toBeVisible({ timeout: 20000 });
+    expect(cleanup, 'e2e 没有把 Approve 撤销干净').toBe(201);
   });
 
   test('runs hybrid review against a real local model (omlx)', async ({ page }) => {

@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FindingsPanel, type FindingsPanelProps } from '../../src/components/review/FindingsPanel';
 import { BatchPublishDialog, PublishDialog } from '../../src/components/review/PublishDialog';
 import type { Finding, PublishMode } from '../../src/core/types';
@@ -126,6 +126,51 @@ describe('FindingsPanel publish gating', () => {
     })} />);
     expect(screen.getByRole('button', { name: '批量行内评论 (1)' })).toBeEnabled();
     expect(screen.getByText('可发布 1')).toBeVisible();
+  });
+});
+
+const completedStages = {
+  rules: { ran: true, rules: 12, findings: 0 },
+  model: { ran: true, findings: 0 },
+};
+
+describe('FindingsPanel bottom action bar', () => {
+  it('keeps one-click approve after a review that found nothing', () => {
+    render(<FindingsPanel {...panelProps({ findings: [], stages: completedStages })} />);
+    expect(screen.getByText('没有发现需要处理的问题')).toBeVisible();
+    expect(screen.getByRole('toolbar', { name: '评审快捷操作' })).toBeVisible();
+    expect(screen.getByRole('button', { name: '一键 Approve' })).toBeEnabled();
+  });
+
+  it('keeps one-click approve when the review failed', () => {
+    render(<FindingsPanel {...panelProps({ findings: [], error: '模型服务返回 HTTP 500' })} />);
+    expect(screen.getByText('Review 未能完成')).toBeVisible();
+    expect(screen.getByRole('button', { name: '一键 Approve' })).toBeEnabled();
+  });
+
+  it('approves through the two-step quick action', () => {
+    const onApprove = vi.fn();
+    render(<FindingsPanel {...panelProps({ findings: [], stages: completedStages, onApprove })} />);
+    fireEvent.click(screen.getByRole('button', { name: '一键 Approve' }));
+    expect(onApprove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '确认 Approve？' }));
+    expect(onApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables approve without an MR reference and drops the bar on an empty review', () => {
+    const { rerender } = render(<FindingsPanel {...panelProps({ canApprove: false })} />);
+    expect(screen.getByRole('button', { name: '一键 Approve' })).toBeDisabled();
+    rerender(<FindingsPanel {...panelProps({ findings: [], canApprove: false })} />);
+    expect(screen.queryByRole('toolbar', { name: '评审快捷操作' })).toBeNull();
+  });
+
+  it('scrolls both bottom bars sideways instead of wrapping them', () => {
+    render(<FindingsPanel {...panelProps()} />);
+    for (const name of ['评审快捷操作', '批量发布操作']) {
+      expect(screen.getByRole('toolbar', { name })).toHaveStyle({
+        overflowX: 'auto', flexWrap: 'nowrap', whiteSpace: 'nowrap', maxWidth: '100%',
+      });
+    }
   });
 });
 
