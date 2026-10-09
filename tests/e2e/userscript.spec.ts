@@ -67,7 +67,7 @@ const diff = {
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number }) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -165,6 +165,10 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       return;
     }
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'POST') {
+      if (options?.rejectPosition && (route.request().postData() ?? '').includes('position%5B')) {
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'position is invalid' }) });
+        return;
+      }
       await route.fulfill({ json: { id: 'discussion-1', notes: [{ id: 'note-1' }] } });
       return;
     }
@@ -217,17 +221,45 @@ test.describe('mock mode', () => {
     await expect(page.getByText('调试日志可能泄漏运行时变量')).toBeVisible();
 
     const finding = page.locator('article').filter({ hasText: '硬编码 API Key 应移至安全配置' });
-    await finding.getByRole('button', { name: '发布到 GitLab' }).click();
-    await expect(page.getByRole('dialog', { name: '发布到 GitLab' })).toBeVisible();
+    await expect(finding.getByText('行内 L2')).toBeVisible();
+    await finding.getByRole('button', { name: '行内评论' }).click();
+    await expect(page.getByRole('dialog', { name: '发布行内评论' })).toBeVisible();
     await page.getByLabel('评论内容').fill('Edited review comment');
 
-    const discussionRequest = page.waitForRequest((request) => request.url().endsWith('/discussions'));
-    await page.getByRole('button', { name: '确认发布' }).click();
+    const discussionRequest = page.waitForRequest((request) =>
+      request.url().endsWith('/discussions') && request.method() === 'POST');
+    await page.getByRole('button', { name: '确认行内评论' }).click();
     const request = await discussionRequest;
     expect(request.postData()).toContain('body=Edited+review+comment');
     expect(request.postData()).toContain('position%5Bhead_sha%5D=head-sha');
     await expect(page.getByText('行级 Discussion 已发布')).toBeVisible();
     expect(requests.some((path) => path.endsWith('/diffs'))).toBe(true);
+  });
+
+  test('degrades to a full-text comment when GitLab rejects the inline position', async ({ page }) => {
+    const posts: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/discussions') && request.method() === 'POST') posts.push(request.postData() ?? '');
+    });
+    await routeGitLab(page, [], { rejectPosition: true });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置')).toBeVisible({ timeout: 15000 });
+
+    const finding = page.locator('article').filter({ hasText: '硬编码 API Key 应移至安全配置' });
+    await finding.getByRole('button', { name: '行内评论' }).click();
+    await page.getByRole('button', { name: '确认行内评论' }).click();
+
+    await expect(page.getByText('行内不可用，已改为全文评论')).toBeVisible({ timeout: 15000 });
+    expect(posts).toHaveLength(2);
+    expect(posts[0]).toContain('position%5Bnew_line%5D=2');
+    expect(posts[1]).not.toContain('position');
+    expect(decodeURIComponent(posts[1])).toContain('src/payment.ts:2');
+    await expect(finding.getByRole('button', { name: '已发布', exact: true })).toBeVisible();
   });
 
   test('runs rule-only review without an API key and shows the setup hint', async ({ page }) => {
@@ -313,7 +345,7 @@ test.describe('mock mode', () => {
     await expect(page.getByText('feature/payment')).toBeVisible();
     await expect(page.getByText('当前 head')).toBeVisible();
 
-    // 全文件扫描（仅规则）：结果进入结果页且不可发布
+    // 全文件扫描（仅规则）：结果进入结果页，发布时降级为全文评论
     await page.getByRole('button', { name: '扫描已索引文件' }).click();
     await expect(page.getByText(/扫描完成：2 个文件/)).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('扫描模式（全文件规则扫描）')).toBeVisible({ timeout: 10000 });

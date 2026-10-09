@@ -359,7 +359,7 @@ export function resolvePublishPosition(finding: Finding, files: FileDiff[]): Pub
     const relocated = files.map((candidate) => snippetMatch(finding, candidate)).find((match) => match !== undefined);
     return relocated
       ? resolved(finding, relocated)
-      : blocked(finding, `${finding.path} 不在当前 Diff 中，无法定位行级评论`);
+      : blocked(finding, `${finding.path} 不在当前 Diff 中，无法定位行内评论`);
   }
 
   const fullFileOnly = finding.anchor?.source === 'full-file';

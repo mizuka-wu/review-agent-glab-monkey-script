@@ -3,7 +3,7 @@ import { Check, CheckCheck, ChevronDown, ChevronRight, Copy, Crosshair, Edit3, E
 import { findingEditableFields, type FindingEdit } from '../../core/finding-edit';
 import { Markdown } from '../Markdown';
 import { Badge, Pill, sourceTone, tokens as C } from '../ui/modern';
-import type { Finding, FindingCategory, FindingConfidence, FindingSeverity } from '../../core/types';
+import type { Finding, FindingCategory, FindingConfidence, FindingSeverity, PublishMode } from '../../core/types';
 
 const severityLabel: Record<FindingSeverity, string> = { critical: '严重', high: '高', medium: '中', low: '低' };
 const categoryLabel: Record<FindingCategory, string> = {
@@ -24,7 +24,9 @@ interface FindingCardProps {
   selected?: boolean;
   publishDisabled: boolean;
   publishDisabledReason?: string;
-  /** 本条 Finding 自身不可发布的原因（行号无法修正等），会直接显示在卡片上。 */
+  /** 本条会发成行内评论（带 position）还是 MR 级全文评论。 */
+  publishMode: PublishMode;
+  /** 行号无法落到当前 Diff 的原因；此时降级为全文评论，直接显示在卡片上。 */
   publishIssue?: string;
   onToggle: () => void;
   onSelect?: () => void;
@@ -61,7 +63,7 @@ function ActionButton({ icon, children, onClick, disabled, title, primary, dange
 }
 
 export function FindingCard({
-  finding, expanded, selected, publishDisabled, publishDisabledReason, publishIssue,
+  finding, expanded, selected, publishDisabled, publishDisabledReason, publishMode, publishIssue,
   onToggle, onSelect, onLocate, onCopy, onPublish, onIgnore, onMarkFixed, onEdit,
 }: FindingCardProps) {
   const [edit, setEdit] = useState<FindingEdit | undefined>();
@@ -69,6 +71,10 @@ export function FindingCard({
   const severity = severityColor[finding.severity];
   const tone = sourceTone[finding.source === 'rule' ? 'rule' : 'model'];
   const codePreview = finding.existingCode.trim().split('\n')[0] ?? '';
+  const inline = publishMode === 'inline';
+  const modeHint = inline
+    ? `行内评论：挂在 diff 第 ${finding.line} 行上`
+    : `全文评论：发布到 MR 评论区，不带行位置${publishIssue ? `（${publishIssue}）` : ''}`;
 
   const startEdit = () => setEdit(findingEditableFields(finding));
   const saveEdit = () => {
@@ -138,6 +144,11 @@ export function FindingCard({
               fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: C.textMuted,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0,
             }}>{finding.path.replace(/^.*\//, '')}:{finding.line}{finding.endLine > finding.line ? `-${finding.endLine}` : ''}</code>
+            <span title={modeHint} style={{
+              display: 'inline-flex', alignItems: 'center', padding: '0 5px', borderRadius: 4, flexShrink: 0,
+              fontSize: 10, fontWeight: 700, lineHeight: '16px',
+              background: inline ? C.primaryLight : C.warningBg, color: inline ? C.primary : C.warning,
+            }}>{inline ? `行内 L${finding.line}${finding.endLine > finding.line ? `-${finding.endLine}` : ''}` : '全文'}</span>
             {!expanded && codePreview && (
               <code style={{
                 flex: 1, minWidth: 0, fontSize: 10.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -217,9 +228,9 @@ export function FindingCard({
                 </div>
               )}
 
-              {publishIssue && (
+              {!inline && (
                 <div style={{ marginTop: 8 }}>
-                  <Badge text={publishIssue} color="warning" />
+                  <Badge text={`将发布为全文评论${publishIssue ? `：${publishIssue}` : '（无 diff 位置）'}`} color="warning" />
                 </div>
               )}
               {finding.anchor?.corrected && (
@@ -250,9 +261,9 @@ export function FindingCard({
                   icon={finding.status === 'published' ? <Check size={12} /> : <MessageSquarePlus size={12} />}
                   primary onClick={onPublish}
                   disabled={publishDisabled || finding.status === 'published' || finding.status === 'ignored'}
-                  title={publishDisabled ? (publishDisabledReason ?? '当前页面无法发布行级评论') : '创建 GitLab 行级 Discussion'}
+                  title={publishDisabled ? (publishDisabledReason ?? '当前页面无法发布评论') : modeHint}
                 >
-                  {finding.status === 'published' ? '已发布' : '发布到 GitLab'}
+                  {finding.status === 'published' ? '已发布' : inline ? '行内评论' : '全文评论'}
                 </ActionButton>
                 <ActionButton icon={<EyeOff size={12} />} danger onClick={onIgnore} disabled={finding.status !== 'draft'}>忽略</ActionButton>
                 <ActionButton icon={<CheckCheck size={12} />} onClick={onMarkFixed} disabled={finding.status === 'published'} title="标记为已修复">已修复</ActionButton>

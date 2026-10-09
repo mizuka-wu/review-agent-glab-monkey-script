@@ -211,8 +211,10 @@ export interface AdapterCapabilities {
   canCreateDiscussions: boolean;
 }
 
-export interface DiscussionDraft {
-  body: string;
+/** 评论落地形态：行内 Discussion（带 position）或 MR 级全文评论（不带 position）。 */
+export type PublishMode = 'inline' | 'full';
+
+export interface DiscussionPosition {
   path: string;
   oldPath?: string;
   newPath?: string;
@@ -224,10 +226,20 @@ export interface DiscussionDraft {
   diffRefs: DiffRefs;
 }
 
+/** position 缺省时创建 MR 级全文评论，payload 不含任何 position[...] 字段。 */
+export interface DiscussionDraft {
+  body: string;
+  position?: DiscussionPosition;
+}
+
 export interface PublishedDiscussion {
   id: string;
   noteId: string;
   deduplicated?: boolean;
+}
+
+export interface PublishedComment extends PublishedDiscussion {
+  mode: PublishMode;
 }
 
 export interface ReviewContextFile extends FileDiff {

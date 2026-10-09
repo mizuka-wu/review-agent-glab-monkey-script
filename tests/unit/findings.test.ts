@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeFileDiff } from '../../src/core/diff';
 import {
+  buildFullTextComment,
   buildSummaryComment,
   extractPartialFindings,
+  findingLocation,
   fingerprintFinding,
   normalizeFindings,
   parseModelFindings,
+  publishedCountLabel,
+  publishModeLabel,
+  publishModeSummary,
   serializeFindingsExport,
 } from '../../src/core/findings';
+import type { Finding } from '../../src/core/types';
 
 const file = normalizeFileDiff({
   old_path: 'src/a.ts',
@@ -70,6 +76,38 @@ describe('buildSummaryComment', () => {
   it('marks corroborated findings as 规则+AI', () => {
     const text = buildSummaryComment([finding({ corroborated: 'model' })]);
     expect(text).toContain('[高][规则+AI]');
+  });
+});
+
+describe('full-text comment fallback', () => {
+  const finding: Finding = {
+    id: 'f1', fingerprint: 'fp', path: 'src/a.ts', line: 12, endLine: 14, side: 'new',
+    category: 'security', severity: 'high', confidence: 'high', title: '硬编码密钥',
+    content: 'c', evidence: [], existingCode: '', suggestionCode: '', comment: 'cm',
+    source: 'rule', status: 'draft',
+  };
+
+  it('keeps the location in the body of a full-text comment', () => {
+    const text = buildFullTextComment(finding, '请移到环境变量');
+    expect(text.startsWith('> `src/a.ts:12-14` · 全文评论（无可用行内位置）')).toBe(true);
+    expect(text).toContain('请移到环境变量');
+    expect(findingLocation({ ...finding, endLine: 12 })).toBe('src/a.ts:12');
+  });
+
+  it('labels publish entries by the mode of the batch', () => {
+    expect(publishModeLabel('一键', 2, 0)).toBe('一键行内评论');
+    expect(publishModeLabel('批量', 0, 3)).toBe('批量全文评论');
+    expect(publishModeLabel('一键', 1, 1)).toBe('一键发布');
+    expect(publishModeLabel('批量', 0, 0)).toBe('批量发布');
+    expect(publishModeSummary(2, 1)).toBe('行内 2 · 全文 1');
+    expect(publishModeSummary(0, 2)).toBe('全文 2');
+    expect(publishModeSummary(0, 0)).toBe('');
+  });
+
+  it('reports how many comments went out in each mode', () => {
+    expect(publishedCountLabel(3, 3, 0)).toBe('3 条行内评论');
+    expect(publishedCountLabel(2, 0, 2)).toBe('2 条全文评论');
+    expect(publishedCountLabel(3, 1, 2)).toBe('3 条评论（行内 1 · 全文 2）');
   });
 });
 

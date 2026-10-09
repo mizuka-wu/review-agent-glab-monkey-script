@@ -4,7 +4,10 @@ import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { normalizeFileDiff } from './core/diff';
 import { FindingsPanel, severityLabel, statusLabel } from './components/review/FindingsPanel';
-import { buildSummaryComment, extractPartialFindings, parseModelFindings, serializeFindingsExport } from './core/findings';
+import {
+  buildSummaryComment, extractPartialFindings, parseModelFindings, publishedCountLabel,
+  publishModeSummary, serializeFindingsExport,
+} from './core/findings';
 import { buildDelegationContext } from './core/delegation';
 import { compactThinking, extractThinkingOutline } from './core/thinking';
 import { RepoPanel } from './components/review/RepoPanel';
@@ -46,8 +49,8 @@ import { clearSensitiveSettings, defaultSettings, loadSettings, inspectConfigura
 import { httpTransport } from './core/http';
 import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
 import type {
-  ChatMessage, CodeSelection, FileDiff, Finding, MergeRequestContext, PageContext,
-  ReviewStageReport, RuntimeSettings,
+  ChatMessage, CodeSelection, DiscussionPosition, FileDiff, Finding, MergeRequestContext,
+  MergeRequestRef, PageContext, PublishMode, ReviewStageReport, RuntimeSettings,
 } from './core/types';
 
 type Tab = 'review' | 'chat' | 'repo' | 'settings' | 'debug';
@@ -189,7 +192,7 @@ export default function App({ page }: AppProps) {
   const enabledRuleCount = useMemo(() => countEnabledRules(rulePacks), [rulePacks]);
   const running = reviewStatus === 'running' || reviewStatus === 'preparing';
 
-  /** 发布位置校验：行号必须落在该文件真实 diff 行内，否则先按内容自动修正。扫描结果没有 diff 位置，整体跳过。 */
+  /** 发布位置校验：行号落在该文件真实 diff 行内才发行内评论，落不到（含扫描结果）就降级为全文评论。 */
   const publishPositions = useMemo(() => {
     const positions = new Map<string, PublishPosition>();
     if (scanMode) return positions;
@@ -202,27 +205,29 @@ export default function App({ page }: AppProps) {
     [findings, publishPositions],
   );
 
-  const publishBlockReason = useCallback((finding: Finding) => {
+  /** 行号落不到当前 diff 的原因；只用于说明「为什么是全文评论」，不再阻断发布。 */
+  const publishPositionIssue = useCallback((finding: Finding) => {
     const position = publishPositions.get(finding.id);
-    return position && !position.publishable ? position.reason ?? '无法确定行级评论位置' : undefined;
+    return position && !position.publishable ? position.reason ?? '无法确定行内评论位置' : undefined;
   }, [publishPositions]);
 
-  const inlinePublishable = useCallback((finding: Finding) =>
-    finding.status === 'draft' && !publishBlockReason(finding) && Boolean(finding.comment.trim()),
-  [publishBlockReason]);
+  const publishMode = useCallback((finding: Finding): PublishMode =>
+    publishPositions.get(finding.id)?.publishable ? 'inline' : 'full',
+  [publishPositions]);
 
-  /** 任何点了必失败的状态都在这里禁用发布入口，而不是等 GitLab 返回 4xx。 */
-  const publishDisabledReason = scanMode
-    ? '扫描模式结果无 diff 位置，不能发布为行级评论'
-    : !mergeRequestRef || !mrContext
-      ? '当前页面不是 MR，无法创建行级 Discussion'
-      : capabilities && !capabilities.canCreateDiscussions
-        ? 'GitLab Token 没有创建 Discussion 的权限'
-        : running
-          ? '评审进行中，请等本次 Review 结束后再发布'
-          : publishing || batchPublishing || quickBusy
-            ? '正在执行发布操作，请稍候'
-            : undefined;
+  const publishable = useCallback((finding: Finding) =>
+    finding.status === 'draft' && Boolean(finding.comment.trim()), []);
+
+  /** 只有点了必失败的状态才禁用发布入口；缺行号一律降级为全文评论，不留 4xx 给 GitLab。 */
+  const publishDisabledReason = !mergeRequestRef || !mrContext
+    ? '当前页面不是 MR，无法创建 Discussion'
+    : capabilities && !capabilities.canCreateDiscussions
+      ? 'GitLab Token 没有创建 Discussion 的权限'
+      : running
+        ? '评审进行中，请等本次 Review 结束后再发布'
+        : publishing || batchPublishing || quickBusy
+          ? '正在执行发布操作，请稍候'
+          : undefined;
   const canPublish = publishDisabledReason === undefined;
 
   const persistUi = useCallback((next: UiPrefs) => {
@@ -1049,29 +1054,14 @@ export default function App({ page }: AppProps) {
     }
   };
 
-  const handlePublishAllInline = async () => {
+  const handlePublishAll = async () => {
     if (!mergeRequestRef || !mrContext || !canPublish) return;
-    const targets = resolvedFindings.filter(inlinePublishable);
+    const targets = resolvedFindings.filter(publishable);
     if (targets.length === 0) return;
     setQuickBusy(true);
-    const succeeded = new Set<string>();
-    for (const finding of targets) {
-      try {
-        await api.createDiscussion(mergeRequestRef, buildDraft(finding, finding.comment));
-        succeeded.add(finding.id);
-      } catch (error) {
-        addLog('error', 'publish', `行内评论失败 ${finding.path}:${finding.line}`, error instanceof Error ? error.message : String(error));
-      }
-    }
-    const attempted = new Set(targets.map((finding) => finding.id));
-    persistFindings(findings.map((finding) => {
-      if (!attempted.has(finding.id)) return finding;
-      return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
-    }));
+    const { inline, full, published, failed } = await publishEach(mergeRequestRef, targets);
     setQuickBusy(false);
-    setToast(succeeded.size === targets.length
-      ? `已发布 ${succeeded.size} 条行内评论`
-      : `已发布 ${succeeded.size} 条行内评论，失败 ${targets.length - succeeded.size} 条`);
+    setToast(`已发布 ${publishedCountLabel(published, inline, full)}${failed > 0 ? `，失败 ${failed} 条` : ''}`);
   };
 
   const handleScanIndexed = async () => {
@@ -1147,10 +1137,12 @@ export default function App({ page }: AppProps) {
 
   // --- Publishing ---
 
-  const buildDraft = (input: Finding, body: string) => {
-    const finding = publishPositions.get(input.id)?.finding ?? input;
+  /** 位置校验通过的 Finding 才带 position；其余交给 publishComment 发 MR 级全文评论。 */
+  const buildPosition = (input: Finding): DiscussionPosition | undefined => {
+    const position = publishPositions.get(input.id);
+    if (!position?.publishable) return undefined;
+    const finding = position.finding;
     return {
-      body,
       path: finding.path,
       oldPath: finding.oldPath ?? finding.path,
       newPath: finding.newPath ?? finding.path,
@@ -1163,15 +1155,37 @@ export default function App({ page }: AppProps) {
     };
   };
 
+  /** 逐条发布（行内不可用自动降级全文），返回各形态条数并回写状态。 */
+  const publishEach = async (ref: MergeRequestRef, targets: Finding[]) => {
+    const succeeded = new Set<string>();
+    let inline = 0;
+    let full = 0;
+    for (const finding of targets) {
+      try {
+        const published = await api.publishComment(ref, finding, finding.comment, buildPosition(finding));
+        succeeded.add(finding.id);
+        if (published.mode === 'inline') inline += 1; else full += 1;
+      } catch (error) {
+        addLog('error', 'publish', `发布失败 ${finding.path}:${finding.line}`, error instanceof Error ? error.message : String(error));
+      }
+    }
+    const attempted = new Set(targets.map((finding) => finding.id));
+    persistFindings(findings.map((finding) => {
+      if (!attempted.has(finding.id)) return finding;
+      return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
+    }));
+    return { inline, full, published: succeeded.size, failed: targets.length - succeeded.size };
+  };
+
   const confirmPublish = async () => {
-    if (!publishFinding || !mergeRequestRef || !mrContext || !canPublish || publishBlockReason(publishFinding)) return;
+    if (!publishFinding || !mergeRequestRef || !mrContext || !canPublish) return;
     setPublishing(true);
     try {
-      await api.createDiscussion(mergeRequestRef, buildDraft(publishFinding, publishBody));
+      const published = await api.publishComment(mergeRequestRef, publishFinding, publishBody, buildPosition(publishFinding));
       persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'published' as const, comment: publishBody } : finding));
       setPublishFinding(undefined);
-      setToast('行级 Discussion 已发布');
-      addLog('info', 'publish', `已发布 ${publishFinding.path}:${publishFinding.line}`);
+      setToast(published.mode === 'inline' ? '行级 Discussion 已发布' : '行内不可用，已改为全文评论');
+      addLog('info', 'publish', `已发布${published.mode === 'inline' ? '行内' : '全文'}评论 ${publishFinding.path}:${publishFinding.line}`);
     } catch (error) {
       const code = error instanceof GitLabApiError ? `${error.code}: ` : '';
       const message = error instanceof Error ? error.message : String(error);
@@ -1184,11 +1198,11 @@ export default function App({ page }: AppProps) {
   };
 
   const publishableSelected = resolvedFindings.filter(
-    (finding) => selectedFindings.has(finding.id) && inlinePublishable(finding),
+    (finding) => selectedFindings.has(finding.id) && publishable(finding),
   );
 
   const selectAllPublishable = () => {
-    setSelectedFindings(new Set(resolvedFindings.filter(inlinePublishable).map((finding) => finding.id)));
+    setSelectedFindings(new Set(resolvedFindings.filter(publishable).map((finding) => finding.id)));
   };
 
   const toggleFindingSelection = (id: string) => {
@@ -1202,27 +1216,12 @@ export default function App({ page }: AppProps) {
   const batchConfirmPublish = async () => {
     if (publishableSelected.length === 0 || !mergeRequestRef || !mrContext || !canPublish) return;
     setBatchPublishing(true);
-    const succeeded = new Set<string>();
-    let failed = 0;
-    for (const finding of publishableSelected) {
-      try {
-        await api.createDiscussion(mergeRequestRef, buildDraft(finding, finding.comment));
-        succeeded.add(finding.id);
-      } catch (error) {
-        failed += 1;
-        addLog('error', 'publish', `批量发布失败 ${finding.path}:${finding.line}`, error instanceof Error ? error.message : String(error));
-      }
-    }
-    const attempted = new Set(publishableSelected.map((finding) => finding.id));
-    persistFindings(findings.map((finding) => {
-      if (!attempted.has(finding.id)) return finding;
-      return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
-    }));
+    const { inline, full, published, failed } = await publishEach(mergeRequestRef, publishableSelected);
     setSelectedFindings(new Set());
     setBatchConfirm(false);
     setBatchPublishing(false);
-    setToast(`批量发布完成：${succeeded.size} 成功${failed > 0 ? `，${failed} 失败` : ''}`);
-    addLog('info', 'publish', `批量发布 ${succeeded.size} 成功 / ${failed} 失败`);
+    setToast(`批量发布完成：${published} 成功${full > 0 ? `（${publishModeSummary(inline, full)}）` : ''}${failed > 0 ? `，${failed} 失败` : ''}`);
+    addLog('info', 'publish', `批量发布 ${published} 成功（行内 ${inline} · 全文 ${full}）/ ${failed} 失败`);
   };
 
   // --- Keyboard shortcuts ---
@@ -1531,7 +1530,7 @@ export default function App({ page }: AppProps) {
                   </div>
                 )}
                 {scanMode && !running && (
-                  <Banner tone="warning" title="扫描模式（全文件规则扫描）">结果没有 diff 位置，不能发布为行级评论；可复制评论或导出 JSON。</Banner>
+                  <Banner tone="info" title="扫描模式（全文件规则扫描）">结果没有 diff 位置，发布时会降级为 MR 级全文评论。</Banner>
                 )}
                 {reviewStatus === 'cancelled' && !reviewError && (
                   <Banner tone="warning" title="已取消">模型分析已停止；已完成的规则结果仍保留并可发布。</Banner>
@@ -1550,12 +1549,13 @@ export default function App({ page }: AppProps) {
                   enabledRuleCount={enabledRuleCount}
                   canPublish={canPublish}
                   publishDisabledReason={publishDisabledReason}
-                  publishBlockReason={publishBlockReason}
-                  inlinePublishable={inlinePublishable}
+                  publishPositionIssue={publishPositionIssue}
+                  publishMode={publishMode}
+                  publishable={publishable}
                   canApprove={Boolean(mergeRequestRef)}
                   quickBusy={quickBusy}
                   onApprove={() => void handleApprove()}
-                  onPublishAllInline={() => void handlePublishAllInline()}
+                  onPublishAll={() => void handlePublishAll()}
                   onSummaryComment={() => void handleSummaryComment()}
                   onExportFindings={handleExportFindings}
                   onExportDelegation={handleExportDelegation}
@@ -1830,7 +1830,9 @@ export default function App({ page }: AppProps) {
           body={publishBody}
           onBodyChange={setPublishBody}
           publishing={publishing}
-          blockReason={publishDisabledReason ?? publishBlockReason(publishFinding)}
+          mode={publishMode(publishFinding)}
+          positionIssue={publishPositionIssue(publishFinding)}
+          blockReason={publishDisabledReason}
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
           onCancel={() => setPublishFinding(undefined)}
           onConfirm={() => void confirmPublish()}
@@ -1841,6 +1843,7 @@ export default function App({ page }: AppProps) {
         <BatchPublishDialog
           findings={publishableSelected}
           publishing={batchPublishing}
+          publishMode={publishMode}
           skipped={selectedFindings.size - publishableSelected.length}
           blockReason={publishDisabledReason}
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef?.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
@@ -1934,7 +1937,7 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
           <li>确定性规则先跑，命中结果标注为「规则」。</li>
           <li>{modelReady ? '模型再评审同一批 Diff，结果标注为「AI」。' : '配置模型后，AI 会评审同一批 Diff，结果标注为「AI」。'}</li>
           <li>两个来源命中同一处问题时自动合并，标注「规则 + AI」。</li>
-          <li>逐条定位、编辑或忽略，确认后再发布为 GitLab 行级评论。</li>
+          <li>逐条定位、编辑或忽略，确认后发布为 GitLab 行内评论；没有可用行号时降级为全文评论。</li>
         </ol>
       </div>
 

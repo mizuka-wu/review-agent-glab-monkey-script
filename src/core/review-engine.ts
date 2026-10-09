@@ -87,7 +87,7 @@ export class ReviewEngine {
     private readonly rulePacks: RulePack[] = [BUILT_IN_PACK],
   ) {}
 
-  /** 全文件扫描（对齐 ocr scan）：对无 diff 的文件跑确定性规则，结果不可发布为行级评论。 */
+  /** 全文件扫描（对齐 ocr scan）：对无 diff 的文件跑确定性规则，结果发布时降级为 MR 级全文评论。 */
   scan(files: FileDiff[]): Finding[] {
     return runRulePackReview(files, this.rulePacks)
       .map((finding) => ({ ...finding, anchor: { source: 'full-file' as const, publishable: false } }));
@@ -241,7 +241,7 @@ export class ReviewEngine {
     const relocated = findings.filter((finding) => finding.anchor?.relocatedFromPath).length;
     const fullFileAnchored = findings.filter((finding) => finding.anchor?.source === 'full-file').length;
     if (relocated > 0) warnings.push(`${relocated} 个 Finding 已按 existingCode 跨文件重定位。`);
-    if (fullFileAnchored > 0) warnings.push(`${fullFileAnchored} 个 Finding 仅锚定到完整文件，不能发布为行级 Discussion。`);
+    if (fullFileAnchored > 0) warnings.push(`${fullFileAnchored} 个 Finding 仅锚定到完整文件，将发布为 MR 级全文评论。`);
     if (omittedFullFiles.length > 0) warnings.push(`完整文件读取省略 ${omittedFullFiles.length} 个文件。`);
 
     const finalFindings = dedupe(findings).sort(compareFindings);

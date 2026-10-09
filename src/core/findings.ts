@@ -228,6 +228,35 @@ export function extractPartialFindings(content: string): string[] {
 
 const summarySeverityLabel = { critical: '严重', high: '高', medium: '中', low: '低' } as const;
 
+export function findingLocation(finding: Finding): string {
+  const lines = finding.endLine > finding.line ? `${finding.line}-${finding.endLine}` : `${finding.line}`;
+  return `${finding.path}:${lines}`;
+}
+
+/** 发布入口文案：整批都是行内 → 「行内评论」，都是全文 → 「全文评论」，混合 → 「发布」。 */
+export function publishModeLabel(action: string, inline: number, full: number): string {
+  if (inline > 0 && full === 0) return `${action}行内评论`;
+  if (full > 0 && inline === 0) return `${action}全文评论`;
+  return `${action}发布`;
+}
+
+/** 「行内 2 · 全文 1」形态明细，用在控制条上说明这批会发出什么。 */
+export function publishModeSummary(inline: number, full: number): string {
+  return [inline > 0 ? `行内 ${inline}` : '', full > 0 ? `全文 ${full}` : ''].filter(Boolean).join(' · ');
+}
+
+/** 发布结果文案：整批同一形态就直说，混合时给出行内/全文明细。 */
+export function publishedCountLabel(count: number, inline: number, full: number): string {
+  if (full === 0) return `${count} 条行内评论`;
+  if (inline === 0) return `${count} 条全文评论`;
+  return `${count} 条评论（${publishModeSummary(inline, full)}）`;
+}
+
+/** 全文评论不带 position，正文开头补上 path:line，读者才知道说的是哪一处。 */
+export function buildFullTextComment(finding: Finding, body: string): string {
+  return `> \`${findingLocation(finding)}\` · 全文评论（无可用行内位置）\n\n${body}`;
+}
+
 /** 生成 MR 级总评论正文：计数概览 + 逐条清单（最多 20 条）。 */
 export function buildSummaryComment(findings: Finding[]): string {
   const count = (severity: Finding['severity']) => findings.filter((f) => f.severity === severity).length;

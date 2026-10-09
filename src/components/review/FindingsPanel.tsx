@@ -7,8 +7,9 @@ import {
   Banner, Btn, ConfirmButton, EmptyState, IconButton, Pill, Segmented, sourceTone, tokens as C,
 } from '../ui/modern';
 import { FindingCard } from './FindingCard';
+import { publishModeLabel, publishModeSummary } from '../../core/findings';
 import type { FindingEdit } from '../../core/finding-edit';
-import type { Finding, ReviewStageReport } from '../../core/types';
+import type { Finding, PublishMode, ReviewStageReport } from '../../core/types';
 
 export type SourceFilter = 'all' | 'rule' | 'model';
 export type SortKey = 'severity' | 'path' | 'source';
@@ -40,14 +41,16 @@ export interface FindingsPanelProps {
   enabledRuleCount: number;
   canPublish: boolean;
   publishDisabledReason?: string;
-  /** 单条 Finding 自身的发布阻断原因（行号无法在 Diff 中定位等）。 */
-  publishBlockReason: (finding: Finding) => string | undefined;
-  /** 能否参与「一键行内评论 / 批量发布」：位置可定位且评论内容非空。 */
-  inlinePublishable: (finding: Finding) => boolean;
+  /** 行号无法落到当前 Diff 的原因；此时该条降级为全文评论，不阻断发布。 */
+  publishPositionIssue: (finding: Finding) => string | undefined;
+  /** 这条会发成行内评论（带 position）还是 MR 级全文评论。 */
+  publishMode: (finding: Finding) => PublishMode;
+  /** 能否参与「一键发布 / 批量发布」：待处理草稿且评论内容非空。 */
+  publishable: (finding: Finding) => boolean;
   canApprove: boolean;
   quickBusy: boolean;
   onApprove: () => void;
-  onPublishAllInline: () => void;
+  onPublishAll: () => void;
   onSummaryComment: () => void;
   onExportFindings: () => void;
   onExportDelegation: () => void;
@@ -72,7 +75,7 @@ export interface FindingsPanelProps {
 export function FindingsPanel(props: FindingsPanelProps) {
   const {
     findings, running, stages, warnings, error, modelReady, rulesOnlyMode, enabledRuleCount,
-    canPublish, publishDisabledReason, publishBlockReason, inlinePublishable,
+    canPublish, publishDisabledReason, publishPositionIssue, publishMode, publishable,
     canApprove, quickBusy, expandedId, selectedIds,
   } = props;
 
@@ -119,9 +122,18 @@ export function FindingsPanel(props: FindingsPanelProps) {
   }, [source, visible]);
 
   const filterActive = source !== 'all' || severity !== 'all' || category !== 'all' || status !== 'all';
-  const publishableCount = findings.filter(inlinePublishable).length;
-  const selectedPublishable = findings.filter((f) => selectedIds.has(f.id) && inlinePublishable(f)).length;
-  const inlineBlockHint = '没有可发布为行级评论的 Finding：行号无法在 Diff 中定位，或评论内容为空';
+  const publishableFindings = findings.filter(publishable);
+  const publishableSelected = publishableFindings.filter((f) => selectedIds.has(f.id));
+  const publishableCount = publishableFindings.length;
+  const selectedPublishable = publishableSelected.length;
+  const modes = (items: Finding[]) => ({
+    inline: items.filter((finding) => publishMode(finding) === 'inline').length,
+    full: items.filter((finding) => publishMode(finding) === 'full').length,
+  });
+  const allModes = modes(publishableFindings);
+  const selectedModes = modes(publishableSelected);
+  const publishBlockHint = '没有可发布的 Finding：评论内容为空';
+  const modeHint = '行内评论挂在具体 diff 行上，全文评论发布到 MR 评论区（不带行位置）';
 
   if (error && findings.length === 0) {
     return (
@@ -253,29 +265,26 @@ export function FindingsPanel(props: FindingsPanelProps) {
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {group.items.slice(0, limit).map((finding) => {
-                  const issue = publishBlockReason(finding);
-                  const reason = canPublish ? issue : publishDisabledReason;
-                  return (
-                    <FindingCard
-                      key={finding.id}
-                      finding={finding}
-                      expanded={expandedId === finding.id}
-                      selected={selectedIds.has(finding.id)}
-                      publishDisabled={Boolean(reason)}
-                      publishDisabledReason={reason}
-                      publishIssue={issue}
-                      onToggle={() => props.onToggleExpand(finding.id)}
-                      onSelect={() => props.onToggleSelect(finding.id)}
-                      onLocate={() => props.onLocate(finding)}
-                      onCopy={() => props.onCopy(finding)}
-                      onPublish={() => props.onPublish(finding)}
-                      onIgnore={() => props.onIgnore(finding)}
-                      onMarkFixed={() => props.onMarkFixed(finding)}
-                      onEdit={(edit) => props.onEdit(finding.id, edit)}
-                    />
-                  );
-                })}
+                {group.items.slice(0, limit).map((finding) => (
+                  <FindingCard
+                    key={finding.id}
+                    finding={finding}
+                    expanded={expandedId === finding.id}
+                    selected={selectedIds.has(finding.id)}
+                    publishDisabled={!canPublish}
+                    publishDisabledReason={publishDisabledReason}
+                    publishMode={publishMode(finding)}
+                    publishIssue={publishPositionIssue(finding)}
+                    onToggle={() => props.onToggleExpand(finding.id)}
+                    onSelect={() => props.onToggleSelect(finding.id)}
+                    onLocate={() => props.onLocate(finding)}
+                    onCopy={() => props.onCopy(finding)}
+                    onPublish={() => props.onPublish(finding)}
+                    onIgnore={() => props.onIgnore(finding)}
+                    onMarkFixed={() => props.onMarkFixed(finding)}
+                    onEdit={(edit) => props.onEdit(finding.id, edit)}
+                  />
+                ))}
               </div>
             </section>
           );
@@ -298,12 +307,19 @@ export function FindingsPanel(props: FindingsPanelProps) {
             disabled={!canApprove || quickBusy} onConfirm={props.onApprove}
           />
           <ConfirmButton
-            label={publishableCount > 0 ? `一键行内评论 (${publishableCount})` : '一键行内评论'}
+            label={`${publishModeLabel('一键', allModes.inline, allModes.full)}${publishableCount > 0 ? ` (${publishableCount})` : ''}`}
             confirmLabel="确认发布？" icon={<MessageSquarePlus size={13} />}
             disabled={publishableCount === 0 || !canPublish || quickBusy}
-            title={!canPublish ? publishDisabledReason : publishableCount === 0 ? inlineBlockHint : undefined}
-            onConfirm={props.onPublishAllInline}
+            title={!canPublish ? publishDisabledReason
+              : publishableCount === 0 ? publishBlockHint
+                : `${modeHint}：${publishModeSummary(allModes.inline, allModes.full)}`}
+            onConfirm={props.onPublishAll}
           />
+          {allModes.inline > 0 && allModes.full > 0 && (
+            <span title={modeHint} style={{ fontSize: 10, color: C.textMuted, whiteSpace: 'nowrap' }}>
+              {publishModeSummary(allModes.inline, allModes.full)}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           <ConfirmButton
             label="总评论" confirmLabel="确认发布？" icon={<FileText size={13} />}
@@ -323,15 +339,20 @@ export function FindingsPanel(props: FindingsPanelProps) {
       {/* Batch bar */}
       {counts.draft > 0 && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
+          display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '7px 10px',
           borderTop: `1px solid ${C.border}`, background: C.bgSubtle, flexShrink: 0,
         }}>
           {selectedIds.size > 0 ? (
             <>
               <span style={{ fontSize: 11, fontWeight: 700, color: C.primary }}>已选 {selectedIds.size}</span>
               {selectedPublishable < selectedIds.size && (
-                <span title={inlineBlockHint} style={{ fontSize: 11, color: C.warning }}>
+                <span title={publishBlockHint} style={{ fontSize: 11, color: C.warning }}>
                   可发布 {selectedPublishable}
+                </span>
+              )}
+              {selectedPublishable > 0 && (
+                <span title={modeHint} style={{ fontSize: 11, color: C.textMuted, whiteSpace: 'nowrap' }}>
+                  {publishModeSummary(selectedModes.inline, selectedModes.full)}
                 </span>
               )}
               <Btn size="sm" variant="ghost" onClick={props.onClearSelection}>取消选择</Btn>
@@ -339,10 +360,12 @@ export function FindingsPanel(props: FindingsPanelProps) {
               <Btn
                 size="sm" variant="primary" icon={<CheckCheck size={13} />}
                 disabled={!canPublish || selectedPublishable === 0}
-                title={!canPublish ? publishDisabledReason : selectedPublishable === 0 ? inlineBlockHint : undefined}
+                title={!canPublish ? publishDisabledReason
+                  : selectedPublishable === 0 ? publishBlockHint
+                    : `${modeHint}：${publishModeSummary(selectedModes.inline, selectedModes.full)}`}
                 onClick={props.onBatchPublish}
               >
-                批量发布{selectedPublishable > 0 ? ` (${selectedPublishable})` : ''}
+                {publishModeLabel('批量', selectedModes.inline, selectedModes.full)}{selectedPublishable > 0 ? ` (${selectedPublishable})` : ''}
               </Btn>
             </>
           ) : (
@@ -350,7 +373,7 @@ export function FindingsPanel(props: FindingsPanelProps) {
               <Btn
                 size="sm" variant="ghost" icon={<SquareCheckBig size={13} />}
                 disabled={!canPublish || publishableCount === 0}
-                title={!canPublish ? publishDisabledReason : publishableCount === 0 ? inlineBlockHint : undefined}
+                title={!canPublish ? publishDisabledReason : publishableCount === 0 ? publishBlockHint : undefined}
                 onClick={props.onSelectPublishable}
               >
                 选择全部可发布

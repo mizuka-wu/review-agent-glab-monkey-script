@@ -1,4 +1,5 @@
 import { normalizeFileDiff } from './diff';
+import { buildFullTextComment } from './findings';
 import { projectApiIdentifier } from './gitlab-url';
 import { debugBus } from './debug-bus';
 import { httpRequest } from './http';
@@ -6,10 +7,13 @@ import type {
   AdapterCapabilities,
   DiffRefs,
   DiscussionDraft,
+  DiscussionPosition,
   FileDiff,
+  Finding,
   MergeRequestContext,
   MergeRequestRef,
   PageContext,
+  PublishedComment,
   PublishedDiscussion,
 } from './types';
 
@@ -66,33 +70,44 @@ function errorCode(status: number) {
 
 type RawDiff = Parameters<typeof normalizeFileDiff>[0];
 
+/** 无 position 时只带 body，GitLab 会创建 MR 级全文评论。 */
 export function buildDiscussionPayload(input: DiscussionDraft) {
   const payload = new URLSearchParams();
   payload.set('body', input.body);
-  payload.set('position[position_type]', 'text');
-  payload.set('position[base_sha]', input.diffRefs.baseSha);
-  payload.set('position[head_sha]', input.diffRefs.headSha);
-  payload.set('position[start_sha]', input.diffRefs.startSha);
-  const oldPath = input.oldPath ?? input.path;
-  const newPath = input.newPath ?? input.path;
-  payload.set('position[new_path]', input.deletedFile ? '/dev/null' : newPath);
-  payload.set('position[old_path]', input.newFile ? '/dev/null' : oldPath);
+  const position = input.position;
+  if (!position) return payload;
 
-  if (input.side === 'new') {
-    payload.set('position[new_line]', String(input.endLine));
-    if (input.startLine !== input.endLine) {
-      payload.set('position[line_range][start][new_line]', String(input.startLine));
-      payload.set('position[line_range][end][new_line]', String(input.endLine));
+  payload.set('position[position_type]', 'text');
+  payload.set('position[base_sha]', position.diffRefs.baseSha);
+  payload.set('position[head_sha]', position.diffRefs.headSha);
+  payload.set('position[start_sha]', position.diffRefs.startSha);
+  const oldPath = position.oldPath ?? position.path;
+  const newPath = position.newPath ?? position.path;
+  payload.set('position[new_path]', position.deletedFile ? '/dev/null' : newPath);
+  payload.set('position[old_path]', position.newFile ? '/dev/null' : oldPath);
+
+  if (position.side === 'new') {
+    payload.set('position[new_line]', String(position.endLine));
+    if (position.startLine !== position.endLine) {
+      payload.set('position[line_range][start][new_line]', String(position.startLine));
+      payload.set('position[line_range][end][new_line]', String(position.endLine));
     }
   } else {
-    payload.set('position[old_line]', String(input.endLine));
-    if (input.startLine !== input.endLine) {
-      payload.set('position[line_range][start][old_line]', String(input.startLine));
-      payload.set('position[line_range][end][old_line]', String(input.endLine));
+    payload.set('position[old_line]', String(position.endLine));
+    if (position.startLine !== position.endLine) {
+      payload.set('position[line_range][start][old_line]', String(position.startLine));
+      payload.set('position[line_range][end][old_line]', String(position.endLine));
     }
   }
 
   return payload;
+}
+
+/** GitLab 判 position 非法的状态码：行号不在 diff 内、路径不在 MR 里、diff_refs 过期。 */
+const POSITION_REJECTED = new Set([400, 409, 422]);
+
+function isPositionRejection(error: unknown): error is GitLabApiError {
+  return error instanceof GitLabApiError && POSITION_REJECTED.has(error.status);
 }
 
 export class GitLabAdapter {
@@ -288,9 +303,11 @@ export class GitLabAdapter {
     ref: MergeRequestRef,
     draft: DiscussionDraft,
   ): Promise<PublishedDiscussion> {
-    const current = await this.getMergeRequest(ref);
-    if (current.diffRefs.headSha !== draft.diffRefs.headSha) {
-      throw new GitLabApiError(409, 'MR 已更新，当前 Finding 的 diff_refs 已过期', 'stale_diff_refs');
+    if (draft.position) {
+      const current = await this.getMergeRequest(ref);
+      if (current.diffRefs.headSha !== draft.position.diffRefs.headSha) {
+        throw new GitLabApiError(409, 'MR 已更新，当前 Finding 的 diff_refs 已过期', 'stale_diff_refs');
+      }
     }
 
     const discussions = await this.listDiscussions(ref);
@@ -316,6 +333,28 @@ export class GitLabAdapter {
       id: response.id,
       noteId: String(response.notes?.[0]?.id ?? ''),
     };
+  }
+
+  /**
+   * 发布一条评论：有 diff 行号就创建行内 Discussion；没有行号、或行内被 GitLab 拒
+   * （400/409/422 等 position 错误）就降级为 MR 级全文评论重发一次，发布不会因为行号失败。
+   */
+  async publishComment(
+    ref: MergeRequestRef,
+    finding: Finding,
+    body: string,
+    position?: DiscussionPosition,
+  ): Promise<PublishedComment> {
+    if (position) {
+      try {
+        return { ...(await this.createDiscussion(ref, { body, position })), mode: 'inline' };
+      } catch (error) {
+        if (!isPositionRejection(error)) throw error;
+        debugBus.log('warn', 'publish', `行内位置被 GitLab 拒绝（HTTP ${error.status}），改为全文评论 ${finding.path}:${finding.line}`, error.message);
+      }
+    }
+    const discussion = await this.createDiscussion(ref, { body: buildFullTextComment(finding, body) });
+    return { ...discussion, mode: 'full' };
   }
 
   /** 一键 Approve 当前 MR。 */
