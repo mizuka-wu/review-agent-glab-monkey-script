@@ -1,3 +1,5 @@
+import { debugBus } from './debug-bus';
+import { repoPathCandidates, repoPathEquals } from './diff';
 import type {
   DiffLine,
   FileDiff,
@@ -20,8 +22,54 @@ function normalizeCode(value: string) {
     .map((line) => line.trim());
 }
 
+/** 代码行比对忽略缩进和内部多余空白：模型抄片段时常把 tab 换成空格、对齐补空格。 */
+function loose(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+/** 完整文件上下文渲染成「42: code」，模型经常把行号一起抄进 existingCode。 */
+const LINE_NUMBER_PREFIX = /^\d{1,6}\s*[:|\u2502>]\s*/;
+/** 模型直接复制 diff 文本时会带上 +/- 前缀；--- +++ 文件头不算。 */
+const DIFF_MARKER_PREFIX = /^(?![-+]{3})[-+]\s?/;
+
+function stripPrefix(lines: string[], pattern: RegExp) {
+  return lines.map((line) => line.replace(pattern, ''));
+}
+
+function trimEdges(lines: string[]) {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && lines[start].length === 0) start += 1;
+  while (end > start && lines[end - 1].length === 0) end -= 1;
+  return lines.slice(start, end);
+}
+
+/**
+ * 一个代码片段的全部可搜索写法，按可信度排序：原文 → 去行号 → 去 diff 前缀 → 去掉空行。
+ * 首尾空行是模型多带的换行，直接剪掉；中间空行是「行号连续」的依据，只能作为最后一种兜底写法整体去掉。
+ */
+function snippetVariants(value: string): string[][] {
+  const base = trimEdges(normalizeCode(value));
+  if (base.length === 0) return [];
+  const variants = [base];
+  const denumbered = stripPrefix(base, LINE_NUMBER_PREFIX);
+  if (denumbered.some((line, index) => line !== base[index])) variants.push(denumbered);
+  const unmarked = stripPrefix(denumbered, DIFF_MARKER_PREFIX);
+  if (unmarked.some((line, index) => line !== denumbered[index])) variants.push(unmarked);
+  const dense = unmarked.filter((line) => line.length > 0);
+  if (dense.length > 0 && dense.length !== unmarked.length) variants.push(dense);
+  return variants;
+}
+
+/** Finding 自带的可搜索代码片段（含写法变体）；suggestionCode 是「应改成什么」，不参与匹配。 */
+function searchSnippets(finding: Finding) {
+  return [finding.existingCode, ...finding.evidence.map((evidence) => evidence.quote)]
+    .flatMap(snippetVariants);
+}
+
 function diffMatches(file: FileDiff, target: string[], side: 'old' | 'new'): AnchorMatch[] {
   const candidates = file.lines.filter((line) => side === 'new' ? line.newLine !== undefined : line.oldLine !== undefined);
+  const wanted = target.map(loose);
   const matches: AnchorMatch[] = [];
   for (let index = 0; index <= candidates.length - target.length; index += 1) {
     const slice = candidates.slice(index, index + target.length);
@@ -33,7 +81,7 @@ function diffMatches(file: FileDiff, target: string[], side: 'old' | 'new'): Anc
         ? line.newLine === previous.newLine! + 1
         : line.oldLine === previous.oldLine! + 1;
     });
-    if (!sameHunk || !consecutive || !slice.every((line, offset) => line.text.trim() === target[offset])) continue;
+    if (!sameHunk || !consecutive || !slice.every((line, offset) => loose(line.text) === wanted[offset])) continue;
     matches.push({
       path: file.newPath === '/dev/null' ? file.oldPath : file.newPath,
       start: side === 'new' ? slice[0].newLine! : slice[0].oldLine!,
@@ -49,7 +97,7 @@ function diffMatches(file: FileDiff, target: string[], side: 'old' | 'new'): Anc
 function fullFileMatches(snapshot: FullFileSnapshot, target: string[]): AnchorMatch[] {
   const matches: AnchorMatch[] = [];
   for (let index = 0; index <= snapshot.lines.length - target.length; index += 1) {
-    if (!target.every((line, offset) => snapshot.lines[index + offset].trim() === line)) continue;
+    if (!target.every((line, offset) => loose(snapshot.lines[index + offset]) === loose(line))) continue;
     matches.push({
       path: snapshot.path,
       start: index + 1,
@@ -61,14 +109,17 @@ function fullFileMatches(snapshot: FullFileSnapshot, target: string[]): AnchorMa
   return matches;
 }
 
+/** rename 后 Finding 可能只带 oldPath，匹配结果可能只带 newPath：两侧都要互查。 */
 function preferredMatches(finding: Finding, matches: AnchorMatch[]) {
-  const preferredPaths = new Set([
+  const wanted = [
     finding.path,
     finding.newPath,
     finding.oldPath,
     ...finding.evidence.map((evidence) => evidence.path),
-  ].filter((path): path is string => Boolean(path)));
-  const preferred = matches.filter((match) => preferredPaths.has(match.path));
+  ].filter((path): path is string => Boolean(path));
+  const preferred = matches.filter((match) => [match.path, match.file?.newPath, match.file?.oldPath]
+    .filter((path): path is string => Boolean(path))
+    .some((path) => wanted.some((want) => repoPathEquals(path, want))));
   return preferred.length > 0 ? preferred : matches;
 }
 
@@ -81,7 +132,7 @@ function chooseMatch(finding: Finding, input: AnchorMatch[]) {
 }
 
 function applyMatch(finding: Finding, match: AnchorMatch): Finding {
-  const relocatedFromPath = finding.path === match.path ? undefined : finding.path;
+  const relocatedFromPath = repoPathEquals(finding.path, match.path) ? undefined : finding.path;
   return {
     ...finding,
     path: match.path,
@@ -105,17 +156,21 @@ export function resolveFindingAnchor(
   files: FileDiff[],
   fullFiles: FullFileSnapshot[] = [],
 ): Finding | undefined {
-  const target = normalizeCode(finding.existingCode);
-  if (target.length > 0) {
-    const diff = files.flatMap((file) => [
-      ...diffMatches(file, target, finding.side),
-      ...diffMatches(file, target, finding.side === 'new' ? 'old' : 'new'),
-    ]);
-    const diffMatch = chooseMatch(finding, diff);
-    if (diffMatch) return applyMatch(finding, diffMatch);
-    if (diff.length > 0) return undefined;
+  const variants = snippetVariants(finding.existingCode);
+  if (variants.length > 0) {
+    for (const target of variants) {
+      const diff = files.flatMap((file) => [
+        ...diffMatches(file, target, finding.side),
+        ...diffMatches(file, target, finding.side === 'new' ? 'old' : 'new'),
+      ]);
+      const diffMatch = chooseMatch(finding, diff);
+      if (diffMatch) return applyMatch(finding, diffMatch);
+      if (diff.length > 0) return undefined;
+    }
 
-    const full = fullFiles.flatMap((snapshot) => fullFileMatches(snapshot, target));
+    const full = fullFiles.flatMap(
+      (snapshot) => variants.flatMap((target) => fullFileMatches(snapshot, target)),
+    );
     const fullMatch = chooseMatch(finding, full);
     return fullMatch ? applyMatch(finding, fullMatch) : undefined;
   }
@@ -161,10 +216,14 @@ const COMMON_IDENTIFIERS = new Set([
   'file', 'files', 'path', 'name', 'test', 'tests', 'should', 'when', 'then', 'expect', 'describe',
 ]);
 
+/** 行内位置降级为全文评论的机器可读原因，写进 debugBus 便于统计还剩哪些场景。 */
+export type PublishBlockCode = 'no-diff' | 'path-not-in-diff' | 'line-not-in-diff' | 'full-file-only';
+
 export interface PublishPosition {
   publishable: boolean;
   /** publishable 为 false 时的用户可见原因。 */
   reason?: string;
+  reasonCode?: PublishBlockCode;
   /** 位置由内容匹配重新定位得到，与 Finding 原行号不同。 */
   corrected?: boolean;
   finding: Finding;
@@ -204,11 +263,23 @@ function coversDiff(file: FileDiff, side: 'old' | 'new', start: number, end: num
   return to > from && contiguous(entries.slice(from, to + 1), side);
 }
 
-function lineMatch(file: FileDiff, side: 'old' | 'new', start: number, end: number): AnchorMatch {
+function sliceLines(file: FileDiff, side: 'old' | 'new', start: number, end: number) {
   const entries = sideEntries(file, side);
   const from = entries.findIndex((line) => sideValue(line, side) === start);
   const to = entries.findIndex((line) => sideValue(line, side) === end);
-  return toMatch(file, entries.slice(from, to >= from ? to + 1 : from + 1), side);
+  return entries.slice(from, to >= from ? to + 1 : from + 1);
+}
+
+function lineMatch(file: FileDiff, side: 'old' | 'new', start: number, end: number): AnchorMatch {
+  return toMatch(file, sliceLines(file, side, start, end), side);
+}
+
+function otherSide(side: 'old' | 'new'): 'old' | 'new' {
+  return side === 'new' ? 'old' : 'new';
+}
+
+function bothSides(side: 'old' | 'new'): ('old' | 'new')[] {
+  return [side, otherSide(side)];
 }
 
 function compact(value: string) {
@@ -240,19 +311,12 @@ function identifiers(text: string) {
   return tokens;
 }
 
-/** Finding 自带的可搜索代码片段，按可信度排序；suggestionCode 是「应改成什么」，不参与匹配。 */
-function searchSnippets(finding: Finding) {
-  return [finding.existingCode, ...finding.evidence.map((evidence) => evidence.quote)]
-    .map((value) => normalizeCode(value).filter((line) => line.length > 0))
-    .filter((lines) => lines.length > 0);
-}
-
 function nearestTo(matches: AnchorMatch[], hint: number) {
   return [...matches].sort((left, right) => Math.abs(left.start - hint) - Math.abs(right.start - hint))[0];
 }
 
 function snippetMatch(finding: Finding, file: FileDiff) {
-  const sides: ('old' | 'new')[] = [finding.side, finding.side === 'new' ? 'old' : 'new'];
+  const sides = bothSides(finding.side);
   for (const snippet of searchSnippets(finding)) {
     for (const side of sides) {
       const exact = diffMatches(file, snippet, side);
@@ -299,7 +363,7 @@ function nearestMatch(file: FileDiff, side: 'old' | 'new', hint: number) {
 
 /** 同一文件内按「代码片段精确 → 代码片段模糊 → 标识符 → 邻近上下文」逐级降级重定位。 */
 function relocate(finding: Finding, file: FileDiff) {
-  const sides: ('old' | 'new')[] = [finding.side, finding.side === 'new' ? 'old' : 'new'];
+  const sides = bothSides(finding.side);
   const snippets = searchSnippets(finding);
   const exact = snippetMatch(finding, file);
   if (exact) return exact;
@@ -329,13 +393,69 @@ function relocate(finding: Finding, file: FileDiff) {
   return undefined;
 }
 
-function matchFile(finding: Finding, files: FileDiff[]) {
-  const wanted = [finding.newPath, finding.path, finding.oldPath].filter((path): path is string => Boolean(path));
-  return files.find((file) => wanted.includes(file.newPath) || wanted.includes(file.oldPath));
+/** diff 文件的路径索引：newPath / oldPath 双向登记，精确 → 大小写不敏感 → 目录后缀逐级兜底。 */
+interface FileIndex {
+  byPath: Map<string, FileDiff>;
+  files: FileDiff[];
 }
 
-function blocked(finding: Finding, reason: string): PublishPosition {
-  return { publishable: false, reason, finding };
+function fileIndex(files: FileDiff[]): FileIndex {
+  const byPath = new Map<string, FileDiff>();
+  for (const file of files) {
+    for (const raw of [file.newPath, file.oldPath]) {
+      if (raw === '/dev/null') continue;
+      for (const key of repoPathCandidates(raw)) {
+        byPath.set(key, file);
+        byPath.set(key.toLowerCase(), file);
+      }
+    }
+  }
+  return { byPath, files };
+}
+
+function lookupPath(index: FileIndex, path: string | undefined): FileDiff | undefined {
+  if (!path) return undefined;
+  const candidates = repoPathCandidates(path);
+  for (const key of candidates) {
+    const hit = index.byPath.get(key) ?? index.byPath.get(key.toLowerCase());
+    if (hit) return hit;
+  }
+  // 模型有时给出相对子目录的路径，按目录后缀匹配（比整串相等宽松，但比 basename 唯一性可靠）
+  const suffixes = candidates.map((key) => `/${key.toLowerCase()}`);
+  return index.files.find((file) => [file.newPath, file.oldPath].some((raw) => {
+    const normalized = repoPathCandidates(raw)[0]?.toLowerCase();
+    return normalized !== undefined && suffixes.some((suffix) => normalized.endsWith(suffix));
+  }));
+}
+
+/** rename 场景 old↔new 都要查：Finding 可能只带旧路径，diff 文件可能只登记新路径。 */
+function matchFile(finding: Finding, index: FileIndex) {
+  for (const path of [finding.newPath, finding.path, finding.oldPath]) {
+    const file = lookupPath(index, path);
+    if (file) return file;
+  }
+  return undefined;
+}
+
+const reportedDowngrades = new Set<string>();
+const REPORTED_LIMIT = 400;
+
+/** 降级只在首次出现时记一条，评审流式更新会反复重算同一批 Finding，不能每次都刷日志。 */
+function blocked(finding: Finding, code: PublishBlockCode, reason: string): PublishPosition {
+  const key = `${finding.id}:${code}:${finding.line}`;
+  if (!reportedDowngrades.has(key)) {
+    if (reportedDowngrades.size >= REPORTED_LIMIT) reportedDowngrades.clear();
+    reportedDowngrades.add(key);
+    debugBus.log('warn', 'anchor', `行内评论降级为全文：${reason}`, [
+      `code=${code}`,
+      `path=${finding.path}`,
+      `line=${finding.line}${finding.endLine > finding.line ? `-${finding.endLine}` : ''}`,
+      `side=${finding.side}`,
+      `anchor=${finding.anchor?.source ?? 'diff'}`,
+      `snippet=${finding.existingCode ? 'yes' : 'no'}`,
+    ].join(' · '));
+  }
+  return { publishable: false, reason, reasonCode: code, finding };
 }
 
 function resolved(finding: Finding, match: AnchorMatch): PublishPosition {
@@ -346,37 +466,69 @@ function resolved(finding: Finding, match: AnchorMatch): PublishPosition {
   return { publishable: true, ...(changed ? { corrected: true } : {}), finding: { ...anchored, anchor } };
 }
 
+/** 行号直接命中 diff：整段落得到最好，endLine 越界就收敛成单行。 */
+function directLineMatch(finding: Finding, file: FileDiff): AnchorMatch | undefined {
+  const end = finding.endLine > finding.line ? finding.endLine : finding.line;
+  if (coversDiff(file, finding.side, finding.line, end)) {
+    return lineMatch(file, finding.side, finding.line, end);
+  }
+  if (end > finding.line && coversDiff(file, finding.side, finding.line, finding.line)) {
+    return lineMatch(file, finding.side, finding.line, finding.line);
+  }
+  return undefined;
+}
+
+/**
+ * 侧别不可信时的行号采信条件：full-file 锚的行号是 head 版本绝对行号（语义上等于 diff 的 new 侧），
+ * normalizeFindings 在行号落不到 diff 时也会随手把 side 填成 'old'。
+ * 这两种情况光行号相同不足以证明是同一处，必须那一行的内容也对得上，否则宁可降级也不发错行。
+ */
+function verifiedLineMatch(
+  finding: Finding,
+  file: FileDiff,
+  sides: ('old' | 'new')[],
+): AnchorMatch | undefined {
+  const snippet = searchSnippets(finding)[0];
+  if (!snippet) return undefined;
+  const end = finding.endLine > finding.line ? finding.endLine : finding.line;
+  for (const side of sides) {
+    if (!coversDiff(file, side, finding.line, end)) continue;
+    const rows = sliceLines(file, side, finding.line, end);
+    if (rows.length === 0 || rows.length > snippet.length) continue;
+    if (rows.every((row, offset) => loose(row.text) === loose(snippet[offset]))) {
+      return toMatch(file, rows, side);
+    }
+  }
+  return undefined;
+}
+
 /**
  * 发布前把 Finding 的行号对到该文件真实的 diff 行号集合上：命中就直接发布；
- * 对不上（diff 折叠、上下文偏移、renamed path）就按 Finding 自身内容重新定位；
+ * 对不上（diff 折叠、上下文偏移、renamed path、侧别填错）就按 Finding 自身内容重新定位；
  * 内容也匹配不上才判为不可发布，避免把 422 留给 GitLab。
  */
 export function resolvePublishPosition(finding: Finding, files: FileDiff[]): PublishPosition {
-  if (files.length === 0) return blocked(finding, '当前 Diff 尚未加载，无法校验评论位置');
+  if (files.length === 0) return blocked(finding, 'no-diff', '当前 Diff 尚未加载，无法校验评论位置');
 
-  const file = matchFile(finding, files);
+  const index = fileIndex(files);
+  const file = matchFile(finding, index);
   if (!file) {
     const relocated = files.map((candidate) => snippetMatch(finding, candidate)).find((match) => match !== undefined);
     return relocated
       ? resolved(finding, relocated)
-      : blocked(finding, `${finding.path} 不在当前 Diff 中，无法定位行内评论`);
+      : blocked(finding, 'path-not-in-diff', `${finding.path} 不在当前 Diff 中，无法定位行内评论`);
   }
 
   const fullFileOnly = finding.anchor?.source === 'full-file';
-  if (!fullFileOnly) {
-    const end = finding.endLine > finding.line ? finding.endLine : finding.line;
-    if (coversDiff(file, finding.side, finding.line, end)) {
-      return resolved(finding, lineMatch(file, finding.side, finding.line, end));
-    }
-    if (end > finding.line && coversDiff(file, finding.side, finding.line, finding.line)) {
-      return resolved(finding, lineMatch(file, finding.side, finding.line, finding.line));
-    }
-  }
+  const lineHit = fullFileOnly
+    ? verifiedLineMatch(finding, file, bothSides('new'))
+    : directLineMatch(finding, file) ?? verifiedLineMatch(finding, file, [otherSide(finding.side)]);
+  if (lineHit) return resolved(finding, lineHit);
 
   const match = relocate(finding, file);
   if (match) return resolved(finding, match);
 
-  return blocked(finding, fullFileOnly
+  return blocked(finding, fullFileOnly ? 'full-file-only' : 'line-not-in-diff', fullFileOnly
     ? '该 Finding 只锚定到完整文件，当前 Diff 里没有可对应的行'
     : `Diff 中找不到第 ${finding.line} 行，且无法按 Finding 内容自动修正位置`);
 }

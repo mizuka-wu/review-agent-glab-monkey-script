@@ -21,7 +21,9 @@ import { resolvePublishPosition, type PublishPosition } from './core/anchor';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
 import { CompositeToolExecutor, GitLabToolExecutor, RepoIndexToolExecutor } from './core/agent-tools';
 import { debugBus } from './core/debug-bus';
-import { clearHighlights, highlightFindingOnPage, injectHighlightStyles } from './core/finding-highlight';
+import {
+  clearHighlights, highlightFindingOnPage, injectHighlightStyles, takePendingLocate, type LocateOutcome,
+} from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
@@ -52,6 +54,19 @@ import type {
   ChatMessage, CodeSelection, DiscussionPosition, FileDiff, Finding, MergeRequestContext,
   MergeRequestRef, PageContext, PublishMode, ReviewStageReport, RuntimeSettings,
 } from './core/types';
+
+function locateLabel(path: string, line: number) {
+  return `${path.replace(/^.*\//, '')}:${line}`;
+}
+
+/** 定位结果如实播报：找不到文件就说找不到，只在折叠区展开失败时说明降级到了文件级。 */
+function locateMessage(label: string, outcome: LocateOutcome) {
+  if (outcome.highlighted.length > 0) return `已高亮 ${label}（${outcome.highlighted.length} 行）`;
+  if (outcome.failure === 'navigated') return '正在跳转到 Changes 视图，随后继续定位…';
+  if (outcome.fileLevel) return `已滚动到 ${label} 所在文件，Diff 里找不到该行（可能仍在未展开的折叠区）`;
+  if (outcome.failure === 'no-diff-tab') return '当前页面没有 Changes 视图，无法定位';
+  return `未在页面找到该文件的 diff（${label}）`;
+}
 
 type Tab = 'review' | 'chat' | 'repo' | 'settings' | 'debug';
 type ReviewStatus = 'idle' | 'preparing' | 'running' | 'completed' | 'cancelled' | 'failed';
@@ -948,12 +963,30 @@ export default function App({ page }: AppProps) {
 
   const locateFinding = (finding: Finding) => {
     injectHighlightStyles();
-    const highlighted = highlightFindingOnPage(finding);
-    setToast(highlighted.length > 0
-      ? `已高亮 ${finding.path.replace(/^.*\//, '')}:${finding.line}（${highlighted.length} 行）`
-      : '当前页面找不到对应 Diff 行，请切换到 Changes 视图');
-    addLog('debug', 'finding', `定位 ${finding.path}:${finding.line} → ${highlighted.length} 行`);
+    const label = locateLabel(finding.path, finding.line);
+    void highlightFindingOnPage(finding).then((outcome) => {
+      setToast(locateMessage(label, outcome));
+      addLog(outcome.highlighted.length > 0 ? 'debug' : 'warn', 'finding',
+        `定位 ${label} → ${outcome.highlighted.length} 行`,
+        outcome.failure ?? (outcome.fileLevel ? 'file-level' : undefined));
+    });
   };
+
+  /** 切 Changes tab 触发整页跳转时，定位意图存在 sessionStorage 里，新页面加载完接着走完。 */
+  useEffect(() => {
+    const pending = takePendingLocate();
+    if (!pending) return;
+    const label = locateLabel(pending.path, pending.line);
+    const timer = window.setTimeout(() => {
+      injectHighlightStyles();
+      void highlightFindingOnPage(pending).then((outcome) => {
+        setToast(locateMessage(label, outcome));
+        addLog(outcome.highlighted.length > 0 ? 'debug' : 'warn', 'finding',
+          `跳转后续定位 ${label} → ${outcome.highlighted.length} 行`, outcome.failure);
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [addLog]);
 
   const copyFinding = (finding: Finding) => {
     void navigator.clipboard?.writeText(finding.comment);

@@ -1,4 +1,4 @@
-import { findDiffLine } from './diff';
+import { findDiffLine, repoPathEquals } from './diff';
 import type {
   Finding,
   FindingCategory,
@@ -101,7 +101,8 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
     const title = normalizeText(item.title);
     const content = normalizeMultiline(item.content ?? item.description);
     const existingCode = typeof item.existingCode === 'string' ? item.existingCode : '';
-    const file = files.find((candidate) => candidate.newPath === path || candidate.oldPath === path);
+    const file = files.find((candidate) => repoPathEquals(candidate.newPath, path)
+      || repoPathEquals(candidate.oldPath, path));
 
     if (!path || (!line && !existingCode) || !title || !content) continue;
 

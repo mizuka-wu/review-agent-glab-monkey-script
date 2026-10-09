@@ -56,6 +56,40 @@ export function normalizeFileDiff(input: {
   };
 }
 
+function decodeSegment(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * 仓库根相对路径的候选写法：解码 %2F 之外的转义、去掉 ./ 与重复斜杠，
+ * 再补一个剥掉 diff 前缀 a/ b/ 的版本。剥前缀只对「真的存在同名文件」有意义，
+ * 所以两种写法都返回，由调用方拿去和 diff 文件表比对。
+ */
+export function repoPathCandidates(value: string): string[] {
+  const base = value.trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.')
+    .map(decodeSegment)
+    .join('/');
+  if (!base) return [];
+  const unprefixed = base.replace(/^([ab])\//, '');
+  return unprefixed === base ? [base] : [base, unprefixed];
+}
+
+/** 路径是否指同一个文件：候选写法任一相同即算，最后再按大小写不敏感兜底（Windows / macOS 仓库）。 */
+export function repoPathEquals(left: string, right: string) {
+  const rights = repoPathCandidates(right);
+  const lowered = rights.map((item) => item.toLowerCase());
+  return repoPathCandidates(left).some(
+    (item) => rights.includes(item) || lowered.includes(item.toLowerCase()),
+  );
+}
+
 export function findDiffLine(
   files: FileDiff[],
   path: string,
@@ -63,7 +97,7 @@ export function findDiffLine(
   line: number,
 ) {
   const file = files.find(
-    (candidate) => candidate.newPath === path || candidate.oldPath === path,
+    (candidate) => repoPathEquals(candidate.newPath, path) || repoPathEquals(candidate.oldPath, path),
   );
   return file?.lines.find((candidate) =>
     side === 'new' ? candidate.newLine === line : candidate.oldLine === line,
