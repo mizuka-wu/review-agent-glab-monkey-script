@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildDiscussionPayload, GitLabAdapter, GitLabApiError } from '../../src/core/gitlab-adapter';
+import { buildCommitPayload, buildDiscussionPayload, GitLabAdapter, GitLabApiError } from '../../src/core/gitlab-adapter';
 import type { DiscussionPosition, Finding, MergeRequestRef, PageContext } from '../../src/core/types';
 
 describe('GitLab discussion payload', () => {
@@ -261,5 +261,82 @@ describe('publishComment inline → full-text fallback', () => {
     const { adapter, posts } = publisher([403]);
     await expect(adapter.publishComment(ref, finding, 'Comment', position)).rejects.toMatchObject({ status: 403 });
     expect(posts).toHaveLength(1);
+  });
+});
+
+describe('createCommit', () => {
+  const page: PageContext = { origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 };
+
+  it('maps files onto GitLab commit actions and keeps the finding text as the message', () => {
+    const payload = JSON.parse(buildCommitPayload({
+      branch: 'feature/payment',
+      message: '硬编码 API Key 应移至安全配置',
+      description: '证据：src/payment.ts L2',
+      files: [
+        { path: 'src/payment.ts', content: 'const a = readSecret();\n', action: 'update' },
+        { path: 'src/secret.ts', content: 'export const key = "";\n', action: 'create' },
+      ],
+    })) as Record<string, unknown>;
+
+    expect(payload).toMatchObject({ branch: 'feature/payment' });
+    // 标题就是 Finding 标题，正文接在空行后面（GitLab 会忽略 commit_description）
+    expect(payload.commit_message).toBe('硬编码 API Key 应移至安全配置\n\n证据：src/payment.ts L2');
+    expect('commit_description' in payload).toBe(false);
+    expect(payload.actions).toEqual([
+      { action: 'update', file_path: 'src/payment.ts', content: 'const a = readSecret();\n' },
+      { action: 'create', file_path: 'src/secret.ts', content: 'export const key = "";\n' },
+    ]);
+  });
+
+  it('leaves out an empty commit description', () => {
+    const payload = JSON.parse(buildCommitPayload({
+      branch: 'main', message: 'title', description: '  ', files: [{ path: 'a.ts', content: 'a', action: 'update' }],
+    })) as Record<string, unknown>;
+    expect(payload.commit_message).toBe('title');
+    expect('commit_description' in payload).toBe(false);
+  });
+
+  it('posts JSON to the repository commits endpoint of the source branch', async () => {
+    const seen: { url: string; method: string; contentType: string; token: string; body: string }[] = [];
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      seen.push({
+        url: input, method: init?.method ?? 'GET', body: String(init?.body ?? ''),
+        contentType: headers['Content-Type'] ?? '', token: headers['PRIVATE-TOKEN'] ?? '',
+      });
+      return new Response(
+        JSON.stringify({ id: 'c0ffee1234567890', short_id: 'c0ffee12', title: '修复标题', web_url: 'https://gitlab.test/commit/c0ffee12' }),
+        { status: 201 },
+      );
+    });
+    const adapter = new GitLabAdapter(page, 'glpat-test', fetcher);
+
+    const commit = await adapter.createCommit({
+      branch: 'feature/payment', message: '修复标题', description: '正文',
+      files: [{ path: 'src/payment.ts', content: 'fixed\n', action: 'update' }],
+    });
+
+    expect(commit).toEqual({
+      id: 'c0ffee1234567890', shortId: 'c0ffee12', title: '修复标题',
+      webUrl: 'https://gitlab.test/commit/c0ffee12',
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe('https://gitlab.test/api/v4/projects/group%2Fproject/repository/commits');
+    expect(seen[0].method).toBe('POST');
+    expect(seen[0].contentType).toBe('application/json');
+    expect(seen[0].token).toBe('glpat-test');
+    expect(JSON.parse(seen[0].body)).toMatchObject({
+      branch: 'feature/payment',
+      commit_message: '修复标题\n\n正文',
+      actions: [{ action: 'update', file_path: 'src/payment.ts', content: 'fixed\n' }],
+    });
+  });
+
+  it('surfaces a protected-branch rejection as a GitLabApiError', async () => {
+    const fetcher = vi.fn(async () => new Response('{"message":"403 Forbidden"}', { status: 403 }));
+    const adapter = new GitLabAdapter(page, 'glpat-test', fetcher);
+    await expect(adapter.createCommit({
+      branch: 'main', message: 'm', files: [{ path: 'a.ts', content: 'a', action: 'update' }],
+    })).rejects.toMatchObject({ status: 403, code: 'forbidden' });
   });
 });

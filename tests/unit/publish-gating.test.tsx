@@ -28,6 +28,8 @@ function panelProps(overrides: Partial<FindingsPanelProps> = {}): FindingsPanelP
     publishPositionIssue: () => undefined,
     publishMode: () => 'inline',
     publishable: (finding) => finding.status === 'draft' && Boolean(finding.comment.trim()),
+    fixable: () => false,
+    onApplyFix: noop,
     canApprove: true,
     quickBusy: false,
     onApprove: noop,
