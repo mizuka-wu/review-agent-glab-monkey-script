@@ -1,6 +1,6 @@
 import type { CodeSelection } from './types';
 
-type Side = CodeSelection['side'];
+type Side = NonNullable<CodeSelection['side']>;
 
 interface LineAnchor {
   side: Side;
@@ -8,7 +8,7 @@ interface LineAnchor {
 }
 
 /** GitLab 各版本的 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 tr[data-line]、blob 视图的 tr#LC10。 */
-const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-line-number], [data-line], [id^="LC"]';
+const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line], [id^="LC"]';
 /** 选区可能落在代码格里，也可能落在行号格里。 */
 const CELL_SELECTOR = '.line_content, .diff-line-numbers, .line_numbers, .old_line, .new_line, .blob-code, td';
 /** 行号格：格内文本就是行号本身，可以安全解析（代码格不行）。 */
@@ -17,6 +17,9 @@ const BLOB_SELECTOR = '.blob-viewer, .blob-content, table.text-file';
 const FILE_SELECTOR = '.diff-file, .file-holder, .blob-viewer';
 /** 代码格：格内文本是代码，任何情况下都不能拿来当行号。 */
 const CODE_SELECTOR = '.line_content, .blob-code';
+/** 只有落在 diff / blob 代码区里的选区才有位置语义；讨论区、MR 描述、页面文案一律只带原文。 */
+const CODE_AREA_SELECTOR = '.diff-file, .file-holder, .diff-content, .diff-table, .line_holder, .diff-line, '
+  + '.blob-viewer, .blob-content, .file-content, .text-file, [data-testid="diff-file"], [data-testid="diff-content"], [data-file-path]';
 
 function trimmed(value: string | null | undefined): string | undefined {
   const text = value?.trim();
@@ -60,11 +63,12 @@ function guttersOf(row: HTMLElement | null): { old?: HTMLElement; new?: HTMLElem
   return gutters;
 }
 
-/** 属性 / id 读行号：不解析文本，代码内容里的数字不是行号。 */
+/** 属性 / id 读行号：新旧版本的 data-linenumber / data-line-number 都要认，代码内容里的数字不是行号。 */
 function attrLineNumber(node: Element | null | undefined, side: Side): number | undefined {
   const data = node instanceof HTMLElement ? node.dataset : undefined;
   const sources = [
     side === 'old' ? data?.oldLineNumber : data?.newLineNumber,
+    data?.linenumber,
     data?.lineNumber,
     data?.line,
   ];
@@ -77,7 +81,7 @@ function attrLineNumber(node: Element | null | undefined, side: Side): number | 
 
 function gutterLineNumber(node: HTMLElement | undefined, side: Side): number | undefined {
   if (!node) return undefined;
-  const anchor = node.querySelector<HTMLElement>('[data-line-number], [data-line], [id^="L"]');
+  const anchor = node.querySelector<HTMLElement>('[data-linenumber], [data-line-number], [data-line], [id^="L"]');
   return attrLineNumber(node, side) ?? attrLineNumber(anchor, side) ?? lineNumber(node.textContent);
 }
 
@@ -145,6 +149,11 @@ function endLineOf(range: Range, start: LineAnchor, end: LineAnchor): number | u
   return start.line + spannedRows(range) - 1;
 }
 
+/** 是否带代码位置语义：非 diff / blob 区域的选区只有原文，不能按行引用，也不能当 Review 范围。 */
+export function isCodeSelection(selection: CodeSelection): selection is CodeSelection & { filePath: string } {
+  return selection.filePath !== undefined;
+}
+
 /** 选区行号文本："10-14" / "10"；页面 DOM 取不到行号时返回 undefined。 */
 export function selectionLines(selection: CodeSelection): string | undefined {
   if (selection.startLine === undefined) return undefined;
@@ -153,18 +162,46 @@ export function selectionLines(selection: CodeSelection): string | undefined {
     : `${selection.startLine}`;
 }
 
-/** 工具栏 / 会话里的短标签：行号未知就直说，不编造 :1。 */
+/** 工具栏 / 会话里的短标签：非代码区直说是页面文本，行号未知就说未知，都不编造。 */
 export function selectionLabel(selection: CodeSelection): string {
+  if (!isCodeSelection(selection)) return '页面文本选区';
   const name = selection.filePath.replace(/^.*\//, '');
   return `${name}:${selectionLines(selection) ?? '行号未知'}${selection.side === 'old' ? '（旧侧）' : ''}`;
 }
 
 /** 拼进提问消息的引用：行号未知时降级为无行号引用。 */
 export function selectionRef(selection: CodeSelection): string {
+  if (!isCodeSelection(selection)) return '页面选区';
   const lines = selectionLines(selection);
   if (!lines) return `${selection.filePath}（行号未知）`;
   const side = selection.side === 'old' ? '删除侧 ' : selection.side === 'new' ? '新增侧 ' : '';
   return `${selection.filePath}（${side}L${lines}）`;
+}
+
+/** 提问消息里的引用行：非代码选区不带 path:line 与新旧侧。 */
+export function selectionQuote(selection: CodeSelection): string {
+  return isCodeSelection(selection) ? `[代码选区: ${selectionRef(selection)}]` : '[选中内容]';
+}
+
+/** 选区所在 DOM 是否还在：切 tab / SPA 路由会整块移除 diff 行，工具条必须跟着消失。 */
+export function selectionAlive(node: Node | null | undefined, doc: Document): boolean {
+  if (!node?.isConnected) return false;
+  const current = doc.getSelection();
+  return Boolean(current && current.rangeCount > 0 && !current.isCollapsed);
+}
+
+/** 只在工具条打开期间订阅：选区节点被移除或选区被清空就回调，返回退订函数。 */
+export function watchSelection(node: Node | null, doc: Document, onGone: () => void): () => void {
+  const check = () => {
+    if (!selectionAlive(node, doc)) onGone();
+  };
+  const observer = new MutationObserver(check);
+  observer.observe(doc.body, { childList: true, subtree: true });
+  doc.addEventListener('selectionchange', check);
+  return () => {
+    observer.disconnect();
+    doc.removeEventListener('selectionchange', check);
+  };
 }
 
 export function captureCodeSelection(
@@ -177,10 +214,16 @@ export function captureCodeSelection(
   const text = range.toString().trim();
   if (!text) return null;
 
+  const rect = range.getBoundingClientRect();
+  const position = {
+    top: rect.top > 90 ? rect.top - 52 : rect.bottom + 10,
+    left: Math.min(Math.max(rect.left + rect.width / 2, 190), window.innerWidth - 190),
+  };
   const startElement = elementOf(range.startContainer);
+  if (!startElement?.closest(CODE_AREA_SELECTOR)) return { text: text.slice(0, 3000), ...position };
+
   const startAnchor = anchorOf(startElement);
   const endAnchor = anchorOf(elementOf(range.endContainer));
-  const rect = range.getBoundingClientRect();
 
   return {
     filePath: pathFrom(startElement, defaultPath),
@@ -188,7 +231,6 @@ export function captureCodeSelection(
     startLine: startAnchor.line,
     endLine: endLineOf(range, startAnchor, endAnchor),
     text: text.slice(0, 3000),
-    top: rect.top > 90 ? rect.top - 52 : rect.bottom + 10,
-    left: Math.min(Math.max(rect.left + rect.width / 2, 190), window.innerWidth - 190),
+    ...position,
   };
 }

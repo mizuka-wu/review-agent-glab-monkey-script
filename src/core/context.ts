@@ -23,8 +23,8 @@ export function selectionFile(selection: CodeSelection): FileDiff {
   const removed = selection.side === 'old';
   const lines = selection.text.split('\n');
   return {
-    oldPath: selection.filePath,
-    newPath: selection.filePath,
+    oldPath: selection.filePath ?? '',
+    newPath: selection.filePath ?? '',
     diff: lines.map((line) => `${removed ? '-' : '+'}${line}`).join('\n'),
     newFile: false,
     deletedFile: false,

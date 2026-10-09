@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Copy, MessageSquare, Sparkles, X } from 'lucide-react';
 import { tokens as C } from '../ui/modern';
-import { selectionLabel } from '../../core/selection';
+import { isCodeSelection, selectionLabel } from '../../core/selection';
 import type { CodeSelection } from '../../core/types';
 
 interface Props {
@@ -12,13 +12,13 @@ interface Props {
   onClose: () => void;
 }
 
-function ToolButton({ icon, label, onClick, primary }: {
-  icon: React.ReactNode; label: string; onClick: () => void; primary?: boolean;
+function ToolButton({ icon, label, title, onClick, primary }: {
+  icon: React.ReactNode; label: string; title: string; onClick: () => void; primary?: boolean;
 }) {
   const [hover, setHover] = useState(false);
   return (
     <button
-      type="button" onClick={onClick} title={label}
+      type="button" onClick={onClick} title={title}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: primary ? '0 9px' : '0 7px',
@@ -33,6 +33,8 @@ function ToolButton({ icon, label, onClick, primary }: {
 }
 
 export function SelectionToolbar({ state, onAsk, onReview, onCopy, onClose }: Props) {
+  // 非 diff 区域的选区只有原文：没有代码位置语义，Review 这段直接不给。
+  const code = isCodeSelection(state);
   return (
     <div
       role="toolbar" aria-label="代码选区操作"
@@ -48,10 +50,21 @@ export function SelectionToolbar({ state, onAsk, onReview, onCopy, onClose }: Pr
       <span style={{ fontSize: 10, color: C.headerMuted, padding: '0 6px 0 4px', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
         {selectionLabel(state)}
       </span>
-      <ToolButton primary icon={<MessageSquare size={13} />} label="问一下" onClick={onAsk} />
-      <ToolButton icon={<Sparkles size={13} />} label="Review 这段" onClick={onReview} />
-      <ToolButton icon={<Copy size={13} />} label="复制选中代码" onClick={onCopy} />
-      <ToolButton icon={<X size={13} />} label="关闭工具栏" onClick={onClose} />
+      <ToolButton
+        primary icon={<MessageSquare size={13} />} label="问一下" onClick={onAsk}
+        title={code ? '向 AI 提问选中内容（附带文件与行号）' : '向 AI 提问选中内容（页面文本，不附带文件与行号）'}
+      />
+      {code && (
+        <ToolButton
+          icon={<Sparkles size={13} />} label="Review 这段" onClick={onReview}
+          title="只针对这段选区执行 Review（附带文件与行号）"
+        />
+      )}
+      <ToolButton
+        icon={<Copy size={13} />} label={code ? '复制选中代码' : '复制选中内容'} onClick={onCopy}
+        title="复制选中的原文到剪贴板"
+      />
+      <ToolButton icon={<X size={13} />} label="关闭工具栏" onClick={onClose} title="关闭工具栏（Esc），不影响页面选区" />
     </div>
   );
 }

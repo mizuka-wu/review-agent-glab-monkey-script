@@ -1,10 +1,14 @@
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { selectionFile } from '../../src/core/context';
 import {
   captureCodeSelection,
+  isCodeSelection,
+  selectionAlive,
   selectionLabel,
   selectionLines,
+  selectionQuote,
   selectionRef,
+  watchSelection,
 } from '../../src/core/selection';
 import type { CodeSelection } from '../../src/core/types';
 
@@ -114,6 +118,86 @@ const blobView = `
       </tr>
     </tbody></table>
   </div></div>
+</div>`;
+
+/**
+ * 新版 GitLab（实测 DOM）：行号属性写作 data-linenumber，整页没有 data-line-number；
+ * 行号格里还挂着「+」评论按钮，格内文本不是纯数字，文本兜底读不出来，只能靠属性。
+ */
+const linenumberInline = `
+<div class="diff-file file-holder" data-file-path="src/payment.ts">
+  <div class="file-header-content"><span class="file-title-name">src/payment.ts</span></div>
+  <div class="diff-content table-holder">
+    <table class="diff-table inline"><tbody>
+      <tr class="line_holder diff-line" id="sha_9_9">
+        <td class="diff-td old_line diff-line-numbers" data-side="old"><a class="diff-line-num" data-linenumber="9" href="#sha_9_9">9</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="diff-td new_line diff-line-numbers" data-side="new"><a class="diff-line-num" data-linenumber="9" href="#sha_9_9">9</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="line_content match">  const total = 1;</td>
+      </tr>
+      <tr class="line_holder diff-line old" id="sha_10_">
+        <td class="diff-td old_line diff-line-numbers" data-side="old"><a class="diff-line-num" data-linenumber="10" href="#sha_10_">10</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="diff-td new_line diff-line-numbers" data-side="new"></td>
+        <td class="line_content old">-  const fee = 0.1;</td>
+      </tr>
+      <tr class="line_holder diff-line new" id="sha__11">
+        <td class="diff-td old_line diff-line-numbers" data-side="old"></td>
+        <td class="diff-td new_line diff-line-numbers" data-side="new"><a class="diff-line-num" data-linenumber="11" href="#sha__11">11</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="line_content new">+  const fee = 0.2;</td>
+      </tr>
+      <tr class="line_holder diff-line new" id="sha__12">
+        <td class="diff-td old_line diff-line-numbers" data-side="old"></td>
+        <td class="diff-td new_line diff-line-numbers" data-side="new"><a class="diff-line-num" data-linenumber="12" href="#sha__12">12</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="line_content new">+  return total + fee;</td>
+      </tr>
+    </tbody></table>
+  </div>
+</div>`;
+
+/** 新旧属性名混排：old 侧写 data-linenumber、new 侧写 data-line-number，两种都要读到。 */
+const mixedLineNumberAttrs = `
+<div class="diff-file file-holder" data-file-path="src/checkout.ts">
+  <div class="file-header-content"><span class="file-title-name">src/checkout.ts</span></div>
+  <div class="diff-content">
+    <table class="diff-table"><tbody>
+      <tr class="line_holder diff-line" data-linenumber="21">
+        <td class="diff-td old_line"><a class="diff-line-num" data-linenumber="20">20</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="line_content old">-  const fee = 0.1;</td>
+        <td class="diff-td new_line"><a class="diff-line-num" data-line-number="21">21</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="line_content new">+  const fee = 0.2;</td>
+      </tr>
+    </tbody></table>
+  </div>
+</div>`;
+
+/** 行号只写在行容器的 data-linenumber 上：既不是 tr 也没有 .line_holder。 */
+const linenumberRowOnly = `
+<div class="diff-file" data-file-path="src/rowonly.ts">
+  <div class="diff-content">
+    <div data-linenumber="8"><code>const a = 1;</code></div>
+    <div data-linenumber="9"><code>const b = 2;</code></div>
+  </div>
+</div>`;
+
+/** blob 文件视图（新版）：行号格里只有 data-linenumber，没有 id 也没有 data-line-number。 */
+const blobViewLinenumber = `
+<div class="file-holder blob-viewer" data-path="src/blob.ts">
+  <div class="blob-content-holder"><div class="blob-content">
+    <table class="text-file"><tbody>
+      <tr class="line_holder">
+        <td class="line_numbers"><a class="diff-line-num" data-linenumber="7" href="#L7">7</a><button class="diff-comment-avatar" type="button">+</button></td>
+        <td class="line_content">export const total = 42;</td>
+      </tr>
+    </tbody></table>
+  </div></div>
+</div>`;
+
+/** MR 讨论区 / 描述：普通文本 + markdown 表格，没有任何代码位置语义。 */
+const discussionNote = `
+<div class="discussion-notes">
+  <div class="note-text md">
+    <p>这里的 <code>apiKey</code> 看起来是硬编码的，需要确认。</p>
+    <table><tbody><tr><td>列 A</td><td>列 B</td></tr></tbody></table>
+  </div>
 </div>`;
 
 // jsdom 不实现 Range.getBoundingClientRect，工具条定位只需要一个矩形占位。
@@ -324,13 +408,13 @@ describe('captureCodeSelection · 行号缺失与降级', () => {
     expect(captureCodeSelection(document)).toMatchObject({ filePath: 'src/blob.ts', side: 'unified', startLine: 7, endLine: 7 });
   });
 
-  it('没有文件容器时回落到默认路径', () => {
+  it('讨论区文本不再回落到默认路径', () => {
     mount('<div class="note-text"><p>讨论区里的普通文本</p></div>');
     selectContents('p');
 
     const captured = captureCodeSelection(document, 'src/fallback.ts')!;
-    expect(captured.filePath).toBe('src/fallback.ts');
-    expect(captured.startLine).toBeUndefined();
+    expect(captured.filePath).toBeUndefined();
+    expect(captured.text).toBe('讨论区里的普通文本');
   });
 
   it('空选区返回 null', () => {
@@ -394,5 +478,221 @@ describe('selectionFile', () => {
       { hunkId: 'selection', kind: 'added', text: 'a' },
       { hunkId: 'selection', kind: 'added', text: 'b' },
     ]);
+  });
+});
+
+describe('captureCodeSelection · data-linenumber（新版属性名）', () => {
+  it('inline diff 的行号格只有 data-linenumber 时按 new 侧读到', () => {
+    mount(linenumberInline);
+    selectContents('tr:nth-child(3) > .line_content');
+
+    expect(captureCodeSelection(document)).toMatchObject({
+      filePath: 'src/payment.ts', side: 'new', startLine: 11, endLine: 11,
+    });
+  });
+
+  it('删除行按 old 侧读 data-linenumber，不套用 new 侧行号', () => {
+    mount(linenumberInline);
+    selectContents('tr:nth-child(2) > .line_content');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.side).toBe('old');
+    expect(captured.startLine).toBe(10);
+    expect(captured.endLine).toBe(10);
+  });
+
+  it('上下文行取新侧的 data-linenumber', () => {
+    mount(linenumberInline);
+    selectContents('tr:nth-child(1) > .line_content');
+
+    expect(captureCodeSelection(document)).toMatchObject({ side: 'new', startLine: 9, endLine: 9 });
+  });
+
+  it('跨行选择读到 data-linenumber 的起止行', () => {
+    mount(linenumberInline);
+    selectBetween(codeAt('.line_content', 2), codeAt('.line_content', 3));
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.startLine).toBe(11);
+    expect(captured.endLine).toBe(12);
+    expect(captured.text).toContain('return total + fee');
+  });
+
+  it('data-linenumber 与 data-line-number 混排时两侧各读各的（取并集）', () => {
+    mount(mixedLineNumberAttrs);
+
+    selectContents('.line_content.old');
+    expect(captureCodeSelection(document)).toMatchObject({ filePath: 'src/checkout.ts', side: 'old', startLine: 20 });
+
+    selectContents('.line_content.new');
+    expect(captureCodeSelection(document)).toMatchObject({ filePath: 'src/checkout.ts', side: 'new', startLine: 21 });
+  });
+
+  it('行号只写在行容器 data-linenumber 上时按行容器读', () => {
+    mount(linenumberRowOnly);
+
+    selectContents('.diff-content > div:first-child code');
+    expect(captureCodeSelection(document)).toMatchObject({
+      filePath: 'src/rowonly.ts', side: 'new', startLine: 8, endLine: 8,
+    });
+
+    selectBetween(codeAt('code', 0), codeAt('code', 1));
+    expect(captureCodeSelection(document)).toMatchObject({ startLine: 8, endLine: 9 });
+  });
+
+  it('blob 视图的 data-linenumber 行号格标记为 unified', () => {
+    mount(blobViewLinenumber);
+    selectContents('.line_content');
+
+    expect(captureCodeSelection(document)).toMatchObject({
+      filePath: 'src/blob.ts', side: 'unified', startLine: 7, endLine: 7,
+    });
+  });
+});
+
+describe('captureCodeSelection · 非 diff 区域降级', () => {
+  it('讨论区选区只带原文，不编造路径 / 侧别 / 行号', () => {
+    mount(discussionNote);
+    selectContents('p');
+
+    const captured = captureCodeSelection(document, 'src/fallback.ts')!;
+    expect(captured.text).toContain('硬编码');
+    expect(captured.filePath).toBeUndefined();
+    expect(captured.side).toBeUndefined();
+    expect(captured.startLine).toBeUndefined();
+    expect(captured.endLine).toBeUndefined();
+    expect(isCodeSelection(captured)).toBe(false);
+    expect(Object.keys(captured).sort()).toEqual(['left', 'text', 'top']);
+  });
+
+  it('评论里的 markdown 表格不会被当成 diff 行', () => {
+    mount(discussionNote);
+    selectContents('td');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.text).toBe('列 A');
+    expect(isCodeSelection(captured)).toBe(false);
+    expect(captured.side).toBeUndefined();
+  });
+
+  it('页面标题等普通文本同样降级', () => {
+    mount('<h1 class="title">Harden checkout payment error handling</h1>');
+    selectContents('h1');
+
+    expect(isCodeSelection(captureCodeSelection(document)!)).toBe(false);
+  });
+
+  it('diff 内选区仍然带完整元数据与三个动作语义', () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+
+    const captured = captureCodeSelection(document)!;
+    expect(isCodeSelection(captured)).toBe(true);
+    expect(captured).toMatchObject({ filePath: 'src/payment.ts', side: 'new', startLine: 11, endLine: 11 });
+  });
+});
+
+describe('selectionAlive · 选区 DOM 消失后关闭工具条', () => {
+  it('选区节点还在页面上且未折叠时判活', () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+
+    expect(selectionAlive(document.getSelection()!.anchorNode, document)).toBe(true);
+  });
+
+  it('选区所在节点被移除（切 tab / SPA 路由）后判死', () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+    const node = document.getSelection()!.anchorNode;
+
+    document.body.innerHTML = '<div class="diff-file" data-file-path="src/other.ts">切走后的新内容</div>';
+
+    expect(node!.isConnected).toBe(false);
+    expect(selectionAlive(node, document)).toBe(false);
+  });
+
+  it('选区被清空后判死', () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+    const node = document.getSelection()!.anchorNode;
+
+    document.getSelection()!.removeAllRanges();
+
+    expect(selectionAlive(node, document)).toBe(false);
+  });
+
+  it('没有锚点节点时判死', () => {
+    mount(classicInline);
+
+    expect(selectionAlive(null, document)).toBe(false);
+    expect(selectionAlive(undefined, document)).toBe(false);
+  });
+});
+
+describe('非代码选区的标签与引用', () => {
+  const plain = selectionOf({
+    filePath: undefined, side: undefined, startLine: undefined, endLine: undefined, text: '页面文本',
+  });
+
+  it('标签与引用都不带 path:line 与新旧侧', () => {
+    expect(isCodeSelection(plain)).toBe(false);
+    expect(selectionLabel(plain)).toBe('页面文本选区');
+    expect(selectionRef(plain)).toBe('页面选区');
+    expect(selectionQuote(plain)).toBe('[选中内容]');
+    expect(selectionLabel(plain)).not.toContain('payment.ts');
+    expect(selectionQuote(plain)).not.toMatch(/L\d|新增侧|删除侧/);
+  });
+
+  it('代码选区的引用行保留 path 与行号', () => {
+    expect(isCodeSelection(selectionOf({ startLine: 10, endLine: 12 }))).toBe(true);
+    expect(selectionQuote(selectionOf({ startLine: 10, endLine: 12 })))
+      .toBe('[代码选区: src/payment.ts（新增侧 L10-12）]');
+  });
+});
+
+describe('watchSelection · 工具条随选区消失而关闭', () => {
+  it('选区节点被移除（切 tab / SPA 路由）时回调', async () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+    const node = document.getSelection()!.anchorNode;
+    const onGone = vi.fn();
+    const unwatch = watchSelection(node, document, onGone);
+
+    document.body.innerHTML = '<div class="diff-file" data-file-path="src/other.ts">切走后的新内容</div>';
+    await vi.waitFor(() => expect(onGone).toHaveBeenCalled());
+
+    unwatch();
+    onGone.mockClear();
+    document.body.innerHTML = '';
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onGone).not.toHaveBeenCalled();
+  });
+
+  it('选区被清空时经 selectionchange 回调', () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+    const node = document.getSelection()!.anchorNode;
+    const onGone = vi.fn();
+    const unwatch = watchSelection(node, document, onGone);
+
+    document.getSelection()!.removeAllRanges();
+    document.dispatchEvent(new Event('selectionchange'));
+
+    expect(onGone).toHaveBeenCalled();
+    unwatch();
+  });
+
+  it('选区仍然有效时不误关（无关 DOM 变更与 selectionchange 都不触发）', async () => {
+    mount(classicInline);
+    selectContents('tr:nth-child(3) > .line_content');
+    const onGone = vi.fn();
+    const unwatch = watchSelection(document.getSelection()!.anchorNode, document, onGone);
+
+    document.body.insertAdjacentHTML('beforeend', '<div class="diff-file" data-file-path="src/next.ts">别的文件</div>');
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onGone).not.toHaveBeenCalled();
+    unwatch();
   });
 });

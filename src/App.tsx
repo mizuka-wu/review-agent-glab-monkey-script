@@ -35,7 +35,7 @@ import {
   PUBLIC_RULE_PACK_SCOPE, removeScopedRulePack, saveScopedRulePacks,
   type RuleDef, type RulePack, type RulePackScope,
 } from './core/rule-packs';
-import { captureCodeSelection, selectionLabel, selectionRef } from './core/selection';
+import { captureCodeSelection, isCodeSelection, selectionLabel, selectionQuote, watchSelection } from './core/selection';
 import {
   createReviewSession, fromSessionFinding, loadLatestReviewSession, resumeReviewSession, reviewSessionKey, updateSessionFindingStatus,
   saveReviewSession, summarizeReviewContext, toSessionFinding, updateReviewSession,
@@ -135,6 +135,8 @@ export default function App({ page }: AppProps) {
   const [draft, setDraft] = useState('');
   const [attachment, setAttachment] = useState<CodeSelection | undefined>(undefined);
   const [selection, setSelection] = useState<CodeSelection | null>(null);
+  /** 工具条锚定的 DOM 节点：不放进 CodeSelection（要序列化进会话），单独留着判活。 */
+  const selectionNodeRef = useRef<Node | null>(null);
   const [responding, setResponding] = useState(false);
   const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
 
@@ -394,12 +396,21 @@ export default function App({ page }: AppProps) {
           setSelection(null);
           return;
         }
-        if (selected) setSelection(selected);
+        if (selected) {
+          selectionNodeRef.current = anchor;
+          setSelection(selected);
+        }
       }, 0);
     };
     document.addEventListener('mouseup', handleMouseUp);
     return () => document.removeEventListener('mouseup', handleMouseUp);
   }, [page.filePath]);
+
+  // 切 tab / SPA 路由会把选区所在的 diff 行整块移除，工具条不能悬在空处。
+  useEffect(() => {
+    if (!selection) return;
+    return watchSelection(selectionNodeRef.current, document, () => setSelection(null));
+  }, [selection]);
 
   useEffect(() => {
     if (!showThinking) return;
@@ -587,7 +598,7 @@ export default function App({ page }: AppProps) {
           .map((message) => ({
             role: message.role as 'user' | 'assistant',
             content: message.attachment
-              ? `${message.content}\n\n[代码选区: ${selectionRef(message.attachment)}]\n\`\`\`\n${message.attachment.text}\n\`\`\``
+              ? `${message.content}\n\n${selectionQuote(message.attachment)}\n\`\`\`\n${message.attachment.text}\n\`\`\``
               : message.content,
           }));
         const result = await runAgentLoop(runtime, executor, agentMessages, {
@@ -664,8 +675,12 @@ export default function App({ page }: AppProps) {
 
   // --- Review ---
 
+  // 页面文本选区没有文件与行号，不能当 Review 范围，只能拿去提问。
+  const codeAttachment = attachment && isCodeSelection(attachment) ? attachment : undefined;
+  const reviewTarget = codeAttachment ?? (selection && isCodeSelection(selection) ? selection : undefined);
+
   const startReview = async (scope: 'all' | 'selection') => {
-    const selected = scope === 'selection' ? (attachment ?? selection ?? undefined) : attachment;
+    const selected = scope === 'selection' ? reviewTarget : codeAttachment;
     const scopedFiles = scope === 'selection' && selected
       ? files.filter((file) => file.newPath === selected.filePath || file.oldPath === selected.filePath)
       : files;
@@ -1239,7 +1254,7 @@ export default function App({ page }: AppProps) {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
-        if (reviewStatus !== 'running' && reviewStatus !== 'preparing') void startReview(attachment ? 'selection' : 'all');
+        if (reviewStatus !== 'running' && reviewStatus !== 'preparing') void startReview(codeAttachment ? 'selection' : 'all');
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -1359,11 +1374,11 @@ export default function App({ page }: AppProps) {
           <Btn
             variant="primary" size="sm"
             icon={running ? <Loader2 size={13} className="ra-spin" /> : <Play size={13} />}
-            disabled={running || (files.length === 0 && !attachment && !selection)}
-            onClick={() => void startReview(attachment || selection ? 'selection' : 'all')}
-            title={attachment || selection ? 'Review 当前选区（Ctrl/⌘ + Enter）' : 'Review 整个 MR（Ctrl/⌘ + Enter）'}
+            disabled={running || (files.length === 0 && !reviewTarget)}
+            onClick={() => void startReview(reviewTarget ? 'selection' : 'all')}
+            title={reviewTarget ? 'Review 当前选区（Ctrl/⌘ + Enter）' : 'Review 整个 MR（Ctrl/⌘ + Enter）'}
           >
-            {running ? 'Review 中' : attachment || selection ? 'Review 选区' : '开始 Review'}
+            {running ? 'Review 中' : reviewTarget ? 'Review 选区' : '开始 Review'}
           </Btn>
           {running ? (
             <Btn variant="outline" size="sm" icon={<Square size={12} />} onClick={cancelReview}
@@ -1372,8 +1387,8 @@ export default function App({ page }: AppProps) {
             </Btn>
           ) : (
             <span style={{ fontSize: 11, color: C.headerMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {attachment || selection
-                ? selectionLabel((attachment ?? selection)!)
+              {reviewTarget
+                ? selectionLabel(reviewTarget)
                 : loading ? '读取中…' : `${files.length} 个变更文件 · ${enabledRuleCount} 条规则`}
             </span>
           )}
@@ -1433,7 +1448,7 @@ export default function App({ page }: AppProps) {
                     action={
                       <div style={{ display: 'flex', gap: 6 }}>
                         <Btn size="sm" variant="primary" icon={<SettingsIcon size={12} />} onClick={() => setTab('settings')}>去配置</Btn>
-                        <Btn size="sm" variant="outline" icon={<Play size={12} />} onClick={() => void startReview(attachment || selection ? 'selection' : 'all')}>
+                        <Btn size="sm" variant="outline" icon={<Play size={12} />} onClick={() => void startReview(reviewTarget ? 'selection' : 'all')}>
                           先跑规则检查
                         </Btn>
                       </div>
@@ -1615,7 +1630,7 @@ export default function App({ page }: AppProps) {
                       setToast('已载入历史会话结果');
                     }}
                     onResume={() => void resumeSession()}
-                    onStart={() => void startReview(attachment || selection ? 'selection' : 'all')}
+                    onStart={() => void startReview(reviewTarget ? 'selection' : 'all')}
                     onOpenSettings={() => setTab('settings')}
                   />
                 </div>

@@ -121,8 +121,9 @@ export interface PageContext {
 }
 
 export interface CodeSelection {
-  filePath: string;
-  side: 'old' | 'new' | 'unified';
+  /** 只有落在 diff / blob 代码区的选区才有位置语义；页面其它文本只带 text，四项位置信息全部缺省。 */
+  filePath?: string;
+  side?: 'old' | 'new' | 'unified';
   /** 页面 DOM 读不到行号时为 undefined：引用降级为无行号，不编造行号。 */
   startLine?: number;
   endLine?: number;

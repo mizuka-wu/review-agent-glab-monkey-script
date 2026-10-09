@@ -1,5 +1,5 @@
 import { diffContext } from './diff';
-import { selectionLines } from './selection';
+import { isCodeSelection, selectionLines } from './selection';
 import { isModelConfigured } from './settings';
 import { httpRequest, httpTransport, type HttpResponse } from './http';
 import { debugBus, type DebugExchangeInput } from './debug-bus';
@@ -153,13 +153,13 @@ function wait(milliseconds: number, signal?: AbortSignal) {
 function selectionContext(selection?: CodeSelection) {
   if (!selection) return '';
   const lines = selectionLines(selection);
-  return [
-    `Selected file: ${selection.filePath}`,
-    `Location: ${lines ? `${selection.side}:${lines}` : 'unknown (the page exposed no line number; do not invent one)'}`,
-    '```text',
-    selection.text,
-    '```',
-  ].join('\n');
+  const position = isCodeSelection(selection)
+    ? [
+      `Selected file: ${selection.filePath}`,
+      `Location: ${lines ? `${selection.side}:${lines}` : 'unknown (the page exposed no line number; do not invent one)'}`,
+    ]
+    : ['Location: unknown (plain page text, outside the diff; do not invent a file or line)'];
+  return [...position, '```text', selection.text, '```'].join('\n');
 }
 
 function chatSystemPrompt(language: 'zh-CN' | 'en-US') {
