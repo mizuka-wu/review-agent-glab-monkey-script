@@ -26,6 +26,85 @@ const isRealGitlab = Boolean(realGitlabUrl && realMrUrl);
 const realMrRef = /^(?:https?:\/\/[^/]+)?\/(?<project>.+)\/-\/merge_requests\/(?<iid>\d+)/.exec(realMrUrl)?.groups;
 const realMrApi = `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(realMrRef?.project ?? '')}/merge_requests/${realMrRef?.iid ?? ''}`;
 
+// --- 真实模式的配套 MR 沙箱 ---
+
+/**
+ * 参考上下文需要「另一个 MR」才能测：test/test 是个空的沙箱项目，按需在里面建一个
+ * 分支 + MR 当配套改动。已经建过就直接复用，跑完不删——反复跑也不会堆垃圾。
+ */
+const companionProjectPath = process.env.GITLAB_COMPANION_PROJECT || 'test/test';
+const companionBranch = 'ra-e2e-companion';
+const companionSource = 'export const COMPANION_TOKEN = "tk_e2e_companion";\n\nexport function companionPing(): string {\n  return "pong";\n}\n';
+
+interface CompanionMr { url: string; label: string; projectPath: string }
+
+async function gitlabApi(path: string, init?: { method?: string; body?: unknown }) {
+  const response = await fetch(`${realGitlabUrl}/api/v4${path}`, {
+    method: init?.method ?? 'GET',
+    headers: {
+      'PRIVATE-TOKEN': gitlabPat,
+      ...(init?.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+  const text = await response.text();
+  try {
+    return { status: response.status, data: JSON.parse(text) as unknown };
+  } catch {
+    return { status: response.status, data: text };
+  }
+}
+
+let companionPromise: Promise<CompanionMr | undefined> | undefined;
+
+function ensureCompanionMr(): Promise<CompanionMr | undefined> {
+  companionPromise ??= (async () => {
+    if (!gitlabPat) return undefined;
+    const project = encodeURIComponent(companionProjectPath);
+    const asCompanion = (mr: { web_url: string; iid: number }): CompanionMr =>
+      ({ url: mr.web_url, label: `${companionProjectPath}!${mr.iid}`, projectPath: companionProjectPath });
+
+    const opened = await gitlabApi(`/projects/${project}/merge_requests?state=opened&source_branch=${companionBranch}`);
+    const existing = Array.isArray(opened.data) ? opened.data as { web_url: string; iid: number }[] : [];
+    if (existing.length > 0) return asCompanion(existing[0]);
+
+    const branches = await gitlabApi(`/projects/${project}/repository/branches?per_page=20`);
+    if (!Array.isArray(branches.data)) return undefined;
+    if (!(branches.data as { name: string }[]).some((branch) => branch.name === 'main')) {
+      await gitlabApi(`/projects/${project}/repository/commits`, {
+        method: 'POST',
+        body: {
+          branch: 'main', commit_message: 'chore: seed review-agent e2e sandbox',
+          actions: [{ action: 'create', file_path: 'README.md', content: '# review-agent e2e sandbox\n' }],
+        },
+      });
+    }
+    await gitlabApi(`/projects/${project}/repository/branches?branch=${companionBranch}&ref=main`, { method: 'POST' });
+    await gitlabApi(`/projects/${project}/repository/commits`, {
+      method: 'POST',
+      body: {
+        branch: companionBranch, commit_message: 'feat: companion token endpoint',
+        actions: [{ action: 'create', file_path: 'src/companion.ts', content: companionSource }],
+      },
+    });
+    const created = await gitlabApi(`/projects/${project}/merge_requests`, {
+      method: 'POST',
+      body: { source_branch: companionBranch, target_branch: 'main', title: 'test: review-agent e2e companion MR' },
+    });
+    const mr = created.data as { web_url?: string; iid?: number };
+    if (!mr?.web_url || !mr.iid) return undefined;
+
+    // GitLab 的 diff 是异步生成的：轮询到能读出变更为止
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const diffs = await gitlabApi(`/projects/${project}/merge_requests/${mr.iid}/diffs?per_page=20`);
+      if (Array.isArray(diffs.data) && (diffs.data as unknown[]).length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return asCompanion({ web_url: mr.web_url, iid: mr.iid });
+  })();
+  return companionPromise;
+}
+
 // --- Mock 模式数据 ---
 
 const mockHtml = `<!doctype html>
@@ -1547,5 +1626,159 @@ test.describe('real GitLab mode', () => {
     await expect(card.getByRole('button', { name: '已发布', exact: true })).toBeVisible();
     // 放到最后：清理失败要报，但不能盖掉真正的发布失败
     expect(cleanupStatus, 'e2e 行内评论没有清理干净').toBe(204);
+  });
+
+  // --- 参考 MR：真实跨项目拉取，发布仍然只落当前 MR ---
+
+  const realPanel = (page: Page) => page.getByRole('region', { name: '参考 MR' });
+
+  async function attachCompanion(page: Page, companion: CompanionMr) {
+    const panel = realPanel(page);
+    await page.getByRole('button', { name: /^参考 MR/ }).click({ timeout: 20000 });
+    await panel.getByLabel('参考 MR 链接').fill(companion.url);
+    await panel.getByRole('button', { name: '解析并拉取' }).click();
+    await expect(panel.getByText('已就绪', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(panel.getByText(companion.label)).toBeVisible({ timeout: 20000 });
+    return panel;
+  }
+
+  test('pulls a real cross-project MR into the review input and publishes only to the current MR', async ({ page }) => {
+    test.setTimeout(300_000);
+    test.skip(!realMrRef, 'GITLAB_MR_URL 不是可解析的 MR 地址');
+    const companion = await ensureCompanionMr();
+    test.skip(companion === undefined, `${companionProjectPath} 上没能准备好配套 MR（需要 GITLAB_PAT）`);
+    await loginToGitLab(page, realGitlabUrl);
+
+    const target = await pickPublishTarget(page);
+    test.skip(target === undefined, '真实 MR 里没有可发布的新增行');
+    await seedRulePacks(page, locateRulePack(target!));
+
+    const writes: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() !== 'GET') writes.push(request.url());
+    });
+
+    await page.goto(realMrUrl);
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    const panel = await attachCompanion(page, companion!);
+    await expect(panel.getByText(/1 个变更文件 · head [0-9a-f]{8}/)).toBeVisible({ timeout: 20000 });
+
+    await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 20000 });
+    const card = page.locator('aside[aria-label="Review Agent"] article')
+      .filter({ hasText: RULE_TITLE })
+      .filter({ hasText: new RegExp(`行内 L${target!.line}\\b`) })
+      .first();
+    await expect(card).toBeVisible({ timeout: 120000 });
+
+    // 参考块确实进了本轮评审输入，而且参考文件没有变成 Finding
+    await page.getByRole('button', { name: '运行说明' }).click({ timeout: 20000 });
+    await expect(page.getByText(/已注入 1 个参考 MR/)).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('aside[aria-label="Review Agent"] article').filter({ hasText: 'src/companion.ts' })).toHaveCount(0);
+    // 看完运行说明收回去：展开时它和顶部横幅会把结果列表挤成一条，卡片按钮点不到
+    await page.getByRole('button', { name: '运行说明' }).click({ timeout: 20000 });
+
+    // 真实发布：行内评论只落当前 MR，用完删掉
+    await card.scrollIntoViewIfNeeded();
+    await card.getByRole('button', { name: '行内评论' }).click({ timeout: 30000 });
+    const dialog = page.getByRole('dialog', { name: '发布行内评论' });
+    await expect(dialog).toBeVisible({ timeout: 30000 });
+    await expect(dialog).toContainText(`MR !${realMrRef!.iid}`);
+    await page.getByLabel('评论内容').fill(`E2E 参考 MR 场景 ${target!.path}:${target!.line} ${Date.now()}`);
+    const posted = page.waitForResponse(
+      (response) => response.url().endsWith('/discussions') && response.request().method() === 'POST',
+      { timeout: 90000 },
+    );
+    await dialog.getByRole('button', { name: '确认行内评论' }).click();
+    const response = await posted;
+    const raw = await response.text();
+    const discussion = response.status() < 300
+      ? JSON.parse(raw) as { id: string; notes?: { id: number }[] }
+      : undefined;
+    const noteId = discussion?.notes?.[0]?.id;
+    // 清理放在断言之前：断言失败也不把评论留在真实 MR 上
+    const cleanupStatus = noteId ? await deleteInlineNote(page, discussion!.id, noteId) : undefined;
+
+    expect(response.status(), raw).toBe(201);
+    expect(response.url().startsWith(`${realGitlabUrl}/api/v4/projects/`)).toBe(true);
+    expect(response.url()).toContain(`/merge_requests/${realMrRef!.iid}/discussions`);
+    // 配套 MR 所在的项目一个写请求都没收到
+    expect(writes.filter((url) => url.includes(encodeURIComponent(companion!.projectPath)))).toEqual([]);
+    expect(cleanupStatus, 'e2e 行内评论没有清理干净').toBe(204);
+  });
+
+  test('lists real recent MRs across projects and leaves out the one being reviewed', async ({ page }) => {
+    test.setTimeout(240_000);
+    test.skip(!realMrRef, 'GITLAB_MR_URL 不是可解析的 MR 地址');
+    const companion = await ensureCompanionMr();
+    test.skip(companion === undefined, `${companionProjectPath} 上没能准备好配套 MR（需要 GITLAB_PAT）`);
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, realMrUrl);
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+
+    const panel = realPanel(page);
+    await page.getByRole('button', { name: /^参考 MR/ }).click({ timeout: 20000 });
+    await panel.getByRole('button', { name: '从最近活动选择' }).click();
+    await expect(panel.getByText('GitLab 最近活动')).toBeVisible({ timeout: 30000 });
+    await expect(panel.getByText(companion!.label)).toBeVisible({ timeout: 60000 });
+    // 正在评审的这个 MR 不该出现在候选里
+    await expect(panel.getByText(`${realMrRef!.project}!${realMrRef!.iid}`)).toHaveCount(0);
+
+    await panel.getByRole('checkbox', { name: `选择 ${companion!.label}` }).check();
+    await expect(panel.getByText('已就绪', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(panel.getByText(/1 个变更文件 · head [0-9a-f]{8}/)).toBeVisible({ timeout: 20000 });
+
+    await panel.getByRole('checkbox', { name: `选择 ${companion!.label}` }).uncheck();
+    await expect(page.getByRole('button', { name: /^参考 MR/ })).toContainText('未附加', { timeout: 20000 });
+  });
+
+  test('keeps prompt history on the real GitLab origin across reloads', async ({ page }) => {
+    test.setTimeout(240_000);
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, realMrUrl);
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    await page.getByRole('tab', { name: /对话/ }).click({ timeout: 20000 });
+
+    const box = page.getByLabel('消息输入框');
+    await expect(box).toBeVisible({ timeout: 20000 });
+    // 没配模型也会记下 prompt：用户写过的东西不能丢
+    await box.fill('真实环境的第一条 prompt');
+    await box.press('Enter');
+    await expect(box).toHaveValue('', { timeout: 20000 });
+    await expect(page.getByText(/对话需要配置模型/)).toBeVisible({ timeout: 20000 });
+    await box.fill('真实环境的第二条 prompt');
+    await box.press('Enter');
+    await expect(box).toHaveValue('', { timeout: 20000 });
+
+    const stored = () => page.evaluate(
+      () => JSON.parse(localStorage.getItem('review-agent-prompt-history-v1') ?? '[]') as string[],
+    );
+    await expect.poll(stored, { timeout: 20000 })
+      .toEqual(['真实环境的第二条 prompt', '真实环境的第一条 prompt']);
+
+    await box.click();
+    await box.press('ArrowUp');
+    await expect(box).toHaveValue('真实环境的第二条 prompt');
+    await box.press('ArrowUp');
+    await expect(box).toHaveValue('真实环境的第一条 prompt');
+    await box.press('ArrowDown');
+    await box.press('ArrowDown');
+    await expect(box).toHaveValue('');
+
+    // 整页刷新后历史还在：落在真实 origin 的 localStorage 上
+    await mountUserscript(page, realMrUrl);
+    // 面板开关状态也持久化了：刷新后可能已经自己展开，没有启动按钮可点
+    const launcher = page.getByRole('button', { name: '打开 Review Agent' });
+    if (await launcher.isVisible().catch(() => false)) await launcher.click();
+    await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible({ timeout: 20000 });
+    await page.getByRole('tab', { name: /对话/ }).click({ timeout: 20000 });
+    const reloaded = page.getByLabel('消息输入框');
+    await reloaded.click();
+    await reloaded.press('ArrowUp');
+    await expect(reloaded).toHaveValue('真实环境的第二条 prompt', { timeout: 20000 });
+    await page.getByRole('button', { name: '历史 prompt' }).click();
+    const list = page.getByRole('listbox', { name: '历史 prompt 列表' });
+    await expect(list.getByRole('option')).toHaveCount(2, { timeout: 20000 });
+    await list.getByRole('option').nth(1).click();
+    await expect(reloaded).toHaveValue('真实环境的第一条 prompt');
   });
 });
