@@ -215,6 +215,15 @@ export interface AdapterCapabilities {
 /** 评论落地形态：行内 Discussion（带 position）或 MR 级全文评论（不带 position）。 */
 export type PublishMode = 'inline' | 'full';
 
+/**
+ * GitLab 用 (old_line, new_line) 精确比对 diff 行：added 行只有 newLine，removed 行只有 oldLine，
+ * context 行两者都有。多填或漏填任何一侧都匹配不到 diff 行，评论会以 400 被拒。
+ */
+export interface PositionLineRef {
+  oldLine?: number;
+  newLine?: number;
+}
+
 export interface DiscussionPosition {
   path: string;
   oldPath?: string;
@@ -222,8 +231,9 @@ export interface DiscussionPosition {
   startLine: number;
   endLine: number;
   side: 'old' | 'new';
-  newFile?: boolean;
-  deletedFile?: boolean;
+  /** 起止行在真实 diff 行上的行号配对，对应 GitLab 的 position[line_range][start|end]。 */
+  start?: PositionLineRef;
+  end?: PositionLineRef;
   diffRefs: DiffRefs;
 }
 

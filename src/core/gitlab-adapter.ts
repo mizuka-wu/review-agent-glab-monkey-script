@@ -13,6 +13,7 @@ import type {
   MergeRequestContext,
   MergeRequestRef,
   PageContext,
+  PositionLineRef,
   PublishedComment,
   PublishedDiscussion,
 } from './types';
@@ -70,7 +71,39 @@ function errorCode(status: number) {
 
 type RawDiff = Parameters<typeof normalizeFileDiff>[0];
 
-/** 无 position 时只带 body，GitLab 会创建 MR 级全文评论。 */
+/** 空值字段一律不发：GitLab 收到 position[base_sha]= 会把整个 diff_refs 判为不完整。 */
+function setPositionField(payload: URLSearchParams, key: string, value: string) {
+  if (value) payload.set(key, value);
+}
+
+/**
+ * old_path / new_path 都必须写真实路径：新增或删除文件填 /dev/null 会被当成 diff 路径过滤条件
+ * 传给 Gitaly，GitLab 直接 500（eachDiff: exit status 128）。
+ */
+function setPositionPath(...candidates: (string | undefined)[]) {
+  return candidates.find((candidate) => candidate && candidate !== '/dev/null') ?? '';
+}
+
+/**
+ * GitLab 的 line_for_position 拿 (old_line, new_line) 同时比对 diff 行：added 行只有 new_line、
+ * removed 行只有 old_line、context 行两者都有。只按 side 填一侧，context 行就匹配不到任何 diff 行，
+ * Note 以 `line_code can't be blank` 400；自己凑一对同样匹配不到。配对只能取自真实 diff 行。
+ */
+function setPositionLine(payload: URLSearchParams, prefix: string, line: PositionLineRef) {
+  if (line.oldLine !== undefined) payload.set(`${prefix}[old_line]`, String(line.oldLine));
+  if (line.newLine !== undefined) payload.set(`${prefix}[new_line]`, String(line.newLine));
+}
+
+/** 没有 diff 行配对时的兜底：按 side 填一侧，至少 added / removed 行还能发出去。 */
+function sideLineRef(side: 'old' | 'new', line: number): PositionLineRef {
+  return side === 'new' ? { newLine: line } : { oldLine: line };
+}
+
+/**
+ * 无 position 时只带 body，GitLab 会创建 MR 级全文评论。
+ * position[line_range] 会被 GitLab 原样存下并按 json schema 校验（additionalProperties: false），
+ * 多一个键就是 `position must be a valid json schema`，所以只发 schema 里存在的键。
+ */
 export function buildDiscussionPayload(input: DiscussionDraft) {
   const payload = new URLSearchParams();
   payload.set('body', input.body);
@@ -78,28 +111,19 @@ export function buildDiscussionPayload(input: DiscussionDraft) {
   if (!position) return payload;
 
   payload.set('position[position_type]', 'text');
-  payload.set('position[base_sha]', position.diffRefs.baseSha);
-  payload.set('position[head_sha]', position.diffRefs.headSha);
-  payload.set('position[start_sha]', position.diffRefs.startSha);
-  const oldPath = position.oldPath ?? position.path;
-  const newPath = position.newPath ?? position.path;
-  payload.set('position[new_path]', position.deletedFile ? '/dev/null' : newPath);
-  payload.set('position[old_path]', position.newFile ? '/dev/null' : oldPath);
+  setPositionField(payload, 'position[base_sha]', position.diffRefs.baseSha);
+  setPositionField(payload, 'position[head_sha]', position.diffRefs.headSha);
+  setPositionField(payload, 'position[start_sha]', position.diffRefs.startSha);
+  setPositionField(payload, 'position[new_path]', setPositionPath(position.newPath, position.oldPath, position.path));
+  setPositionField(payload, 'position[old_path]', setPositionPath(position.oldPath, position.newPath, position.path));
 
-  if (position.side === 'new') {
-    payload.set('position[new_line]', String(position.endLine));
-    if (position.startLine !== position.endLine) {
-      payload.set('position[line_range][start][new_line]', String(position.startLine));
-      payload.set('position[line_range][end][new_line]', String(position.endLine));
-    }
-  } else {
-    payload.set('position[old_line]', String(position.endLine));
-    if (position.startLine !== position.endLine) {
-      payload.set('position[line_range][start][old_line]', String(position.startLine));
-      payload.set('position[line_range][end][old_line]', String(position.endLine));
-    }
-  }
+  // 顶层 old_line / new_line 描述的是评论结束行，必须和该行在 diff 里的配对完全一致。
+  const end = position.end ?? sideLineRef(position.side, position.endLine);
+  setPositionLine(payload, 'position', end);
+  if (position.startLine === position.endLine) return payload;
 
+  setPositionLine(payload, 'position[line_range][start]', position.start ?? sideLineRef(position.side, position.startLine));
+  setPositionLine(payload, 'position[line_range][end]', end);
   return payload;
 }
 

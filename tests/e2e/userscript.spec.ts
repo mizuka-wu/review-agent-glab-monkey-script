@@ -20,7 +20,11 @@ const modelApiKey = process.env.MODEL_API_KEY || '';
 const realMrUrl = process.env.GITLAB_MR_URL || '';
 const gitlabUser = process.env.GITLAB_USER || 'root';
 const gitlabPass = process.env.GITLAB_PASS || '5iveRage';
+const gitlabPat = process.env.GITLAB_PAT || '';
 const isRealGitlab = Boolean(realGitlabUrl && realMrUrl);
+/** 真实 MR 的项目路径与 iid：发布测试要用 REST API 清理自己发出去的评论。 */
+const realMrRef = /^(?:https?:\/\/[^/]+)?\/(?<project>.+)\/-\/merge_requests\/(?<iid>\d+)/.exec(realMrUrl)?.groups;
+const realMrApi = `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(realMrRef?.project ?? '')}/merge_requests/${realMrRef?.iid ?? ''}`;
 
 // --- Mock 模式数据 ---
 
@@ -947,5 +951,123 @@ test.describe('real GitLab mode', () => {
     await expect(highlighted).toBeVisible({ timeout: 60000 });
     expect(await highlighted.evaluate(gitlabLineOf)).toBe(line);
     await expect(highlighted).toContainText(text.trim());
+  });
+
+  // --- 真实发布链：userscript → createDiscussion → POST /discussions，在真实 MR 上落一条行内评论 ---
+
+  /** 与 core/diff.ts#parseUnifiedDiff 同一套行号规则，从 unified diff 里取新增行。 */
+  const HUNK_HEADER = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/;
+
+  function addedRows(diff: string) {
+    const rows: { line: number; text: string }[] = [];
+    let newLine = 0;
+    let inHunk = false;
+    for (const raw of diff.split(/\r?\n/)) {
+      const header = HUNK_HEADER.exec(raw);
+      if (header) { newLine = Number(header[3]); inHunk = true; continue; }
+      if (!inHunk || raw === '\\ No newline at end of file') continue;
+      if (raw.startsWith('+')) { rows.push({ line: newLine, text: raw.slice(1) }); newLine += 1; }
+      else if (raw.startsWith(' ') || raw === '') newLine += 1;
+    }
+    return rows;
+  }
+
+  /** 挑一行唯一、够长、不是注释的新增代码：规则要精确命中它，卡片要能被 `行内 L{n}` 锁定。 */
+  function pickFromDiff(path: string, diff: string): LineTarget | undefined {
+    const rows = addedRows(diff);
+    const texts = rows.map((row) => row.text.replace(/\s+/g, ' ').trim());
+    for (const [index, text] of texts.entries()) {
+      if (text.length < 12 || text.startsWith('//') || text.startsWith('*')) continue;
+      if (texts.filter((other) => other === text).length > 1) continue;
+      return { path, line: rows[index].line, text };
+    }
+    return undefined;
+  }
+
+  /**
+   * 优先挑新增文件里的行：修复前 buildDiscussionPayload 对新增文件发 position[old_path]=/dev/null，
+   * GitLab 把它当 diff 路径过滤条件丢给 Gitaly，整个请求直接 500。
+   * 目标行从 REST diff 取而不是从 DOM 取：GitLab 的 diff 文件是懒渲染的，没滚到就不在 DOM 里。
+   */
+  async function pickPublishTarget(page: Page) {
+    const response = await page.request.get(`${realMrApi}/diffs?per_page=100`).catch(() => undefined);
+    if (!response?.ok()) return undefined;
+    const diffs = await response.json() as { new_path: string; diff: string; new_file?: boolean }[];
+    const ordered = [...diffs.filter((entry) => entry.new_file), ...diffs.filter((entry) => !entry.new_file)];
+    for (const entry of ordered) {
+      const target = pickFromDiff(entry.new_path, entry.diff ?? '');
+      if (target) return target;
+    }
+    return undefined;
+  }
+
+  /**
+   * 用完就删：真实 MR 不能被测试评论弄脏。API 的非 GET 请求走 cookie 会话时会被 CSRF 挡掉，
+   * 所以带上页面里的 csrf-token，有 GITLAB_PAT 时再加 PRIVATE-TOKEN。
+   */
+  async function deleteInlineNote(page: Page, discussionId: string, noteId: number) {
+    const csrf = await page.evaluate(
+      () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '',
+    ).catch(() => '');
+    const headers: Record<string, string> = {};
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+    if (gitlabPat) headers['PRIVATE-TOKEN'] = gitlabPat;
+    const response = await page.request
+      .delete(`${realMrApi}/discussions/${discussionId}/notes/${noteId}`, { headers })
+      .catch(() => undefined);
+    return response?.status();
+  }
+
+  test('publishes a real inline discussion through the full publish chain', async ({ page }) => {
+    test.setTimeout(300_000);
+    test.skip(!realMrRef, 'GITLAB_MR_URL 不是可解析的 MR 地址');
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, realMrUrl);
+
+    const target = await pickPublishTarget(page);
+    test.skip(target === undefined, '真实 MR 里没有可发布的新增行');
+    const { path, line } = target!;
+
+    await seedRulePacks(page, locateRulePack(target!));
+    await page.goto(realMrUrl);
+    const card = await runRuleReview(page, line);
+
+    await card.getByRole('button', { name: '行内评论' }).click();
+    await expect(page.getByRole('dialog', { name: '发布行内评论' })).toBeVisible();
+    await page.getByLabel('评论内容').fill(`E2E 行内评论 ${path}:${line} ${Date.now()}`);
+
+    const posted = page.waitForResponse(
+      (response) => response.url().endsWith('/discussions') && response.request().method() === 'POST',
+      { timeout: 90_000 },
+    );
+    await page.getByRole('button', { name: '确认行内评论' }).click();
+    const response = await posted;
+    const status = response.status();
+    const raw = await response.text();
+    const discussion = status < 300
+      ? JSON.parse(raw) as { id: string; notes?: { id: number; position?: Record<string, unknown> }[] }
+      : undefined;
+    const noteId = discussion?.notes?.[0]?.id;
+    // 清理放在断言之前：断言失败也不把评论留在真实 MR 上
+    const cleanupStatus = noteId ? await deleteInlineNote(page, discussion!.id, noteId) : undefined;
+
+    // 修复前这里会是 500（新增文件发 /dev/null）或 400（line_code can't be blank / position must be a valid json schema）
+    expect(status, raw).toBe(201);
+    expect(noteId, 'GitLab 没有返回行内 note').toBeTruthy();
+
+    const sent = decodeURIComponent(response.request().postData() ?? '');
+    expect(sent).not.toContain('/dev/null');
+    expect(sent).toContain(`position[new_path]=${path}`);
+    expect(sent).toContain(`position[old_path]=${path}`);
+
+    const position = discussion!.notes![0].position ?? {};
+    expect(position).toMatchObject({ position_type: 'text', new_path: path, old_path: path });
+    // GitLab 用 (old_line, new_line) 精确匹配 diff 行，匹配不上根本创建不出 discussion
+    expect([position.new_line, position.old_line]).toContain(line);
+
+    await expect(page.getByText('行级 Discussion 已发布')).toBeVisible({ timeout: 30000 });
+    await expect(card.getByRole('button', { name: '已发布', exact: true })).toBeVisible();
+    // 放到最后：清理失败要报，但不能盖掉真正的发布失败
+    expect(cleanupStatus, 'e2e 行内评论没有清理干净').toBe(204);
   });
 });

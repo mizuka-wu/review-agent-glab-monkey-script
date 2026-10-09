@@ -52,6 +52,54 @@ describe('repo path matching', () => {
   });
 });
 
+describe('inline position: GitLab line pairing', () => {
+  it('pairs both sides for a context line', () => {
+    const position = resolvePublishPosition(finding({ line: 8, endLine: 8 }), [payment]);
+    expect(position.publishable).toBe(true);
+    expect(position.lines).toEqual({
+      start: { oldLine: 8, newLine: 8 },
+      end: { oldLine: 8, newLine: 8 },
+    });
+  });
+
+  it('keeps only new_line for an added line', () => {
+    const position = resolvePublishPosition(finding({ line: 9, endLine: 9 }), [payment]);
+    expect(position.lines).toEqual({ start: { newLine: 9 }, end: { newLine: 9 } });
+  });
+
+  it('keeps only old_line for a removed line', () => {
+    const position = resolvePublishPosition(
+      finding({ path: 'src/r.ts', line: 30, endLine: 30, side: 'old' }), [removed]);
+    expect(position.publishable).toBe(true);
+    expect(position.lines).toEqual({ start: { oldLine: 30 }, end: { oldLine: 30 } });
+  });
+
+  it('pairs each endpoint of a range on its own diff line', () => {
+    const position = resolvePublishPosition(finding({ line: 8, endLine: 9 }), [payment]);
+    expect(position.lines).toEqual({
+      start: { oldLine: 8, newLine: 8 },
+      end: { newLine: 9 },
+    });
+  });
+
+  it('pairs the endpoints of a relocated range', () => {
+    const position = resolvePublishPosition(
+      finding({ line: 99, endLine: 100, existingCode: 'const apiKey = "sk-live-1";\nreturn charge(apiKey);' }),
+      [payment],
+    );
+    expect(position.publishable).toBe(true);
+    expect(position.corrected).toBe(true);
+    expect(position.finding).toMatchObject({ line: 9, endLine: 10, anchor: { corrected: true } });
+    expect(position.lines).toEqual({ start: { newLine: 9 }, end: { newLine: 10 } });
+  });
+
+  it('has no pairing when the finding cannot be placed on a diff line', () => {
+    const position = resolvePublishPosition(finding({ line: 999, endLine: 999 }), [payment]);
+    expect(position.publishable).toBe(false);
+    expect(position.lines).toBeUndefined();
+  });
+});
+
 describe('inline position: path matching', () => {
   it('resolves a path carrying the diff prefix', () => {
     const position = resolvePublishPosition(finding({ path: 'b/src/payment.ts', line: 9, endLine: 9 }), [payment]);

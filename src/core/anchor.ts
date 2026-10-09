@@ -5,6 +5,7 @@ import type {
   FileDiff,
   Finding,
   FullFileSnapshot,
+  PositionLineRef,
 } from './types';
 
 interface AnchorMatch {
@@ -226,6 +227,8 @@ export interface PublishPosition {
   reasonCode?: PublishBlockCode;
   /** 位置由内容匹配重新定位得到，与 Finding 原行号不同。 */
   corrected?: boolean;
+  /** GitLab 行内评论要的起止行 old/new 行号配对，取自真实 diff 行。 */
+  lines?: { start: PositionLineRef; end: PositionLineRef };
   finding: Finding;
 }
 
@@ -458,12 +461,35 @@ function blocked(finding: Finding, code: PublishBlockCode, reason: string): Publ
   return { publishable: false, reason, reasonCode: code, finding };
 }
 
+/** diff 行上真实存在的行号配对：added 行没有 oldLine，removed 行没有 newLine，context 行两者都有。 */
+function lineRefAt(file: FileDiff, side: 'old' | 'new', line: number): PositionLineRef | undefined {
+  const row = sideEntries(file, side).find((candidate) => sideValue(candidate, side) === line);
+  return row && { oldLine: row.oldLine, newLine: row.newLine };
+}
+
+/**
+ * GitLab 只认 diff 行上真实存在的 (old_line, new_line) 配对：自己凑一对或只填一侧都会让 line_code
+ * 落空、整条评论被 400 拒掉，所以发布位置直接带上起止行的真实配对，由 buildDiscussionPayload 原样发出。
+ */
+function matchLines(match: AnchorMatch) {
+  if (!match.file) return undefined;
+  const start = lineRefAt(match.file, match.side, match.start);
+  const end = lineRefAt(match.file, match.side, match.end);
+  return start && end ? { start, end } : undefined;
+}
+
 function resolved(finding: Finding, match: AnchorMatch): PublishPosition {
   const anchored = applyMatch(finding, match);
   const changed = anchored.path !== finding.path || anchored.line !== finding.line
     || anchored.endLine !== finding.endLine || anchored.side !== finding.side;
   const anchor = { ...anchored.anchor!, ...(changed || finding.anchor?.corrected ? { corrected: true } : {}) };
-  return { publishable: true, ...(changed ? { corrected: true } : {}), finding: { ...anchored, anchor } };
+  const lines = matchLines(match);
+  return {
+    publishable: true,
+    ...(changed ? { corrected: true } : {}),
+    finding: { ...anchored, anchor },
+    ...(lines ? { lines } : {}),
+  };
 }
 
 /** 行号直接命中 diff：整段落得到最好，endLine 越界就收敛成单行。 */

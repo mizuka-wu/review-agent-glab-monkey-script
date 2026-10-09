@@ -35,18 +35,96 @@ describe('GitLab discussion payload', () => {
     expect(payload.get('position[old_line]')).toBe('4');
   });
 
-  it('uses /dev/null paths for new and deleted files and supports line ranges', () => {
+  it('keeps the real path on both sides for a new file and supports line ranges', () => {
     const payload = buildDiscussionPayload({
       body: 'comment',
       position: {
         path: 'src/new.ts', oldPath: '/dev/null', newPath: 'src/new.ts',
-        startLine: 1, endLine: 3, side: 'new', newFile: true,
+        startLine: 1, endLine: 3, side: 'new',
+        start: { newLine: 1 }, end: { newLine: 3 },
         diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
       },
     });
-    expect(payload.get('position[old_path]')).toBe('/dev/null');
+    // GitLab 把 old_path/new_path 当 diff 路径过滤条件传给 Gitaly，/dev/null 会 500。
+    expect(payload.get('position[old_path]')).toBe('src/new.ts');
+    expect(payload.get('position[new_path]')).toBe('src/new.ts');
     expect(payload.get('position[line_range][start][new_line]')).toBe('1');
     expect(payload.get('position[line_range][end][new_line]')).toBe('3');
+  });
+
+  it('sends both old_line and new_line for a context line', () => {
+    const payload = buildDiscussionPayload({
+      body: 'comment',
+      position: {
+        path: 'a.ts', startLine: 15, endLine: 15, side: 'new',
+        start: { oldLine: 15, newLine: 15 }, end: { oldLine: 15, newLine: 15 },
+        diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
+      },
+    });
+    expect(payload.get('position[old_line]')).toBe('15');
+    expect(payload.get('position[new_line]')).toBe('15');
+    expect([...payload.keys()].some((key) => key.startsWith('position[line_range]'))).toBe(false);
+  });
+
+  it('sends only the side that really exists on a removed line', () => {
+    const payload = buildDiscussionPayload({
+      body: 'comment',
+      position: {
+        path: 'a.ts', startLine: 33, endLine: 33, side: 'old',
+        start: { oldLine: 33 }, end: { oldLine: 33 },
+        diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
+      },
+    });
+    expect(payload.get('position[old_line]')).toBe('33');
+    expect(payload.has('position[new_line]')).toBe(false);
+  });
+
+  it('describes the end line at top level and pairs every line_range endpoint separately', () => {
+    const payload = buildDiscussionPayload({
+      body: 'comment',
+      position: {
+        // start 是 context 行（两侧都有行号），end 是 added 行（只有 new 侧）
+        path: 'a.ts', startLine: 15, endLine: 16, side: 'new',
+        start: { oldLine: 15, newLine: 15 }, end: { newLine: 16 },
+        diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
+      },
+    });
+    expect(payload.get('position[new_line]')).toBe('16');
+    expect(payload.has('position[old_line]')).toBe(false);
+    expect(payload.get('position[line_range][start][old_line]')).toBe('15');
+    expect(payload.get('position[line_range][start][new_line]')).toBe('15');
+    expect(payload.get('position[line_range][end][new_line]')).toBe('16');
+    expect(payload.has('position[line_range][end][old_line]')).toBe(false);
+  });
+
+  it('only emits line_range keys the GitLab json schema allows', () => {
+    const payload = buildDiscussionPayload({
+      body: 'comment',
+      position: {
+        path: 'a.ts', startLine: 29, endLine: 36, side: 'new',
+        start: { newLine: 29 }, end: { newLine: 36 },
+        diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
+      },
+    });
+    // line_range 被 GitLab 原样存下并按 additionalProperties: false 校验，多一个键就整条 400。
+    const allowed = new Set(['start', 'end'].flatMap((endpoint) =>
+      ['old_line', 'new_line'].map((field) => `position[line_range][${endpoint}][${field}]`)));
+    const emitted = [...payload.keys()].filter((key) => key.startsWith('position[line_range]'));
+    expect(emitted.length).toBeGreaterThan(0);
+    expect(emitted.filter((key) => !allowed.has(key))).toEqual([]);
+  });
+
+  it('drops blank position fields instead of sending empty values', () => {
+    const payload = buildDiscussionPayload({
+      body: 'comment',
+      position: {
+        path: 'a.ts', startLine: 2, endLine: 2, side: 'new',
+        diffRefs: { baseSha: '', headSha: 'h', startSha: '' },
+      },
+    });
+    expect(payload.has('position[base_sha]')).toBe(false);
+    expect(payload.has('position[start_sha]')).toBe(false);
+    expect(payload.get('position[head_sha]')).toBe('h');
   });
 
   it('omits every position field for a full-text comment', () => {

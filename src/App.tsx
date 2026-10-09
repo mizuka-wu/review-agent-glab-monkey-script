@@ -1197,8 +1197,7 @@ export default function App({ page }: AppProps) {
       startLine: finding.line,
       endLine: finding.endLine,
       side: finding.side,
-      newFile: finding.newFile,
-      deletedFile: finding.deletedFile,
+      ...position.lines,
       diffRefs: mrContext!.diffRefs,
     };
   };
