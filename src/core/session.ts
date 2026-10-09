@@ -40,6 +40,7 @@ export interface SessionFinding {
   status: FindingStatus;
   anchor?: FindingAnchor;
   edited?: boolean;
+  fileLevel?: boolean;
 }
 
 export interface ReviewSessionContextSummary {
@@ -139,6 +140,7 @@ export function toSessionFinding(finding: Finding): SessionFinding {
     status: finding.status,
     anchor: finding.anchor,
     edited: finding.edited,
+    fileLevel: finding.fileLevel,
   };
 }
 

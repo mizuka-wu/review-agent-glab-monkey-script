@@ -6,6 +6,7 @@ import { debugBus, type DebugExchangeInput } from './debug-bus';
 import type { ToolCall, ToolDefinition } from './agent-tools';
 import { parseOpenAIUsage, recordUsage } from './usage';
 import { reflectSystemPrompt } from './reflection';
+import { fixSystemPrompt } from './finding-fix';
 import type {
   ChatMessage,
   CodeSelection,
@@ -585,6 +586,16 @@ export class OpenAIRuntime {
         { role: 'user', content: payload },
       ],
       { json: true, signal, stage: 'reflection' },
+    );
+  }
+
+  async generateFix(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal) {
+    return this.complete(
+      [
+        { role: 'system', content: fixSystemPrompt(language) },
+        { role: 'user', content: payload },
+      ],
+      { json: true, signal, stage: 'fix' },
     );
   }
 

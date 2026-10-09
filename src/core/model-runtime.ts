@@ -21,6 +21,8 @@ export interface ModelRuntime {
   chat(messages: ChatMessage[], selection: CodeSelection | undefined, signal?: AbortSignal, onToken?: (token: string) => void): Promise<string>;
   review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string }): Promise<string>;
   reflect(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal): Promise<string>;
+  /** 按 Finding + 文件当前内容生成修复（unified patch 或完整文件内容），与 review 共用同一份配置。 */
+  generateFix(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal): Promise<string>;
   testConnection(signal?: AbortSignal): Promise<boolean>;
   listModels(signal?: AbortSignal): Promise<string[]>;
   callWithTools(messages: AgentMessage[], tools: ToolDefinition[], system: string, options?: { signal?: AbortSignal }): Promise<ToolCallResponse>;

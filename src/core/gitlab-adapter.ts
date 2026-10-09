@@ -37,6 +37,48 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/** GitLab commits API 的一个文件动作：content 是完整文件内容，不是增量。 */
+export interface CommitFile {
+  path: string;
+  content: string;
+  action: 'create' | 'update';
+}
+
+export interface CommitDraft {
+  branch: string;
+  /** commit 标题。 */
+  message: string;
+  /** commit 正文，GitLab 会拼在标题之后。 */
+  description?: string;
+  files: CommitFile[];
+}
+
+export interface CreatedCommit {
+  id: string;
+  shortId: string;
+  title: string;
+  webUrl: string;
+}
+
+/**
+ * commits API 只收 JSON（actions 是数组，form-encoding 写不出来）。
+ * 正文自己拼在标题后面：GitLab 的 commit_description 会被部分版本直接忽略
+ * （19.x 上提交出来的 message 只剩标题），而 commit_message 里的空行分段
+ * 一定落成 git 的 subject + body。
+ */
+export function buildCommitPayload(draft: CommitDraft): string {
+  const description = draft.description?.trim() ?? '';
+  return JSON.stringify({
+    branch: draft.branch,
+    commit_message: description ? `${draft.message.trim()}\n\n${description}` : draft.message.trim(),
+    actions: draft.files.map((file) => ({
+      action: file.action,
+      file_path: file.path,
+      content: file.content,
+    })),
+  });
+}
+
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
@@ -160,7 +202,7 @@ export class GitLabAdapter {
     if (this.gitlabToken) headers['PRIVATE-TOKEN'] = this.gitlabToken;
     if (options.method === 'POST') {
       headers['X-CSRF-Token'] = csrfToken();
-      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      headers['Content-Type'] ??= 'application/x-www-form-urlencoded';
     }
 
     const startedAt = Date.now();
@@ -441,10 +483,31 @@ export class GitLabAdapter {
     }
   }
 
-  async getFile(path: string, ref: string) {
+  async getFile(path: string, ref: string, signal?: AbortSignal) {
     return this.requestText(
       `/api/v4/projects/${this.projectRef()}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`,
+      { signal },
     );
+  }
+
+  /**
+   * 向指定分支提交一次改动。修复链路只写 MR 的源分支，目标分支永不参与；
+   * 分支被保护或 Token 权限不足时 GitLab 返回 403，冲突返回 409，都由调用方明示。
+   */
+  async createCommit(draft: CommitDraft): Promise<CreatedCommit> {
+    const commit = await this.request<{ id: string; short_id: string; title: string; web_url: string }>(
+      `/api/v4/projects/${this.projectRef()}/repository/commits`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: buildCommitPayload(draft),
+      },
+    );
+    debugBus.log(
+      'info', 'gitlab', `已提交 ${commit.short_id} 到 ${draft.branch}`,
+      draft.files.map((file) => `${file.action} ${file.path}`).join(', '),
+    );
+    return { id: commit.id, shortId: commit.short_id, title: commit.title, webUrl: commit.web_url };
   }
 
   /**

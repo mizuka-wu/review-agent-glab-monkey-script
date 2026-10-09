@@ -52,6 +52,7 @@ export const defaultSettings: RuntimeSettings = {
   repoContext: true,
   debugEnabled: false,
   thinking: 'default',
+  applyFixEnabled: false,
   auth: {
     mode: 'bearer',
     customHeaders: {},

@@ -58,6 +58,8 @@ export interface Finding {
   occurrences?: number;
   /** 另一个来源独立命中了同一处问题，已合并进本条。 */
   corroborated?: FindingSource;
+  /** 文件级规则命中：没有「就改这几行」的锚点，不参与自动修复。 */
+  fileLevel?: boolean;
 }
 
 export interface DiffLine {
@@ -235,6 +237,8 @@ export interface RuntimeSettings {
   debugEnabled: boolean;
   /** 'off' 时通过 chat_template_kwargs 关闭 omlx/vLLM 系服务端的思考输出。 */
   thinking: 'default' | 'off';
+  /** 允许把 Finding 的修复直接提交回 MR 源分支（默认关闭，关闭时入口不渲染）。 */
+  applyFixEnabled: boolean;
 }
 
 export interface AdapterCapabilities {

@@ -388,6 +388,7 @@ function createFindingFromRule(input: {
     rulePackId: pack.id,
     rulePackName: pack.name,
     occurrences: occurrences && occurrences > 1 ? occurrences : undefined,
+    fileLevel: isFileLevel(rule) ? true : undefined,
   };
 }
 
