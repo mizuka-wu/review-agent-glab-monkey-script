@@ -444,6 +444,19 @@ function ReviewSection({ settings, onSettingsChange, onSettingsCommit, projectKe
             />
           </Field>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>允许应用修复</div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                对可修复的 Finding 用模型生成补丁，确认后提交回 MR 源分支（不碰目标分支）；关闭时「应用修复」入口不显示
+              </div>
+            </div>
+            <Toggle
+              ariaLabel="允许应用修复"
+              checked={settings.applyFixEnabled}
+              onChange={(v) => onSettingsChange({ ...settings, applyFixEnabled: v })}
+            />
+          </div>
         </div>
       </CardBody>
     </Card>

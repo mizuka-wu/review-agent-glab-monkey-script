@@ -47,6 +47,11 @@ export interface FindingsPanelProps {
   publishMode: (finding: Finding) => PublishMode;
   /** 能否参与「一键发布 / 批量发布」：待处理草稿且评论内容非空。 */
   publishable: (finding: Finding) => boolean;
+  /** 这条 Finding 是否给出「应用修复」入口：设置开启且是可修复候选。 */
+  fixable: (finding: Finding) => boolean;
+  /** 入口可见但当前点了必失败的原因。 */
+  fixDisabledReason?: string;
+  onApplyFix: (finding: Finding) => void;
   canApprove: boolean;
   quickBusy: boolean;
   onApprove: () => void;
@@ -338,6 +343,8 @@ export function FindingsPanel(props: FindingsPanelProps) {
                     publishDisabledReason={publishDisabledReason}
                     publishMode={publishMode(finding)}
                     publishIssue={publishPositionIssue(finding)}
+                    onApplyFix={props.fixable(finding) ? () => props.onApplyFix(finding) : undefined}
+                    fixDisabledReason={props.fixDisabledReason}
                     onToggle={() => props.onToggleExpand(finding.id)}
                     onSelect={() => props.onToggleSelect(finding.id)}
                     onLocate={() => props.onLocate(finding)}

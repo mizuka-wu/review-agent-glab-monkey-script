@@ -15,7 +15,7 @@ const dialogStyle: React.CSSProperties = {
   boxShadow: C.shadowLg, display: 'flex', flexDirection: 'column',
 };
 
-function Dialog({ labelId, title, subtitle, onClose, children, footer }: {
+export function Dialog({ labelId, title, subtitle, onClose, children, footer }: {
   labelId: string; title: string; subtitle?: ReactNode; onClose: () => void;
   children: ReactNode; footer: ReactNode;
 }) {

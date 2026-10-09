@@ -13,6 +13,7 @@ import { compactThinking, extractThinkingOutline } from './core/thinking';
 import { ReferenceMrPanel, type ReferenceCandidate } from './components/review/ReferenceMrPanel';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
+import { FixDialog, type FixStage } from './components/review/FixDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { SettingsView, ModelPicker } from './components/SettingsView';
 import {
@@ -26,6 +27,10 @@ import {
   clearHighlights, highlightFindingOnPage, injectHighlightStyles, takePendingLocate, type LocateOutcome,
 } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
+import {
+  buildFixPayload, createFixPlan, describeFixFailure, isFixCandidate, parseFixResponse,
+  type FixPlan,
+} from './core/finding-fix';
 import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
 import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage, projectAdapter } from './core/gitlab-adapter';
 import { McpClient, MultiMcpClient } from './core/mcp-client';
@@ -120,6 +125,7 @@ export default function App({ page }: AppProps) {
   const panelRef = useRef<HTMLElement>(null);
   const reviewAbort = useRef<AbortController | undefined>(undefined);
   const chatAbort = useRef<AbortController | undefined>(undefined);
+  const fixAbort = useRef<AbortController | undefined>(undefined);
   const currentSessionRef = useRef<ReviewSessionManifest | undefined>(undefined);
   const dragState = useRef<{ startX: number; startY: number; startTop: number; startRight: number } | null>(null);
   const resizeState = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -200,6 +206,11 @@ export default function App({ page }: AppProps) {
   const [publishing, setPublishing] = useState(false);
   const [batchConfirm, setBatchConfirm] = useState(false);
   const [batchPublishing, setBatchPublishing] = useState(false);
+
+  const [fixTarget, setFixTarget] = useState<Finding | undefined>(undefined);
+  const [fixPlan, setFixPlan] = useState<FixPlan | undefined>(undefined);
+  const [fixStage, setFixStage] = useState<FixStage>('ready');
+  const [fixError, setFixError] = useState('');
 
   const [savedSession, setSavedSession] = useState<ReviewSessionManifest | undefined>(undefined);
   const [sessionHistory, setSessionHistory] = useState<ReviewSessionManifest[]>([]);
@@ -1481,13 +1492,118 @@ export default function App({ page }: AppProps) {
     addLog('info', 'publish', `批量发布 ${published} 成功（行内 ${inline} · 全文 ${full}）/ ${failed} 失败`);
   };
 
+  // --- Apply fix：模型生成补丁 → 用户确认 → 提交回 MR 源分支（与发布链路互不干涉）---
+
+  /** 开关关掉时入口整个不渲染；开着但不是可修复候选（模糊建议 / 架构类 / 文件级规则）同样不渲染。 */
+  const fixable = useCallback(
+    (finding: Finding) => settings.applyFixEnabled && isFixCandidate(finding),
+    [settings.applyFixEnabled],
+  );
+
+  const fixDisabledReason = !settings.applyFixEnabled
+    ? undefined
+    : !mergeRequestRef || !mrContext
+      ? '当前页面不是 MR，无法提交修复'
+      : !modelReady
+        ? '生成修复需要先配置模型服务'
+        : running
+          ? '评审进行中，请等本次 Review 结束后再应用修复'
+          : fixStage === 'committing'
+            ? '正在提交修复，请稍候'
+            : undefined;
+
+  const closeFixDialog = () => {
+    fixAbort.current?.abort();
+    fixAbort.current = undefined;
+    setFixTarget(undefined);
+    setFixPlan(undefined);
+    setFixError('');
+    setFixStage('ready');
+  };
+
+  /** 修复提交成功后 MR 的 head 变了：重新拉一次变更，行号锚点与 diff_refs 才不会停留在旧 head。 */
+  const reloadMrChanges = useCallback(async () => {
+    if (!mergeRequestRef) return;
+    try {
+      const [context, diffs] = await Promise.all([
+        api.getMergeRequest(mergeRequestRef),
+        api.listDiffs(mergeRequestRef),
+      ]);
+      setMrContext(context);
+      setFiles(diffs);
+      addLog('info', 'gitlab', `已刷新 MR 变更（${diffs.length} 个文件）`, `head ${context.diffRefs.headSha.slice(0, 8)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addLog('warn', 'gitlab', '修复已提交，但刷新 MR 变更失败', message);
+      setToast(`修复已提交，但刷新 MR 变更失败：${message}`);
+    }
+  }, [api, mergeRequestRef, addLog]);
+
+  const openApplyFix = async (finding: Finding) => {
+    // 开关关掉后入口不渲染，这里再挡一次：任何路径都走不到提交
+    if (!settings.applyFixEnabled || !isFixCandidate(finding) || !mrContext) return;
+    const branch = mrContext.sourceBranch;
+    const controller = new AbortController();
+    fixAbort.current?.abort();
+    fixAbort.current = controller;
+    setFixTarget(finding);
+    setFixPlan(undefined);
+    setFixError('');
+    setFixStage('generating');
+    addLog('info', 'fix', `生成修复方案 ${finding.path}:${finding.line}`, `源分支 ${branch} · ${finding.ruleId ?? 'model'}`);
+    try {
+      const before = await api.getFile(finding.path, branch, controller.signal);
+      const raw = await runtime.generateFix(buildFixPayload(finding, before), settings.language, controller.signal);
+      const result = parseFixResponse(raw, before);
+      if (controller.signal.aborted) return;
+      setFixPlan(createFixPlan({ finding, branch, before, content: result.content }));
+      setFixStage('ready');
+      addLog('info', 'fix', `修复方案已生成（${result.mode}）`, `${finding.path} · ${result.content.length} 字符`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const message = describeFixFailure(error);
+      setFixError(message);
+      setFixStage('ready');
+      addLog('error', 'fix', `生成修复失败 ${finding.path}`, message);
+    }
+  };
+
+  const confirmApplyFix = async () => {
+    const target = fixTarget;
+    const plan = fixPlan;
+    if (!target || !plan || !settings.applyFixEnabled) return;
+    setFixStage('committing');
+    setFixError('');
+    try {
+      const commit = await api.createCommit({
+        branch: plan.branch,
+        message: plan.message,
+        description: plan.description,
+        files: plan.changes.map((change) => ({ path: change.path, content: change.content, action: change.action })),
+      });
+      closeFixDialog();
+      setFindingStatus(target.id, 'fixed');
+      setToast(`已提交修复 ${commit.shortId} 到 ${plan.branch}`);
+      addLog('info', 'fix', `已提交修复 ${commit.shortId} 到 ${plan.branch}`, `${commit.webUrl}`);
+      await reloadMrChanges();
+    } catch (error) {
+      const message = describeFixFailure(error);
+      setFixError(message);
+      setFixStage('ready');
+      addLog('error', 'fix', `提交修复失败（${plan.branch}）`, message);
+      setToast(`提交修复失败：${message}`);
+    }
+  };
+
   // --- Keyboard shortcuts ---
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229) return; // IME 组合输入中，快捷键全部让位
       if (event.key === 'Escape') {
-        if (publishFinding) setPublishFinding(undefined);
+        // 提交进行中不接 Escape：这时候关掉弹窗也拦不住已经发出去的提交
+        if (fixTarget && fixStage !== 'committing') closeFixDialog();
+        else if (publishFinding) setPublishFinding(undefined);
         else if (batchConfirm) setBatchConfirm(false);
         else if (selection) setSelection(null);
         return;
@@ -1837,6 +1953,9 @@ export default function App({ page }: AppProps) {
                   publishPositionIssue={publishPositionIssue}
                   publishMode={publishMode}
                   publishable={publishable}
+                  fixable={fixable}
+                  fixDisabledReason={fixDisabledReason}
+                  onApplyFix={(finding) => void openApplyFix(finding)}
                   canApprove={Boolean(mergeRequestRef)}
                   quickBusy={quickBusy}
                   onApprove={() => void handleApprove()}
@@ -2138,6 +2257,23 @@ export default function App({ page }: AppProps) {
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef?.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
           onCancel={() => setBatchConfirm(false)}
           onConfirm={() => void batchConfirmPublish()}
+        />
+      )}
+
+      {fixTarget && mergeRequestRef && (
+        <FixDialog
+          finding={fixTarget}
+          plan={fixPlan}
+          stage={fixStage}
+          error={fixError}
+          meta={{
+            projectPath: page.projectPath,
+            mergeRequestIid: mergeRequestRef.mergeRequestIid,
+            branch: fixPlan?.branch ?? mrContext?.sourceBranch ?? '',
+          }}
+          onCancel={closeFixDialog}
+          onRetry={() => void openApplyFix(fixTarget)}
+          onConfirm={() => void confirmApplyFix()}
         />
       )}
 

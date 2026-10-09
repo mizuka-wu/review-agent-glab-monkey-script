@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CheckCheck, ChevronDown, ChevronRight, Copy, Crosshair, Edit3, EyeOff, MessageSquarePlus, Save, X } from 'lucide-react';
+import { Check, CheckCheck, ChevronDown, ChevronRight, Copy, Crosshair, Edit3, EyeOff, MessageSquarePlus, Save, Wrench, X } from 'lucide-react';
 import { findingEditableFields, type FindingEdit } from '../../core/finding-edit';
 import { Markdown } from '../Markdown';
 import { Badge, Pill, sourceTone, tokens as C } from '../ui/modern';
@@ -28,6 +28,10 @@ interface FindingCardProps {
   publishMode: PublishMode;
   /** 行号无法落到当前 Diff 的原因；此时降级为全文评论，直接显示在卡片上。 */
   publishIssue?: string;
+  /** 「应用修复」入口：设置关闭或这条不是可修复候选时不传，按钮整个不渲染。 */
+  onApplyFix?: () => void;
+  /** 入口可见但当前点了必失败的原因（缺模型配置、不是 MR 页面等）。 */
+  fixDisabledReason?: string;
   onToggle: () => void;
   onSelect?: () => void;
   onLocate: () => void;
@@ -64,6 +68,7 @@ function ActionButton({ icon, children, onClick, disabled, title, primary, dange
 
 export function FindingCard({
   finding, expanded, selected, publishDisabled, publishDisabledReason, publishMode, publishIssue,
+  onApplyFix, fixDisabledReason,
   onToggle, onSelect, onLocate, onCopy, onPublish, onIgnore, onMarkFixed, onEdit,
 }: FindingCardProps) {
   const [edit, setEdit] = useState<FindingEdit | undefined>();
@@ -85,16 +90,19 @@ export function FindingCard({
 
   const statusPill = finding.status === 'published'
     ? <Pill tone="success">已发布</Pill>
-    : finding.status === 'ignored'
-      ? <Pill>已忽略</Pill>
-      : finding.status === 'failed'
-        ? <Pill tone="danger">发布失败</Pill>
-        : null;
+    : finding.status === 'fixed'
+      ? <Pill tone="success">已修复</Pill>
+      : finding.status === 'ignored'
+        ? <Pill>已忽略</Pill>
+        : finding.status === 'failed'
+          ? <Pill tone="danger">发布失败</Pill>
+          : null;
 
   return (
     <article
       data-finding-id={finding.id}
       data-finding-source={finding.source}
+      data-finding-status={finding.status}
       style={{
         background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${severity.bar}`,
         borderRadius: C.radius, overflow: 'hidden', opacity: finding.status === 'ignored' ? 0.62 : 1,
@@ -257,6 +265,15 @@ export function FindingCard({
                 <ActionButton icon={<Edit3 size={12} />} onClick={startEdit} disabled={finding.status === 'published'}>编辑</ActionButton>
                 <ActionButton icon={<Crosshair size={12} />} onClick={onLocate} title="在页面 Diff 中高亮定位">定位</ActionButton>
                 <ActionButton icon={<Copy size={12} />} onClick={onCopy}>复制评论</ActionButton>
+                {onApplyFix && (
+                  <ActionButton
+                    icon={<Wrench size={12} />} onClick={onApplyFix}
+                    disabled={Boolean(fixDisabledReason) || finding.status === 'fixed'}
+                    title={fixDisabledReason ?? '生成修复补丁，确认后提交到 MR 源分支'}
+                  >
+                    应用修复
+                  </ActionButton>
+                )}
                 <ActionButton
                   icon={finding.status === 'published' ? <Check size={12} /> : <MessageSquarePlus size={12} />}
                   primary onClick={onPublish}
