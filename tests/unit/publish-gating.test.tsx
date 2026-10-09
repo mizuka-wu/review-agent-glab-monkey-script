@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FindingsPanel, type FindingsPanelProps } from '../../src/components/review/FindingsPanel';
 import { BatchPublishDialog, PublishDialog } from '../../src/components/review/PublishDialog';
@@ -51,6 +51,7 @@ function panelProps(overrides: Partial<FindingsPanelProps> = {}): FindingsPanelP
     onEdit: noop,
     onOpenSettings: noop,
     onDismissError: noop,
+    onReset: noop,
     ...overrides,
   };
 }
@@ -157,11 +158,24 @@ describe('FindingsPanel bottom action bar', () => {
     expect(onApprove).toHaveBeenCalledTimes(1);
   });
 
-  it('disables approve without an MR reference and drops the bar on an empty review', () => {
+  it('disables approve without an MR reference but keeps the reset entry on an empty review', () => {
     const { rerender } = render(<FindingsPanel {...panelProps({ canApprove: false })} />);
     expect(screen.getByRole('button', { name: '一键 Approve' })).toBeDisabled();
     rerender(<FindingsPanel {...panelProps({ findings: [], canApprove: false })} />);
-    expect(screen.queryByRole('toolbar', { name: '评审快捷操作' })).toBeNull();
+    const bar = screen.getByRole('toolbar', { name: '评审快捷操作' });
+    expect(within(bar).getByRole('button', { name: '一键 Approve' })).toBeDisabled();
+    expect(within(bar).getByRole('button', { name: '重新开始' })).toBeEnabled();
+  });
+
+  it('resets from the bottom bar and disables that entry while running', () => {
+    const onReset = vi.fn();
+    const { rerender } = render(<FindingsPanel {...panelProps({ onReset })} />);
+    fireEvent.click(screen.getByRole('button', { name: '重新开始' }));
+    expect(onReset).toHaveBeenCalledTimes(1);
+    rerender(<FindingsPanel {...panelProps({ onReset, running: true })} />);
+    expect(screen.getByRole('button', { name: '重新开始' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '重新开始' }));
+    expect(onReset).toHaveBeenCalledTimes(1);
   });
 
   it('scrolls both bottom bars sideways instead of wrapping them', () => {

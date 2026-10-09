@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { BookOpen, Bug, CheckSquare, Database, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
+import { BookOpen, Bug, CheckSquare, Database, ExternalLink, FileText, GitMerge, History, Loader2, MessageSquare, Play, Settings as SettingsIcon, ShieldCheck, Sparkles, Square, Undo2, X } from 'lucide-react';
 import { ChatThread } from './components/ChatThread';
 import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { normalizeFileDiff } from './core/diff';
@@ -168,6 +168,8 @@ export default function App({ page }: AppProps) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [expandedFinding, setExpandedFinding] = useState('');
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
+  /** 复位后把焦点交回 prompt 输入框：递增一次，触发 IdleReview 的 focus effect。 */
+  const [promptFocus, setPromptFocus] = useState(0);
 
   const [publishFinding, setPublishFinding] = useState<Finding | undefined>(undefined);
   const [publishBody, setPublishBody] = useState('');
@@ -895,6 +897,38 @@ export default function App({ page }: AppProps) {
     }
   };
 
+  /** 只复位本轮 Review 生命周期：chat 会话、设置、GitLab 配置、debug 记录、已落盘会话（含已发布标记）都原样保留。 */
+  const resetReview = () => {
+    if (running) return;
+    modelContentRef.current = '';
+    bundleModelRef.current = [];
+    ruleLiveRef.current = [];
+    lastBackgroundRef.current = '';
+    lastPartialParseRef.current = 0;
+    lastPartialCountRef.current = 0;
+    setReviewStatus('idle');
+    setReviewError('');
+    setReviewWarnings([]);
+    setStages(undefined);
+    setFindings([]);
+    setExpandedFinding('');
+    setSelectedFindings(new Set());
+    setModelStream('');
+    setModelThinking('');
+    setShowThinking(false);
+    setShowRaw(false);
+    setShowRawThinking(false);
+    setPartialModelCount(0);
+    setScanMode(false);
+    setPublishFinding(undefined);
+    setBatchConfirm(false);
+    clearHighlights();
+    setTab('review');
+    setPromptFocus((tick) => tick + 1);
+    addLog('info', 'review', '已复位 Review：清除本轮结果，回到 prompt 输入界面');
+    setToast('已回到初始状态，可以开始新一轮 Review');
+  };
+
   const persistFindings = (next: Finding[]) => {
     setFindings(next);
     const session = currentSessionRef.current;
@@ -1402,7 +1436,7 @@ export default function App({ page }: AppProps) {
         </header>
 
         {/* Action bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: C.headerBg, borderTop: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
+        <div role="toolbar" aria-label="Review 操作" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: C.headerBg, borderTop: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
           <Btn
             variant="primary" size="sm"
             icon={running ? <Loader2 size={13} className="ra-spin" /> : <Play size={13} />}
@@ -1428,6 +1462,15 @@ export default function App({ page }: AppProps) {
           {savedSession && savedSession.status !== 'running' && findings.length === 0 && (
             <Btn variant="ghost" size="sm" icon={<History size={13} />} onClick={() => void resumeSession()}
               style={{ color: C.headerMuted }}>恢复</Btn>
+          )}
+          {(findings.length > 0 || reviewStatus !== 'idle') && (
+            <Btn
+              variant="ghost" size="sm" icon={<Undo2 size={13} />} disabled={running} onClick={resetReview}
+              title="清除本轮结果，回到可以输入 prompt 的初始界面（会话、设置、调试记录都保留）"
+              style={{ color: C.headerMuted }}
+            >
+              重新开始
+            </Btn>
           )}
         </div>
 
@@ -1622,6 +1665,7 @@ export default function App({ page }: AppProps) {
                   onEdit={editFinding}
                   onOpenSettings={() => setTab('settings')}
                   onDismissError={() => { setReviewError(''); setReviewStatus('idle'); }}
+                  onReset={resetReview}
                 />
               ) : running ? (
                 <div style={{ flex: '1 1 0%', minHeight: 0, display: 'grid', placeItems: 'center', padding: 20 }}>
@@ -1635,6 +1679,7 @@ export default function App({ page }: AppProps) {
               ) : (
                 <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', padding: '0 10px 10px' }}>
                   <IdleReview
+                    focusTick={promptFocus}
                     projectKey={page.projectPath ?? ''}
                     projectPrompt={(settings.projectPrompts ?? {})[page.projectPath ?? ''] ?? ''}
                     onProjectPromptChange={(value) => commitSettings({ ...settings, projectPrompts: { ...(settings.projectPrompts ?? {}), [page.projectPath ?? '']: value } })}
@@ -1912,9 +1957,11 @@ export default function App({ page }: AppProps) {
 
 }
 
-function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings, projectKey, projectPrompt, onProjectPromptChange }: {
+function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings, projectKey, projectPrompt, onProjectPromptChange, focusTick }: {
   loading: boolean; filesCount: number; enabledRuleCount: number; modelReady: boolean; hasMr: boolean;
   projectKey: string;
+  /** 大于 0 说明这次是复位回来的：把焦点交回 prompt 输入框，首次挂载不打断用户在页面上的操作。 */
+  focusTick: number;
   projectPrompt: string;
   onProjectPromptChange: (value: string) => void;
   savedSession?: ReviewSessionManifest;
@@ -1926,6 +1973,12 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
   onStart: () => void;
   onOpenSettings: () => void;
 }) {
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (focusTick > 0) promptRef.current?.focus();
+  }, [focusTick]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{
@@ -1954,6 +2007,8 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
               项目补充要求（按 {projectKey} 记住，注入混合评审 system prompt）
             </div>
             <textarea
+              ref={promptRef}
+              aria-label="项目补充要求"
               autoComplete="off"
               value={projectPrompt}
               onChange={(e) => onProjectPromptChange(e.target.value)}

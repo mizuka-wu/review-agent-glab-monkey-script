@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle, CheckCheck, ChevronDown, ChevronRight, FileText, Inbox, ListChecks, Loader2,
-  Download, MessageSquarePlus, RotateCcw, Share2, ShieldCheck, Sparkles, SquareCheckBig, ThumbsUp, X,
+  Download, MessageSquarePlus, RotateCcw, Share2, ShieldCheck, Sparkles, SquareCheckBig, ThumbsUp, Undo2, X,
 } from 'lucide-react';
 import {
   Banner, Btn, ConfirmButton, EmptyState, IconButton, Pill, Segmented, sourceTone, tokens as C,
@@ -70,6 +70,8 @@ export interface FindingsPanelProps {
   onEdit: (id: string, edit: FindingEdit) => void;
   onOpenSettings: () => void;
   onDismissError: () => void;
+  /** 复位本轮 Review：清空结果视图，回到可以输入 prompt 的初始界面；进行中禁用。 */
+  onReset: () => void;
 }
 
 export function FindingsPanel(props: FindingsPanelProps) {
@@ -135,9 +137,9 @@ export function FindingsPanel(props: FindingsPanelProps) {
   const publishBlockHint = '没有可发布的 Finding：评论内容为空';
   const modeHint = '行内评论挂在具体 diff 行上，全文评论发布到 MR 评论区（不带行位置）';
 
-  /** 底部工具栏：Review 结束后一直留在面板底部，空态与失败态也要能一键 Approve。
+  /** 底部工具栏：Review 结束后一直留在面板底部，空态与失败态也要能一键 Approve、能复位回初始输入态。
       控件多或面板窄时整排横向滚动，不换行、也不把横向滚动条推给页面。 */
-  const quickBar = (canApprove || findings.length > 0) && (
+  const quickBar = (canApprove || findings.length > 0 || !running) && (
     <div
       role="toolbar" aria-label="评审快捷操作" className="ra-scroll"
       style={{
@@ -178,6 +180,12 @@ export function FindingsPanel(props: FindingsPanelProps) {
       </Btn>
       <Btn size="sm" variant="ghost" icon={<Share2 size={13} />} disabled={!props.canDelegate} onClick={props.onExportDelegation}>
         Delegation
+      </Btn>
+      <Btn
+        size="sm" variant="ghost" icon={<Undo2 size={13} />} disabled={running} onClick={props.onReset}
+        title="清除本轮结果，回到可以输入 prompt 的初始界面（会话、设置、调试记录都保留）"
+      >
+        重新开始
       </Btn>
     </div>
   );

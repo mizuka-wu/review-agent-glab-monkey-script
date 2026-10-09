@@ -413,6 +413,41 @@ test.describe('mock mode', () => {
     expect(requests.some((path) => path.endsWith('/approve'))).toBe(true);
   });
 
+  test('returns to the prompt input state after a finished review', async ({ page }) => {
+    await routeGitLab(page);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    const prompt = page.getByRole('textbox', { name: '项目补充要求' });
+    await expect(prompt).toBeVisible();
+    await prompt.fill('金额计算必须用 decimal');
+
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('article[data-finding-source]')).not.toHaveCount(0);
+
+    // 底部结果面板的复位入口：清掉本轮结果，回到可输入的初始态
+    await page.getByRole('toolbar', { name: '评审快捷操作' })
+      .getByRole('button', { name: '重新开始' }).click();
+    await expect(page.getByText('开始一次混合评审')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('article[data-finding-source]')).toHaveCount(0);
+    await expect(prompt).toBeEditable();
+    await expect(prompt).toBeFocused();
+    // prompt 属于设置，不在复位范围内
+    await expect(prompt).toHaveValue('金额计算必须用 decimal');
+
+    // 顶部动作栏的复位入口与底部同一个函数：再跑一轮，从顶部回去
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置').first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('toolbar', { name: 'Review 操作' })
+      .getByRole('button', { name: '重新开始' }).click();
+    await expect(page.getByText('开始一次混合评审')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('article[data-finding-source]')).toHaveCount(0);
+    await expect(prompt).toBeFocused();
+  });
+
   test('streams model review output live into the panel', async ({ page }) => {
     const requests: string[] = [];
     await routeGitLab(page, requests, { stream: true });
@@ -602,6 +637,38 @@ test.describe('real GitLab mode', () => {
     await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 15000 });
     await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 15000 });
     await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/)).toBeVisible({ timeout: 30000 });
+  });
+
+  test('returns to the prompt input state after a finished real review', async ({ page }) => {
+    test.setTimeout(240_000);
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, realMrUrl);
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    const prompt = page.getByRole('textbox', { name: '项目补充要求' });
+    await expect(prompt).toBeVisible({ timeout: 20000 });
+
+    const runReview = async () => {
+      await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 20000 });
+      await expect(page.getByRole('button', { name: 'Review 中', exact: true })).toBeHidden({ timeout: 120000 });
+      await expect(page.getByText(/个问题|没有发现需要处理的问题|没有可用的 MR Diff/).first()).toBeVisible({ timeout: 20000 });
+    };
+    const assertBackToInput = async () => {
+      await expect(page.getByText('开始一次混合评审')).toBeVisible({ timeout: 20000 });
+      await expect(page.locator('article[data-finding-source]')).toHaveCount(0);
+      await expect(prompt).toBeEditable();
+      await expect(prompt).toBeFocused();
+    };
+
+    await runReview();
+    const bar = page.getByRole('toolbar', { name: '评审快捷操作' });
+    await expect(bar).toBeVisible();
+    await bar.getByRole('button', { name: '重新开始' }).click();
+    await assertBackToInput();
+
+    await runReview();
+    await page.getByRole('toolbar', { name: 'Review 操作' })
+      .getByRole('button', { name: '重新开始' }).click();
+    await assertBackToInput();
   });
 
   // --- 底部工具栏：Approve 常驻 + 整排控件横向可滚（不把横向滚动推给页面）---
