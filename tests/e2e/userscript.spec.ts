@@ -69,9 +69,59 @@ const diff = {
   renamed_file: false,
 };
 
+// --- Mock：另一个 GitLab 实例上的配套 MR（跨项目 / 跨 origin 的参考变更）---
+
+const companionHost = 'https://companion.test';
+const companionMrUrl = `${companionHost}/platform/sdk/-/merge_requests/12`;
+const companionLabel = 'platform/sdk!12';
+
+const companionMergeRequest = {
+  title: 'feat: companion token endpoint',
+  state: 'opened',
+  source_branch: 'feat/token',
+  target_branch: 'main',
+  sha: 'companion-head',
+  diff_refs: { base_sha: 'c-base', head_sha: 'c0ffee1234567890', start_sha: 'c-base' },
+};
+
+const companionDiff = {
+  old_path: 'src/companion.ts',
+  new_path: 'src/companion.ts',
+  new_file: true,
+  deleted_file: false,
+  renamed_file: false,
+  diff: '@@ -0,0 +1,2 @@\n+export const COMPANION_TOKEN = "tk_companion";\n+export function companionPing() { return "pong"; }',
+};
+
+/** 模型对参考变更也报一条：参考 MR 不是评审对象，这条必须被丢掉。 */
+const companionFinding = {
+  title: '参考仓库里的 Token 也写死了', severity: 'high', category: 'security', confidence: 'high',
+  path: 'src/companion.ts', line: 1, endLine: 1, existingCode: 'export const COMPANION_TOKEN = "tk_companion";',
+  content: '参考 MR 的 companion.ts 把 Token 直接写进了源文件。',
+  evidence: [{ path: 'src/companion.ts', line: 1, snippet: 'export const COMPANION_TOKEN = "tk_companion";' }],
+  comment: '参考 MR 里有硬编码 Token。',
+};
+
+/**
+ * 参考 MR 在另一个 origin 上：油猴里 GM.xmlHttpRequest 不受 CORS 限制，
+ * E2E 是把脚本注入主世界走 fetch，所以 mock 响应要自己带上 CORS 头。
+ */
+async function routeCompanion(page: Page, requests: string[] = [], options?: { status?: number }) {
+  await page.route(`${companionHost}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    requests.push(`${route.request().method()} ${url.host}${url.pathname}`);
+    const status = options?.status ?? 200;
+    const headers = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
+    const body = status === 200
+      ? url.pathname.endsWith('/diffs') ? [companionDiff] : companionMergeRequest
+      : { message: `${status} Not Found` };
+    await route.fulfill({ status, headers, body: JSON.stringify(body) });
+  });
+}
+
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[] }) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[] }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -114,6 +164,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
               evidence: [{ path: 'src/payment.ts', line: 3, snippet: 'console.log(apiKey);' }],
               comment: 'console.log 可能泄漏 API Key。',
             },
+            ...(options?.extraFindings ?? []),
           ]),
         },
         finish_reason: 'stop',
@@ -141,6 +192,10 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
     requests.push(url.pathname);
     if (route.request().resourceType() === 'document') {
       await route.fulfill({ contentType: 'text/html', body: mockHtml });
+      return;
+    }
+    if (url.pathname === '/api/v4/merge_requests') {
+      await route.fulfill({ json: options?.recentMrs ?? [] });
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/diffs')) {
@@ -585,6 +640,232 @@ test.describe('mock mode', () => {
     await dialog.getByRole('button', { name: '恢复为当前会话' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('article').first().getByText('已修复')).toBeVisible({ timeout: 10000 });
+  });
+
+  // --- 参考 MR：其他 MR 只作为只读上下文拼进当前这次评审 ---
+
+  const referencePanel = (page: Page) => page.getByRole('region', { name: '参考 MR' });
+
+  async function openReferencePanel(page: Page) {
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: /^参考 MR/ }).click();
+    await expect(referencePanel(page).getByLabel('参考 MR 链接')).toBeVisible();
+  }
+
+  const RULES_ONLY_SETTINGS = {
+    provider: 'openai', modelBaseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '',
+    gitlabToken: '', effort: 'balanced', language: 'zh-CN', reviewMode: 'hybrid',
+  };
+
+  test('splices a pasted reference MR into the review input and keeps publishing on the current MR', async ({ page }) => {
+    const requests: string[] = [];
+    const modelBodies: string[] = [];
+    const posts: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST') posts.push(request.url());
+      if (request.url().includes('/chat/completions')) modelBodies.push(request.postData() ?? '');
+    });
+    await routeCompanion(page, requests);
+    await routeGitLab(page, requests, { extraFindings: [companionFinding] });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await openReferencePanel(page);
+    const panel = referencePanel(page);
+
+    await panel.getByLabel('参考 MR 链接').fill(
+      `${companionMrUrl}\nhttps://gitlab.test/acme/app/-/merge_requests/248/diffs`,
+    );
+    await panel.getByRole('button', { name: '解析并拉取' }).click();
+    await expect(panel.getByText('已就绪', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(panel.getByText(companionLabel)).toBeVisible();
+    await expect(panel.getByText('1 个变更文件 · head c0ffee12')).toBeVisible();
+    // 当前 MR 自己不能当参考，原因要点名
+    await expect(panel.getByText('这就是当前正在评审的 MR，不需要当参考')).toBeVisible();
+    expect(requests.some((entry) => entry === 'GET companion.test/api/v4/projects/platform%2Fsdk/merge_requests/12/diffs')).toBe(true);
+
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置').first()).toBeVisible({ timeout: 15000 });
+
+    // 参考块进了那一次评审调用（模型 prompt 里能看到参考 diff）
+    const reviewPrompt = modelBodies.find((body) => body.includes('你是代码评审引擎')) ?? '';
+    expect(reviewPrompt).toContain('参考变更：其他 MR（只读上下文，不是评审对象）');
+    expect(reviewPrompt).toContain(companionLabel);
+    expect(reviewPrompt).toContain('COMPANION_TOKEN');
+
+    // 参考 MR 不产出 Finding，运行说明里如实写明
+    await expect(page.getByText('参考仓库里的 Token 也写死了')).toHaveCount(0);
+    await page.getByRole('button', { name: '运行说明' }).click();
+    await expect(page.getByText(/已注入 1 个参考 MR/)).toBeVisible();
+    await expect(page.getByText(/丢弃了 1 条落在参考 MR 上的 AI Finding/)).toBeVisible();
+
+    // 发布链路完全没变：一键发布全部 Finding，落点仍然只有当前 MR
+    const quickBar = page.getByRole('toolbar', { name: '评审快捷操作' });
+    const firstPost = page.waitForResponse(
+      (response) => response.url().endsWith('/discussions') && response.request().method() === 'POST',
+      { timeout: 30000 },
+    );
+    await quickBar.getByRole('button', { name: /^一键(行内评论|全文评论|发布)/ }).click();
+    await quickBar.getByRole('button', { name: '确认发布？' }).click();
+    const response = await firstPost;
+    expect(response.request().postData()).toContain('position%5Bhead_sha%5D=head-sha');
+    await expect(page.getByRole('button', { name: '已发布', exact: true }).first()).toBeVisible({ timeout: 30000 });
+
+    // 项目标识可能是数字 id 或编码路径，但 host 与 MR 必须永远是当前这一个
+    const currentMrDiscussions = /^https:\/\/gitlab\.test\/api\/v4\/projects\/(?:42|acme%2Fapp)\/merge_requests\/248\/discussions$/;
+    const discussionPosts = posts.filter((url) => url.endsWith('/discussions'));
+    expect(discussionPosts.length).toBeGreaterThan(1);
+    for (const url of discussionPosts) expect(url).toMatch(currentMrDiscussions);
+    // 参考 MR 那边一个写请求都没有
+    expect(posts.filter((url) => url.startsWith(companionHost))).toEqual([]);
+    expect(requests.filter((entry) => entry.startsWith('POST companion.test'))).toEqual([]);
+  });
+
+  test('reports which reference MR could not be fetched and why', async ({ page }) => {
+    const requests: string[] = [];
+    await routeCompanion(page, requests, { status: 404 });
+    await routeGitLab(page, requests);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', RULES_ONLY_SETTINGS);
+    await openReferencePanel(page);
+    const panel = referencePanel(page);
+
+    await panel.getByLabel('参考 MR 链接').fill(companionMrUrl);
+    await panel.getByRole('button', { name: '解析并拉取' }).click();
+    await expect(panel.getByText('拉取失败', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(panel.getByText(`找不到 ${companionLabel}（HTTP 404）：MR 不存在、被删除，或 Token 看不到该项目`)).toBeVisible();
+    await expect(page.getByRole('button', { name: /^参考 MR/ })).toContainText('1 个失败');
+
+    // 不是 MR 的链接也要逐条说明，不能静默丢掉
+    await panel.getByLabel('参考 MR 链接').fill('https://gitlab.test/acme/app/-/issues/9 not-a-url');
+    await panel.getByRole('button', { name: '解析并拉取' }).click();
+    await expect(panel.getByText('2 个链接没有加进来')).toBeVisible();
+    await expect(panel.getByText('不是 Merge Request 链接')).toBeVisible();
+    await expect(panel.getByText('不是可解析的链接')).toBeVisible();
+
+    // 失败会带进本轮评审的运行说明
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText(/个问题|没有发现需要处理的问题/).first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: '运行说明' }).click();
+    await expect(page.getByText(new RegExp(`参考 MR ${companionLabel.replace('/', '\\/')} 拉取失败`))).toBeVisible();
+  });
+
+  test('attaches a reference MR picked from local review history and GitLab recent activity', async ({ page }) => {
+    const requests: string[] = [];
+    await routeCompanion(page, requests);
+    await routeGitLab(page, requests, {
+      recentMrs: [
+        {
+          iid: 12, title: 'feat: companion token endpoint', state: 'opened', source_branch: 'feat/token',
+          target_branch: 'main', updated_at: '2026-10-09T09:40:00.000Z', web_url: companionMrUrl,
+        },
+        {
+          iid: 248, title: 'Harden checkout payment error handling', state: 'opened',
+          updated_at: '2026-10-09T09:00:00.000Z', web_url: 'https://gitlab.test/acme/app/-/merge_requests/248',
+        },
+      ],
+    });
+    const sessions = {
+      'ra-session-1': {
+        version: 1, id: 'ra-session-1', key: 'k', origin: 'https://gitlab.test', projectPath: 'acme/legacy',
+        mergeRequestIid: 77, headSha: 'sha', title: '上次评审过的 MR', scope: 'all', source: 'rule',
+        status: 'completed', effort: 'balanced', language: 'zh-CN',
+        createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-08T20:11:00.000Z',
+        findings: [], warnings: [],
+        context: { includedFiles: 1, omittedFiles: [], fullFiles: 0, omittedFullFiles: [], estimatedCharacters: 10, budgetCharacters: 60000 },
+      },
+    };
+    await page.addInitScript({
+      content: `localStorage.setItem('review-agent-review-sessions-v1', ${JSON.stringify(JSON.stringify(sessions))});`,
+    });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', RULES_ONLY_SETTINGS);
+    await openReferencePanel(page);
+    const panel = referencePanel(page);
+
+    await panel.getByRole('button', { name: '从最近活动选择' }).click();
+    await expect(panel.getByText('acme/legacy!77')).toBeVisible({ timeout: 15000 });
+    await expect(panel.getByText(companionLabel)).toBeVisible();
+    // 当前 MR 不在候选里
+    await expect(panel.getByText('acme/app!248')).toHaveCount(0);
+    // 本地评审记录置顶
+    const order = await panel.evaluate((node) => {
+      const text = node.textContent ?? '';
+      return [text.indexOf('本工具评审过的 MR'), text.indexOf('GitLab 最近活动')];
+    });
+    expect(order[0]).toBeGreaterThanOrEqual(0);
+    expect(order[0]).toBeLessThan(order[1]);
+    expect(requests.some((entry) => entry.includes('scope=all'))).toBe(false);
+
+    await panel.getByRole('checkbox', { name: `选择 ${companionLabel}` }).check();
+    await expect(panel.getByText('已就绪', { exact: true })).toBeVisible({ timeout: 15000 });
+    expect(requests.some((entry) => entry === 'GET companion.test/api/v4/projects/platform%2Fsdk/merge_requests/12/diffs')).toBe(true);
+
+    await panel.getByRole('checkbox', { name: `选择 ${companionLabel}` }).uncheck();
+    await expect(page.getByRole('button', { name: /^参考 MR/ })).toContainText('未附加');
+  });
+
+  test('recalls submitted prompts with the arrow keys and the history list', async ({ page }) => {
+    const requests: string[] = [];
+    await routeGitLab(page, requests);
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('tab', { name: /对话/ }).click();
+    const box = page.getByLabel('消息输入框');
+    await expect(box).toBeVisible();
+
+    // 草稿被清空 = 这一轮真的发出去了（responding 时 Enter 会被忽略，不能靠文本判断）
+    const sendPrompt = async (text: string) => {
+      await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible({ timeout: 15000 });
+      await box.fill(text);
+      await box.press('Enter');
+      await expect(box).toHaveValue('', { timeout: 15000 });
+      await expect(page.getByText(text).first()).toBeVisible({ timeout: 15000 });
+      // 等模型回完，responding 才会放下来
+      await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible({ timeout: 15000 });
+    };
+
+    await sendPrompt('第一次提问：这段变更的失败路径');
+    await sendPrompt('第二次提问：并发与幂等性怎么保证');
+
+    // prompt 历史单独存一个键，不和 chat 会话存储混在一起
+    const stored = await page.evaluate(() => ({
+      prompts: JSON.parse(localStorage.getItem('review-agent-prompt-history-v1') ?? '[]') as string[],
+      sessions: JSON.parse(localStorage.getItem('review-agent-chat-v1') ?? '[]') as unknown[],
+    }));
+    expect(stored.prompts).toEqual(['第二次提问：并发与幂等性怎么保证', '第一次提问：这段变更的失败路径']);
+    expect(stored.sessions.length).toBeGreaterThan(0);
+
+    await expect(box).toHaveValue('');
+    await box.click();
+    await box.press('ArrowUp');
+    await expect(box).toHaveValue('第二次提问：并发与幂等性怎么保证');
+    await box.press('ArrowUp');
+    await expect(box).toHaveValue('第一次提问：这段变更的失败路径');
+    await expect(page.getByText('历史 prompt 2/2')).toBeVisible();
+    await box.press('ArrowDown');
+    await expect(box).toHaveValue('第二次提问：并发与幂等性怎么保证');
+
+    // 历史列表：点击填回输入框
+    await page.getByRole('button', { name: '历史 prompt' }).click();
+    const list = page.getByRole('listbox', { name: '历史 prompt 列表' });
+    await expect(list.getByRole('option')).toHaveCount(2);
+    await list.getByRole('option').nth(1).click();
+    await expect(box).toHaveValue('第一次提问：这段变更的失败路径');
+
+    // 也可以直接从历史里作为新一轮提交
+    const sentBefore = requests.filter((path) => path.includes('chat/completions')).length;
+    await page.getByRole('button', { name: '历史 prompt' }).click();
+    await list.getByRole('button', { name: '直接发送这条 prompt' }).first().click();
+    await expect.poll(() => requests.filter((path) => path.includes('chat/completions')).length, { timeout: 15000 })
+      .toBeGreaterThan(sentBefore);
+    await expect(box).toHaveValue('');
+    // 直接发送也照样进历史：同一条不会重复占位
+    await expect.poll(async () => page.evaluate(
+      () => JSON.parse(localStorage.getItem('review-agent-prompt-history-v1') ?? '[]') as string[],
+    )).toEqual(['第二次提问：并发与幂等性怎么保证', '第一次提问：这段变更的失败路径']);
   });
 
   test('userscript metadata is bundled and scoped to GitLab pages', async ({ page }) => {
