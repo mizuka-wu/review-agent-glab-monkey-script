@@ -4,6 +4,9 @@ import { Markdown } from './Markdown';
 import { Btn, EmptyState, tokens as C } from './ui/modern';
 import type { AgentLoopEvent } from '../core/agent-loop';
 import type { ChatSession } from '../core/chat-sessions';
+import {
+  caretAllowsHistory, idleBrowse, stepPromptHistory, type PromptHistoryBrowse,
+} from '../core/prompt-history';
 import { selectionLabel } from '../core/selection';
 import type { ChatMessage, CodeSelection } from '../core/types';
 
@@ -23,6 +26,9 @@ export interface ChatThreadProps {
   onClearAttachment?: () => void;
   toolEvents?: AgentLoopEvent[];
   suggestions?: string[];
+  /** 提交过的 prompt（新→旧）。↑↓ 翻历史，历史按钮打开列表。 */
+  promptHistory?: string[];
+  onRemovePrompt?: (text: string) => void;
   modelReady: boolean;
   onOpenSettings: () => void;
   modelPicker?: ReactNode;
@@ -33,12 +39,15 @@ const COMPOSER_MAX_HEIGHT = 140;
 export function ChatThread({
   messages, sessions, activeSessionId, onNewSession, onSwitchSession, onDeleteSession,
   responding, draft, onDraftChange, onSend, onStop,
-  attachment, onClearAttachment, toolEvents = [], suggestions = [], modelReady, onOpenSettings, modelPicker,
+  attachment, onClearAttachment, toolEvents = [], suggestions = [], promptHistory = [], onRemovePrompt,
+  modelReady, onOpenSettings, modelPicker,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showTrace, setShowTrace] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
+  const [showPrompts, setShowPrompts] = useState(false);
+  const [browse, setBrowse] = useState<PromptHistoryBrowse>(idleBrowse);
 
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const headerIconBtn: CSSProperties = {
@@ -62,7 +71,36 @@ export function ChatThread({
   const submit = () => {
     const text = draft.trim();
     if (!text || responding) return;
+    setBrowse(idleBrowse);
+    setShowPrompts(false);
     onSend(text);
+  };
+
+  /** 返回 true 表示这次 ↑↓ 归历史管，调用方要 preventDefault；已在翻历史时整个输入框都归历史管。 */
+  const stepHistory = (direction: 'older' | 'newer'): boolean => {
+    const node = textareaRef.current;
+    if (!node || promptHistory.length === 0) return false;
+    if (browse.index === -1
+      && !caretAllowsHistory(node.value, { start: node.selectionStart, end: node.selectionEnd }, direction)) return false;
+    const stepped = stepPromptHistory(promptHistory, browse, direction, draft);
+    if (!stepped) return false;
+    setBrowse(stepped.browse);
+    setShowPrompts(false);
+    onDraftChange(stepped.value);
+    return true;
+  };
+
+  const cancelHistory = () => {
+    if (browse.index === -1) return;
+    setBrowse(idleBrowse);
+    onDraftChange(browse.saved);
+  };
+
+  const usePrompt = (text: string) => {
+    setBrowse(idleBrowse);
+    setShowPrompts(false);
+    onDraftChange(text);
+    textareaRef.current?.focus();
   };
 
   const traceEvents = toolEvents.filter((event) => event.type === 'tool_call' || event.type === 'tool_result' || event.type === 'error');
@@ -211,20 +249,87 @@ export function ChatThread({
           </div>
         )}
 
+        {browse.index >= 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 10.5, color: C.textMuted }}>
+            <span>历史 prompt {browse.index + 1}/{promptHistory.length}</span>
+            <span>↑↓ 切换 · Enter 发送 · Esc 回到未发送的草稿</span>
+          </div>
+        )}
         <div style={{
-          display: 'flex', alignItems: 'flex-end', gap: 6, padding: '6px 6px 6px 10px',
+          display: 'flex', alignItems: 'flex-end', gap: 6, padding: '6px 6px 6px 8px', position: 'relative',
           background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: C.radiusLg,
           boxShadow: '0 1px 2px rgba(0,0,0,0.04)', transition: C.transition,
         }}>
+          {promptHistory.length > 0 && (
+            <>
+              <button
+                type="button" aria-label="历史 prompt" aria-expanded={showPrompts} disabled={responding}
+                onClick={() => setShowPrompts((value) => !value)}
+                title={`最近 ${promptHistory.length} 条提交过的 prompt（也可以在输入框里按 ↑）`}
+                style={{ ...headerIconBtn, width: 28, height: 28, marginTop: 1, color: showPrompts ? C.primary : C.textMuted }}
+              ><History size={13} /></button>
+              {showPrompts && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 20 }} onClick={() => setShowPrompts(false)} />
+                  <div
+                    role="listbox" aria-label="历史 prompt 列表" className="ra-scroll"
+                    style={{
+                      position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6, zIndex: 21,
+                      maxHeight: 250, overflowY: 'auto', background: C.bgSubtle, border: `1px solid ${C.border}`,
+                      borderRadius: C.radiusSm, boxShadow: '0 10px 28px rgba(0,0,0,.2)', padding: 4,
+                    }}
+                  >
+                    {promptHistory.map((entry, index) => (
+                      <div
+                        key={`${index}-${entry.slice(0, 24)}`} role="option" aria-selected={browse.index === index}
+                        onClick={() => usePrompt(entry)} title="点击填回输入框"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 6, padding: '5px 7px', borderRadius: C.radiusSm,
+                          cursor: 'pointer', background: browse.index === index ? C.primaryLight : 'transparent',
+                        }}
+                      >
+                        <span style={{
+                          flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.5, color: C.text, whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word', maxHeight: 44, overflow: 'hidden',
+                        }}>{entry}</span>
+                        <button
+                          type="button" aria-label="直接发送这条 prompt" disabled={responding}
+                          onClick={(event) => { event.stopPropagation(); setBrowse(idleBrowse); setShowPrompts(false); onSend(entry); }}
+                          style={{ ...headerIconBtn, width: 18, height: 18, color: C.textMuted }}
+                        ><Send size={11} /></button>
+                        {onRemovePrompt && (
+                          <button
+                            type="button" aria-label="删除这条 prompt"
+                            onClick={(event) => { event.stopPropagation(); onRemovePrompt(entry); }}
+                            style={{ ...headerIconBtn, width: 18, height: 18, color: C.textMuted }}
+                          ><Trash2 size={11} /></button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
           <textarea
             ref={textareaRef}
             aria-label="消息输入框" autoComplete="off"
             rows={1}
             value={draft}
-            placeholder={modelReady ? '提问，或粘贴代码…（Enter 发送 / Shift+Enter 换行）' : '未配置模型，暂不能对话；可先运行规则检查'}
-            onChange={(event) => onDraftChange(event.target.value)}
+            placeholder={modelReady ? '提问，或粘贴代码…（Enter 发送 / Shift+Enter 换行 / ↑ 历史）' : '未配置模型，暂不能对话；可先运行规则检查'}
+            onChange={(event) => { setBrowse(idleBrowse); onDraftChange(event.target.value); }}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return; // IME 选词回车不发送
+              if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !event.shiftKey
+                && stepHistory(event.key === 'ArrowUp' ? 'older' : 'newer')) {
+                event.preventDefault();
+                return;
+              }
+              if (event.key === 'Escape' && browse.index >= 0) {
+                event.preventDefault();
+                cancelHistory();
+                return;
+              }
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 submit();

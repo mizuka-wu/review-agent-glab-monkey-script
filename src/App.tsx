@@ -10,6 +10,7 @@ import {
 } from './core/findings';
 import { buildDelegationContext } from './core/delegation';
 import { compactThinking, extractThinkingOutline } from './core/thinking';
+import { ReferenceMrPanel, type ReferenceCandidate } from './components/review/ReferenceMrPanel';
 import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
@@ -26,7 +27,7 @@ import {
 } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
-import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage } from './core/gitlab-adapter';
+import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage, projectAdapter } from './core/gitlab-adapter';
 import { McpClient, MultiMcpClient } from './core/mcp-client';
 import { createModelRuntime, type AgentMessage, type ModelRuntime } from './core/model-runtime';
 import { createRepoIndex, type RepoIndex, type RepoIndexStatus } from './core/repo-index';
@@ -47,12 +48,18 @@ import {
   CHAT_STORAGE_KEY, deriveChatTitle, loadChatSessions, newChatSession, saveChatSessions, trimSessionMessages,
   type ChatSession,
 } from './core/chat-sessions';
+import {
+  PROMPT_HISTORY_KEY, loadPromptHistory, pushPromptHistory, removePromptHistory, savePromptHistory,
+} from './core/prompt-history';
+import {
+  loadReferenceMrs, mrLinkKey, mrLinkLabel, mrWebUrl, parseMrLinks, type MrLinkParseFailure,
+} from './core/reference-mrs';
 import { clearSensitiveSettings, defaultSettings, loadSettings, inspectConfiguration, saveSettings } from './core/settings';
 import { httpTransport } from './core/http';
 import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
 import type {
   ChatMessage, CodeSelection, DiscussionPosition, FileDiff, Finding, MergeRequestContext,
-  MergeRequestRef, PageContext, PublishMode, ReviewStageReport, RuntimeSettings,
+  MergeRequestRef, MrLinkRef, PageContext, PublishMode, ReferenceMr, ReviewStageReport, RuntimeSettings,
 } from './core/types';
 
 function locateLabel(path: string, line: number) {
@@ -81,6 +88,14 @@ const MIN_WIDTH = 380;
 const MAX_WIDTH = 780;
 
 const suggestions = ['解释这段变更的失败路径', '检查并发与幂等性', '补充可执行的测试建议'];
+
+/** 参考 MR 候选：本工具评审过的（置顶）+ GitLab 最近活动。 */
+interface ReferenceCandidateSource {
+  ref: MrLinkRef;
+  group: 'history' | 'recent';
+  title: string;
+  meta: string;
+}
 
 interface UiPrefs {
   width: number;
@@ -148,6 +163,15 @@ export default function App({ page }: AppProps) {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState('');
   const [draft, setDraft] = useState('');
+  const [promptHistory, setPromptHistory] = useState<string[]>(() => loadPromptHistory(PROMPT_HISTORY_KEY));
+  const promptHistoryRef = useRef<string[]>(promptHistory);
+  const [referenceInput, setReferenceInput] = useState('');
+  const [references, setReferences] = useState<ReferenceMr[]>([]);
+  const [referenceBusy, setReferenceBusy] = useState(false);
+  const [referenceInvalid, setReferenceInvalid] = useState<MrLinkParseFailure[]>([]);
+  const [referenceCandidates, setReferenceCandidates] = useState<ReferenceCandidateSource[]>([]);
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateError, setCandidateError] = useState('');
   const [attachment, setAttachment] = useState<CodeSelection | undefined>(undefined);
   const [selection, setSelection] = useState<CodeSelection | null>(null);
   /** 工具条锚定的 DOM 节点：不放进 CodeSelection（要序列化进会话），单独留着判活。 */
@@ -553,9 +577,16 @@ export default function App({ page }: AppProps) {
 
   // --- Chat ---
 
+  const commitPromptHistory = useCallback((entries: string[]) => {
+    promptHistoryRef.current = entries;
+    setPromptHistory(entries);
+    savePromptHistory(entries, PROMPT_HISTORY_KEY);
+  }, []);
+
   const sendMessage = useCallback(async (text: string) => {
     const content = text.trim();
     if (!content || responding) return;
+    commitPromptHistory(pushPromptHistory(promptHistoryRef.current, content));
     const userMessage: ChatMessage = { id: `user-${Date.now()}`, role: 'user', content, attachment };
     const history = [...messages, userMessage];
     setMessages(history);
@@ -658,7 +689,7 @@ export default function App({ page }: AppProps) {
       setResponding(false);
       chatAbort.current = undefined;
     }
-  }, [responding, attachment, messages, modelReady, config.issues, mergeRequestRef, mrContext, api, settings, runtime, addLog]);
+  }, [responding, attachment, messages, modelReady, config.issues, mergeRequestRef, mrContext, api, settings, runtime, addLog, commitPromptHistory]);
 
   const stopChat = () => {
     chatAbort.current?.abort();
@@ -695,6 +726,143 @@ export default function App({ page }: AppProps) {
   // 页面文本选区没有文件与行号，不能当 Review 范围，只能拿去提问。
   const codeAttachment = attachment && isCodeSelection(attachment) ? attachment : undefined;
   const reviewTarget = codeAttachment ?? (selection && isCodeSelection(selection) ? selection : undefined);
+
+  // --- 参考 MR（只读上下文：不产出 Finding，也不作为发布目标）---
+
+  const referenceApi = useCallback(
+    (ref: MrLinkRef) => projectAdapter(ref.origin, ref.projectPath, settings.gitlabToken),
+    [settings.gitlabToken],
+  );
+
+  const currentMrKey = mergeRequestRef
+    ? mrLinkKey({ origin: mergeRequestRef.origin, projectPath: mergeRequestRef.projectPath, iid: mergeRequestRef.mergeRequestIid })
+    : '';
+
+  const fetchReferences = async (refs: MrLinkRef[], signal?: AbortSignal): Promise<ReferenceMr[]> => {
+    if (refs.length === 0) return [];
+    setReferenceBusy(true);
+    addLog('info', 'reference', `拉取 ${refs.length} 个参考 MR`, refs.map(mrLinkLabel).join(', '));
+    try {
+      const loaded = await loadReferenceMrs(refs, referenceApi, signal);
+      setReferences((prev) => prev.map((item) => {
+        const match = loaded.find((entry) => mrLinkKey(entry.ref) === mrLinkKey(item.ref));
+        return match ? { ...match, addedAt: item.addedAt } : item;
+      }));
+      for (const item of loaded) {
+        if (item.status === 'ready') {
+          addLog('info', 'reference', `参考 MR ${mrLinkLabel(item.ref)} 已就绪：${item.files.length} 个变更文件`, item.title);
+        } else {
+          addLog('error', 'reference', `参考 MR ${mrLinkLabel(item.ref)} 拉取失败`, item.error);
+        }
+      }
+      const failed = loaded.filter((item) => item.status === 'failed').length;
+      setToast(failed > 0
+        ? `${loaded.length - failed} 个参考 MR 已就绪，${failed} 个拉取失败（原因见参考 MR 面板）`
+        : `已附加 ${loaded.length} 个参考 MR，只作为本次评审的上下文`);
+      return loaded;
+    } catch (error) {
+      if (signal?.aborted || (error as Error).name === 'AbortError') return [];
+      const message = error instanceof Error ? error.message : String(error);
+      addLog('error', 'reference', '拉取参考 MR 失败', message);
+      setToast(`拉取参考 MR 失败：${message}`);
+      return [];
+    } finally {
+      setReferenceBusy(false);
+    }
+  };
+
+  const addReferenceLinks = () => {
+    const text = referenceInput.trim();
+    if (!text) return;
+    const { refs, invalid } = parseMrLinks(text, page.origin);
+    const known = new Set(references.map((item) => mrLinkKey(item.ref)));
+    const fresh: MrLinkRef[] = [];
+    const rejected: MrLinkParseFailure[] = [];
+    for (const ref of refs) {
+      const key = mrLinkKey(ref);
+      if (key === currentMrKey) rejected.push({ input: mrWebUrl(ref), reason: '这就是当前正在评审的 MR，不需要当参考' });
+      else if (known.has(key)) rejected.push({ input: mrWebUrl(ref), reason: '已经在参考列表里' });
+      else { known.add(key); fresh.push(ref); }
+    }
+    setReferenceInvalid([...invalid, ...rejected]);
+    if (fresh.length === 0) {
+      setToast('没有可附加的参考 MR：链接无法解析，或已经在列表里');
+      return;
+    }
+    setReferenceInput('');
+    setReferences((prev) => [
+      ...prev,
+      ...fresh.map((ref): ReferenceMr => ({ ref, status: 'loading', files: [], addedAt: new Date().toISOString() })),
+    ]);
+    void fetchReferences(fresh);
+  };
+
+  const removeReference = (key: string) => {
+    setReferences((prev) => prev.filter((item) => mrLinkKey(item.ref) !== key));
+  };
+
+  const toggleReferenceCandidate = (key: string) => {
+    const source = referenceCandidates.find((item) => mrLinkKey(item.ref) === key);
+    if (!source) return;
+    if (references.some((item) => mrLinkKey(item.ref) === key)) {
+      removeReference(key);
+      return;
+    }
+    setReferences((prev) => [...prev, { ref: source.ref, status: 'loading', files: [], addedAt: new Date().toISOString() }]);
+    void fetchReferences([source.ref]);
+  };
+
+  /** 候选列表：本地评审记录置顶，再叠上 GitLab 最近活动（scope=all，跨项目）。 */
+  const loadReferenceCandidates = async () => {
+    setCandidateLoading(true);
+    setCandidateError('');
+    const history = await loadHistory();
+    const pool: ReferenceCandidateSource[] = history
+      .map((session) => ({
+        ref: { origin: session.origin, projectPath: session.projectPath, iid: session.mergeRequestIid },
+        group: 'history' as const,
+        title: session.title,
+        meta: session.updatedAt.slice(5, 16).replace('T', ' '),
+      }))
+      .filter((item) => mrLinkKey(item.ref) !== currentMrKey);
+    const seen = new Set(pool.map((item) => mrLinkKey(item.ref)));
+    try {
+      const recent = await api.listRecentMergeRequests({ limit: 20 });
+      addLog('info', 'reference', `GitLab 最近活动返回 ${recent.length} 个 MR`);
+      for (const item of recent) {
+        const key = mrLinkKey(item.ref);
+        if (key === currentMrKey || seen.has(key)) continue;
+        seen.add(key);
+        pool.push({
+          ref: item.ref, group: 'recent', title: item.title,
+          meta: item.updatedAt.slice(5, 16).replace('T', ' '),
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setCandidateError(message);
+      addLog('error', 'reference', '读取最近活动 MR 失败', message);
+    } finally {
+      setReferenceCandidates(pool);
+      setCandidateLoading(false);
+    }
+  };
+
+  /** 开跑前把还没就绪的参考 MR 再拉一次：换了 Token 或网络抖动能自己恢复，拉不到就在结果里说明。 */
+  const settleReferences = async (signal?: AbortSignal): Promise<ReferenceMr[]> => {
+    const pending = references.filter((item) => item.status !== 'ready');
+    if (pending.length === 0) return references;
+    const reloaded = await fetchReferences(pending.map((item) => item.ref), signal);
+    return references.map((item) => reloaded.find((entry) => mrLinkKey(entry.ref) === mrLinkKey(item.ref)) ?? item);
+  };
+
+  const referenceCandidateList = useMemo<ReferenceCandidate[]>(() => {
+    const attached = new Set(references.map((item) => mrLinkKey(item.ref)));
+    return referenceCandidates.map((item) => ({
+      key: mrLinkKey(item.ref), label: mrLinkLabel(item.ref), title: item.title, meta: item.meta,
+      group: item.group, checked: attached.has(mrLinkKey(item.ref)),
+    }));
+  }, [referenceCandidates, references]);
 
   const startReview = async (scope: 'all' | 'selection') => {
     const selected = scope === 'selection' ? reviewTarget : codeAttachment;
@@ -759,6 +927,13 @@ export default function App({ page }: AppProps) {
 
     try {
       setReviewStatus('running');
+      const reviewReferences = await settleReferences(controller.signal);
+      if (controller.signal.aborted) return;
+      const readyReferences = reviewReferences.filter((item) => item.status === 'ready');
+      if (readyReferences.length > 0) {
+        addLog('info', 'review', `本次评审附加 ${readyReferences.length} 个参考 MR（只读上下文）`,
+          readyReferences.map((item) => `${mrLinkLabel(item.ref)} · ${item.files.length} 文件`).join(', '));
+      }
       const repoContext = runModel && modelReady && settings.repoContext && repoIndex?.ready && repoIndex.inSync
         ? repoIndex.contextForFiles(scopedFiles.map((file) => file.newPath))
         : '';
@@ -772,6 +947,7 @@ export default function App({ page }: AppProps) {
         signal: controller.signal,
         rules: runRules,
         model: runModel,
+        references: reviewReferences,
         background: repoContext ? `仓库符号上下文（本地索引 @${repoIndex?.status.ref.slice(0, 8)}）：\n${repoContext}` : undefined,
         loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
@@ -1332,13 +1508,16 @@ export default function App({ page }: AppProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   });
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (): Promise<ReviewSessionManifest[]> => {
     const gm = (globalThis as typeof globalThis & { GM?: { getValue: (k: string, fb: unknown) => Promise<unknown> } }).GM;
     const raw = gm
       ? await gm.getValue(SESSION_STORAGE_KEY, {})
       : JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? '{}');
-    const sessions = Object.values((raw ?? {}) as Record<string, ReviewSessionManifest>);
-    setSessionHistory(sessions.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')).slice(0, 10));
+    const sessions = Object.values((raw ?? {}) as Record<string, ReviewSessionManifest>)
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+      .slice(0, 10);
+    setSessionHistory(sessions);
+    return sessions;
   }, []);
 
   const unseenErrors = useSyncExternalStore(
@@ -1625,6 +1804,22 @@ export default function App({ page }: AppProps) {
                 {reviewStatus === 'cancelled' && !reviewError && (
                   <Banner tone="warning" title="已取消">模型分析已停止；已完成的规则结果仍保留并可发布。</Banner>
                 )}
+                <ReferenceMrPanel
+                  references={references}
+                  input={referenceInput}
+                  onInputChange={setReferenceInput}
+                  onAddLinks={addReferenceLinks}
+                  onRemove={removeReference}
+                  busy={referenceBusy}
+                  invalid={referenceInvalid}
+                  onDismissInvalid={() => setReferenceInvalid([])}
+                  candidates={referenceCandidateList}
+                  candidatesLoading={candidateLoading}
+                  candidatesError={candidateError}
+                  onLoadCandidates={() => void loadReferenceCandidates()}
+                  onToggleCandidate={toggleReferenceCandidate}
+                  disabled={running}
+                />
               </div>
 
               {findings.length > 0 || reviewError || reviewStatus !== 'idle' ? (
@@ -1732,6 +1927,8 @@ export default function App({ page }: AppProps) {
               onClearAttachment={() => setAttachment(undefined)}
               toolEvents={toolEvents}
               suggestions={suggestions}
+              promptHistory={promptHistory}
+              onRemovePrompt={(text) => commitPromptHistory(removePromptHistory(promptHistoryRef.current, text))}
               modelPicker={modelReady ? (
                 <ModelPicker
                   compact
