@@ -191,6 +191,48 @@ const blobViewLinenumber = `
   </div></div>
 </div>`;
 
+/** 用户实测 DOM：行号既不在格子也不在行的属性上，而在代码格里 span 的 id 上（span#LC11 → 11）。 */
+const lcSpanInline = `
+<div class="diff-file" data-file-path="src/foo.ts">
+  <div data-testid="left-content" class="diff-td line_content left-side new">
+    <span id="LC11" class="line">export function foo() {}</span>
+  </div>
+</div>`;
+
+/**
+ * GitLab 19.x 的 grid diff（真实 DOM 抄样）：行是 div.line_holder，一侧有两格行号格
+ * （第一格只挂评论按钮，行号 a 在第二格），父层 side wrapper 上还挂着 data-interop-line。
+ */
+const gridDiff = `
+<div class="diff-file file-holder has-body is-virtual-scrolling" id="52007ba0" data-path="packages/app/src/models/diagram.ts" active="true">
+  <div data-testid="file-title-container" class="js-file-title file-title">
+    <div class="file-header-content"><a class="file-title-name" href="#">packages/app/src/models/diagram.ts</a></div>
+  </div>
+  <div class="diff-viewer"><div class="diff-grid diff-table code">
+    <div class="diff-grid-row diff-tr line_holder">
+      <div id="52007ba0_16_16" data-testid="left-side" data-interop-type="new" data-interop-line="16" data-interop-new-line="16" class="diff-grid-left left-side">
+        <div data-testid="left-line-number" class="diff-td diff-line-num new new_line"><span class="add-diff-note tooltip-wrapper has-tooltip"><div data-testid="left-comment-button" role="button"></div></span></div>
+        <div class="diff-td diff-line-num new new_line"><a data-linenumber="16" href="#52007ba0_16_16" aria-label="16"></a></div>
+        <div data-testid="left-content" class="diff-td line_content with-coverage left-side new"><span class="line" data-lang="typescript">  customProperties?: Map&lt;string, string&gt;;</span></div>
+      </div>
+    </div>
+    <div class="diff-grid-row diff-tr line_holder">
+      <div id="52007ba0_17_17" data-testid="left-side" data-interop-type="new" data-interop-line="17" data-interop-new-line="17" data-interop-old-line="17" class="diff-grid-left left-side">
+        <div data-testid="left-line-number" class="diff-td diff-line-num null"><span class="add-diff-note tooltip-wrapper has-tooltip"><div data-testid="left-comment-button" role="button"></div></span> <a data-linenumber="17" href="#52007ba0_17_17" aria-label="17"></a></div>
+        <div class="diff-td diff-line-num null"><a data-linenumber="17" href="#52007ba0_17_17" aria-label="17"></a></div>
+        <div data-testid="left-content" class="diff-td line_content with-coverage left-side"><span class="line" data-lang="typescript">}</span></div>
+      </div>
+    </div>
+    <div class="diff-grid-row diff-tr line_holder">
+      <div id="52007ba0_33_48" data-testid="left-side" data-interop-type="old" data-interop-line="33" data-interop-old-line="33" class="diff-grid-left left-side">
+        <div data-testid="left-line-number" class="diff-td diff-line-num old old_line"><span class="add-diff-note tooltip-wrapper has-tooltip"><div data-testid="left-comment-button" role="button"></div></span> <a data-linenumber="33" href="#52007ba0_33_48" aria-label="33"></a></div>
+        <div class="diff-td diff-line-num old old_line"></div>
+        <div data-testid="left-content" class="diff-td line_content with-coverage left-side old"><span class="line" data-lang="typescript">      name: yDiagram.get("name") as string,</span></div>
+      </div>
+    </div>
+  </div></div>
+</div>`;
+
 /** MR 讨论区 / 描述：普通文本 + markdown 表格，没有任何代码位置语义。 */
 const discussionNote = `
 <div class="discussion-notes">
@@ -547,6 +589,72 @@ describe('captureCodeSelection · data-linenumber（新版属性名）', () => {
     expect(captureCodeSelection(document)).toMatchObject({
       filePath: 'src/blob.ts', side: 'unified', startLine: 7, endLine: 7,
     });
+  });
+});
+
+describe('captureCodeSelection · 行号在代码格的 span id 上（用户实测 DOM）', () => {
+  it('向下查子节点读到 span#LC11 的 11，标签不再是行号未知', () => {
+    mount(lcSpanInline);
+    selectContents('.line_content');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.filePath).toBe('src/foo.ts');
+    expect(captured.side).toBe('new');
+    expect(captured.startLine).toBe(11);
+    expect(captured.endLine).toBe(11);
+    expect(selectionLabel(captured)).toBe('foo.ts:11');
+    expect(selectionLabel(captured)).not.toContain('行号未知');
+    expect(selectionRef(captured)).toBe('src/foo.ts（新增侧 L11）');
+  });
+
+  it('划词起点落在 span 本身时也读到行号', () => {
+    mount(lcSpanInline);
+    selectContents('#LC11');
+
+    expect(captureCodeSelection(document)).toMatchObject({ side: 'new', startLine: 11, endLine: 11 });
+  });
+});
+
+describe('captureCodeSelection · GitLab 19.x grid diff（真实 DOM）', () => {
+  it('新增行跳过只挂评论按钮的第一格，读到第二格的行号', () => {
+    mount(gridDiff);
+    selectContents('[id="52007ba0_16_16"] [data-testid="left-content"] .line');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.filePath).toBe('packages/app/src/models/diagram.ts');
+    expect(captured.side).toBe('new');
+    expect(captured.startLine).toBe(16);
+    expect(captured.endLine).toBe(16);
+    expect(selectionLabel(captured)).toBe('diagram.ts:16');
+  });
+
+  it('删除行按 old 侧读，标签标注旧侧', () => {
+    mount(gridDiff);
+    selectContents('[id="52007ba0_33_48"] [data-testid="left-content"] .line');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.side).toBe('old');
+    expect(captured.startLine).toBe(33);
+    expect(selectionLabel(captured)).toBe('diagram.ts:33（旧侧）');
+    expect(selectionRef(captured)).toBe('packages/app/src/models/diagram.ts（删除侧 L33）');
+  });
+
+  it('跨行划词给出 grid 行的起止行号', () => {
+    mount(gridDiff);
+    selectBetween(
+      document.querySelector('[id="52007ba0_16_16"] .line')!,
+      document.querySelector('[id="52007ba0_17_17"] .line')!,
+    );
+
+    expect(captureCodeSelection(document)).toMatchObject({ side: 'new', startLine: 16, endLine: 17 });
+  });
+
+  it('行号格被虚拟滚动清空时回落到父层的 data-interop-line', () => {
+    mount(gridDiff);
+    document.querySelectorAll('[id="52007ba0_16_16"] [data-linenumber]').forEach((node) => node.remove());
+    selectContents('[id="52007ba0_16_16"] [data-testid="left-content"] .line');
+
+    expect(captureCodeSelection(document)).toMatchObject({ side: 'new', startLine: 16, endLine: 16 });
   });
 });
 

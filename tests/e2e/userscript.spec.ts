@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -544,14 +544,14 @@ test.describe('real GitLab mode', () => {
   async function loginToGitLab(page: Page, baseUrl: string) {
     // Check if already logged in
     await page.goto(`${baseUrl}/users/sign_in`);
-    await page.waitForTimeout(1000);
     const signInForm = page.locator('input[name="user[login]"]');
-    if (await signInForm.count() > 0) {
-      await signInForm.fill(gitlabUser);
-      await page.locator('input[name="user[password]"]').fill(gitlabPass);
-      await page.locator('button[type="submit"]').first().click();
-      await page.waitForURL((url) => !url.pathname.includes('sign_in'), { timeout: 15000 });
-    }
+    if (await signInForm.count() === 0) return;
+    await signInForm.fill(gitlabUser);
+    await page.locator('input[name="user[password]"]').fill(gitlabPass);
+    await page.locator('button[type="submit"]').first().click();
+    // 跳转有时在 waitForURL 挂上监听之前就完成了，改成在页面里轮询地址
+    await page.waitForFunction(() => !window.location.pathname.includes('sign_in'), undefined, { timeout: 20000 });
+    await page.waitForLoadState('domcontentloaded');
   }
 
   test('injects userscript and reads real MR data', async ({ page }) => {
@@ -647,5 +647,305 @@ test.describe('real GitLab mode', () => {
     await page.getByRole('tab', { name: /索引/ }).click();
     await page.getByRole('button', { name: /删除索引/ }).first().click();
     await expect(page.getByText('还没有缓存')).toBeVisible({ timeout: 10000 });
+  });
+  // --- 页面交互：划词行号 / 选区菜单生命周期 / Finding 定位，全部在真实 GitLab 页面上跑 ---
+
+  /**
+   * GitLab 19.x 默认用 Rapid Diffs（Beta）的自定义元素渲染 diff，行号 DOM 完全不同；
+   * 脚本的划词与定位针对经典 diff 渲染，用 GitLab 自己的 cookie 固定住渲染方式。
+   */
+  async function useClassicDiffs(page: Page) {
+    await page.context().addCookies([{ name: 'rapid_diffs_enabled', value: 'false', url: realGitlabUrl }]);
+  }
+
+  const RULE_TITLE = 'E2E 定位目标行';
+
+  interface LineTarget { path: string; line: number; text: string }
+
+  const selectionToolbar = (page: Page) => page.getByRole('toolbar', { name: '代码选区操作' });
+
+  /** GitLab 自己渲染的行号（行号格里的 a[data-linenumber]）：用来校验脚本读到的数不是编出来的。 */
+  const gitlabLineOf = (node: HTMLElement) => {
+    const row = node.closest('.line_holder');
+    const anchor = row?.querySelector('a[data-linenumber], a[data-line-number]');
+    const interop = row?.querySelector('[data-interop-new-line], [data-interop-old-line]');
+    return Number(anchor?.getAttribute('data-linenumber') ?? anchor?.getAttribute('data-line-number')
+      ?? interop?.getAttribute('data-interop-new-line') ?? interop?.getAttribute('data-interop-old-line') ?? 0);
+  };
+
+  /**
+   * 拖拽划词：比 dblclick 更接近用户真实操作，也不会只选中一个 token。
+   * 拖拽距离要收着点：代码格一直延伸到面板底下，mouseup 落在面板上会被当成「面板内选区」而收起工具条。
+   */
+  async function selectText(page: Page, target: Locator) {
+    // diff 是异步渲染的，拖拽撞上行内节点被换掉就会选空：重试到真有选区为止
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await target.scrollIntoViewIfNeeded();
+      const box = (await target.boundingBox())!;
+      // 面板 fixed 盖在页面右侧：拖拽终点落在面板上会被当成「面板内选区」而收起工具条，终点收在面板左边
+      const panelLeft = await page.evaluate(() => {
+        const panel = document.getElementById('review-agent-glab-root')?.shadowRoot
+          ?.querySelector('aside[aria-label="Review Agent"]');
+        const rect = panel?.getBoundingClientRect();
+        return rect && rect.width > 0 ? rect.left : window.innerWidth;
+      });
+      const endX = Math.max(box.x + 20, Math.min(box.x + box.width - 3, box.x + 240, panelLeft - 24));
+      await page.mouse.move(box.x + 3, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(endX, box.y + box.height / 2, { steps: 10 });
+      await page.mouse.up();
+      const selected = await page.waitForFunction(
+        () => (document.getSelection()?.toString().trim().length ?? 0) > 0, undefined, { timeout: 5000 },
+      ).then(() => true).catch(() => false);
+      if (selected) return;
+    }
+    throw new Error('拖拽划词没有产生选区');
+  }
+
+  /** 划词到工具条出现为止：选区节点被页面换掉时工具条会跟着关，重试一次通常就落在稳定 DOM 上。 */
+  async function selectUntilToolbar(page: Page, target: Locator) {
+    const toolbar = selectionToolbar(page);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await selectText(page, target);
+      const shown = await toolbar.waitFor({ state: 'visible', timeout: 4000 }).then(() => true).catch(() => false);
+      if (shown) return toolbar;
+    }
+    return toolbar;
+  }
+
+  /** 定位用的是平滑滚动：连续两次读到同一个位置才算停下，否则拖拽会选到别处。 */
+  async function settledBox(target: Locator) {
+    let box = await target.boundingBox();
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await target.page().waitForTimeout(250);
+      const next = await target.boundingBox();
+      if (box && next && box.x === next.x && box.y === next.y) return next;
+      box = next;
+    }
+    return box;
+  }
+
+  /** diff 是异步渲染 + 虚拟滚动的：等到真有带代码文本的行再开始操作。 */
+  async function waitDiffLines(page: Page) {
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.diff-file[data-path] .line_content')]
+        .some((cell) => (cell.textContent ?? '').trim().length > 0),
+      undefined,
+      { timeout: 60000 },
+    );
+  }
+
+  /** 从真实 diff 里挑一行唯一的新增代码，作为规则命中与定位的目标。 */
+  function pickAddedLine(page: Page) {
+    return page.evaluate((): { path: string; line: number; text: string } | undefined => {
+      for (const file of document.querySelectorAll<HTMLElement>('.diff-file[data-path]')) {
+        const cells = [...file.querySelectorAll<HTMLElement>('.line_content.new')];
+        const texts = cells.map((cell) => (cell.textContent ?? '').replace(/\s+/g, ' ').trim());
+        for (const [index, text] of texts.entries()) {
+          if (text.length < 12 || text.startsWith('//') || text.startsWith('*')) continue;
+          if (texts.filter((other) => other === text).length > 1) continue;
+          const row = cells[index].closest('.line_holder');
+          const anchor = row?.querySelector('a[data-linenumber], a[data-line-number]');
+          const line = Number(anchor?.getAttribute('data-linenumber') ?? anchor?.getAttribute('data-line-number') ?? 0);
+          if (line > 0) return { path: file.dataset.path ?? '', line, text };
+        }
+      }
+      return undefined;
+    });
+  }
+
+  /** 规则评审要跑出确定命中的一条 Finding：只匹配目标行、只作用于目标文件。 */
+  function locateRulePack(target: LineTarget) {
+    const pattern = target.text.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+    return [{
+      id: 'e2e-locate-pack', name: 'E2E 定位规则包', version: '1.0.0', enabled: true, builtIn: false,
+      rules: [{
+        id: 'e2e-locate-line', enabled: true, severity: 'medium', category: 'maintainability',
+        title: RULE_TITLE, content: '用于在真实页面上验证 Finding 定位与划词行号读数一致。',
+        matchPatterns: [{ type: 'regex', pattern }],
+        scope: { include: [target.path] },
+      }],
+    }];
+  }
+
+  /** 规则包要在脚本启动前落到 localStorage；用 addInitScript 注入，整页跳转后脚本会自动重挂载。 */
+  async function seedRulePacks(page: Page, packs: unknown) {
+    await page.addInitScript({
+      content: `localStorage.setItem('review-agent-rule-packs-v1', ${JSON.stringify(JSON.stringify(packs))});`,
+    });
+    await page.addInitScript({ content: bundle });
+  }
+
+  /** 规则阶段恒运行，不需要模型；等目标 Finding 的卡片出现。 */
+  async function runRuleReview(page: Page, line: number) {
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 20000 });
+    const card = page.locator('aside[aria-label="Review Agent"] article')
+      .filter({ hasText: RULE_TITLE })
+      .filter({ hasText: new RegExp(`行内 L${line}\\b`) })
+      .first();
+    await expect(card).toBeVisible({ timeout: 90000 });
+    return card;
+  }
+
+  test('reads the real line number when selecting diff code', async ({ page }) => {
+    await loginToGitLab(page, realGitlabUrl);
+    await useClassicDiffs(page);
+    await mountUserscript(page, realMrUrl);
+    await waitDiffLines(page);
+
+    const file = page.locator('.diff-file[data-path]')
+      .filter({ has: page.locator('.line_content.new', { hasText: /\S/ }) })
+      .first();
+    const added = file.locator('.line_content.new').filter({ hasText: /\S/ }).first();
+    const addedLine = await added.evaluate(gitlabLineOf);
+    expect(addedLine).toBeGreaterThan(0);
+
+    const toolbar = await selectUntilToolbar(page, added);
+    await expect(toolbar).toContainText(`:${addedLine}`);
+    await expect(toolbar).not.toContainText('行号未知');
+
+    // 删除行按旧侧行号引用，标签明确标出旧侧
+    const removed = file.locator('.line_content.old').filter({ hasText: /\S/ }).first();
+    if (await removed.count() > 0) {
+      const removedLine = await removed.evaluate(gitlabLineOf);
+      expect(removedLine).toBeGreaterThan(0);
+      await selectUntilToolbar(page, removed);
+      await expect(toolbar).toContainText(`:${removedLine}（旧侧）`);
+    }
+  });
+
+  test('keeps a non-diff selection text-only', async ({ page }) => {
+    await loginToGitLab(page, realGitlabUrl);
+    await useClassicDiffs(page);
+    await mountUserscript(page, realMrUrl);
+    await waitDiffLines(page);
+
+    const toolbar = await selectUntilToolbar(page, page.locator('h1.title').first());
+    await expect(toolbar).toContainText('页面文本选区');
+    await expect(toolbar.getByRole('button', { name: '问一下' })).toBeVisible();
+    await expect(toolbar.getByRole('button', { name: '复制选中内容' })).toBeVisible();
+    await expect(toolbar.getByRole('button', { name: 'Review 这段' })).toHaveCount(0);
+
+    // 提问引用里没有 path:line，只有原文
+    await toolbar.getByRole('button', { name: '问一下' }).click();
+    const panel = page.locator('aside[aria-label="Review Agent"]');
+    await expect(panel).toBeVisible({ timeout: 10000 });
+    await expect(panel.getByText('页面文本选区').first()).toBeVisible({ timeout: 10000 });
+    await expect(panel).not.toContainText('.ts:');
+    await expect(panel).not.toContainText('行号未知');
+  });
+
+  test('drops the selection menu when the selected rows leave the page', async ({ page }) => {
+    await loginToGitLab(page, realGitlabUrl);
+    await useClassicDiffs(page);
+    await mountUserscript(page, realMrUrl);
+    await waitDiffLines(page);
+
+    const file = page.locator('.diff-file[data-path]')
+      .filter({ has: page.locator('.line_content.new', { hasText: /\S/ }) })
+      .first();
+    const toolbar = await selectUntilToolbar(page, file.locator('.line_content.new').filter({ hasText: /\S/ }).first());
+
+    // 折叠文件：GitLab 客户端整块移除 diff 行（不刷新页面），工具条必须跟着消失
+    await file.locator('button[aria-label="Hide file contents"]').first().click();
+    await expect(file.locator('.line_holder')).toHaveCount(0, { timeout: 15000 });
+    await expect(toolbar).toHaveCount(0, { timeout: 10000 });
+
+    // 切 tab（整页跳转）后同样不残留
+    await page.locator('a[href$="/commits"]').first().click();
+    await page.waitForFunction(() => window.location.pathname.endsWith('/commits'), undefined, { timeout: 30000 });
+    await expect(selectionToolbar(page)).toHaveCount(0);
+  });
+
+  test('gives every toolbar button a tooltip that says more than its label', async ({ page }) => {
+    await loginToGitLab(page, realGitlabUrl);
+    await useClassicDiffs(page);
+    await mountUserscript(page, realMrUrl);
+    await waitDiffLines(page);
+
+    const file = page.locator('.diff-file[data-path]')
+      .filter({ has: page.locator('.line_content.new', { hasText: /\S/ }) })
+      .first();
+    const toolbar = await selectUntilToolbar(page, file.locator('.line_content.new').filter({ hasText: /\S/ }).first());
+
+    const buttons = toolbar.locator('button');
+    const count = await buttons.count();
+    expect(count).toBeGreaterThanOrEqual(4);
+    for (let index = 0; index < count; index += 1) {
+      const button = buttons.nth(index);
+      const label = ((await button.textContent()) ?? '').trim();
+      const title = await button.getAttribute('title');
+      expect(title, `${label} 缺少 tooltip`).not.toBeNull();
+      expect(title, `${label} 的 tooltip 与按钮文本重复`).not.toBe(label);
+      expect(title!.length).toBeGreaterThan(label.length);
+    }
+  });
+
+  test('locates a finding on the real diff and reads the same line as the selection', async ({ page }) => {
+    test.setTimeout(240_000);
+    await loginToGitLab(page, realGitlabUrl);
+    await useClassicDiffs(page);
+    await mountUserscript(page, realMrUrl);
+    await waitDiffLines(page);
+    const target = await pickAddedLine(page);
+    test.skip(target === undefined, '真实 MR 里没有可定位的新增行');
+    const { path, line, text } = target!;
+
+    // 种一条只命中该行的规则：真实 diff 上跑出确定的 Finding，页面和模型都不 mock
+    await seedRulePacks(page, locateRulePack(target!));
+    await page.goto(realMrUrl);
+    await waitDiffLines(page);
+    const card = await runRuleReview(page, line);
+
+    // 先把文件折叠起来，定位要自己把它展开
+    const file = page.locator(`.diff-file[data-path="${path}"]`);
+    await file.locator('button[aria-label="Hide file contents"]').first().click();
+    await expect(file.locator('.line_holder')).toHaveCount(0, { timeout: 15000 });
+
+    await card.getByRole('button', { name: '定位', exact: true }).click();
+    // LocateOutcome 如实播报：文件被重新展开、目标行真的找到了
+    await expect(page.locator('#review-agent-glab-root').getByRole('status'))
+      .toContainText(`已高亮 ${path.replace(/^.*\//, '')}:${line}`, { timeout: 30000 });
+
+    const highlighted = page.locator('.ra-finding-highlight').first();
+    await expect(highlighted).toBeVisible({ timeout: 10000 });
+    expect(await highlighted.evaluate(gitlabLineOf)).toBe(line);
+    await expect(highlighted).toContainText(text.trim());
+
+    // 滚动到行：等平滑滚动停下，高亮行落在视口内
+    const box = await settledBox(highlighted);
+    expect(box, '高亮行没有布局位置').not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeLessThan(900);
+
+    // 同一行 DOM：划词读到的行号与定位用的行号一致（两边共用 core/dom-line-number）
+    const toolbar = await selectUntilToolbar(page, highlighted.locator('.line_content'));
+    await expect(toolbar).toContainText(`:${line}`);
+    await expect(toolbar).not.toContainText('行号未知');
+  });
+
+  test('keeps locating after the Changes tab reloads the page', async ({ page }) => {
+    test.setTimeout(240_000);
+    await loginToGitLab(page, realGitlabUrl);
+    await useClassicDiffs(page);
+    await mountUserscript(page, realMrUrl);
+    await waitDiffLines(page);
+    const target = await pickAddedLine(page);
+    test.skip(target === undefined, '真实 MR 里没有可定位的新增行');
+    const { line, text } = target!;
+    await seedRulePacks(page, locateRulePack(target!));
+
+    // 从 Overview 起：定位要先切 Changes tab（GitLab 是整页跳转），落地后接着走完
+    await page.goto(realMrUrl.replace(/\/diffs.*$/, ''));
+    await expect(page.locator('.diff-file')).toHaveCount(0);
+    const card = await runRuleReview(page, line);
+    await card.getByRole('button', { name: '定位', exact: true }).click();
+
+    await page.waitForFunction(() => window.location.pathname.endsWith('/diffs'), undefined, { timeout: 30000 });
+    const highlighted = page.locator('.ra-finding-highlight').first();
+    await expect(highlighted).toBeVisible({ timeout: 60000 });
+    expect(await highlighted.evaluate(gitlabLineOf)).toBe(line);
+    await expect(highlighted).toContainText(text.trim());
   });
 });

@@ -1,4 +1,5 @@
 import { repoPathEquals } from './diff';
+import { rowLineNumber } from './dom-line-number';
 import type { Finding } from './types';
 
 /** 定位所需的最小信息：Finding 可直接赋值，整页跳转后也能从 sessionStorage 复原继续定位。 */
@@ -23,17 +24,19 @@ export interface LocateOutcome {
   failure?: LocateFailure;
 }
 
-/** GitLab 各版本 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 .diff-line、blob 视图的 tr#LC10。 */
-const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line]';
+/** GitLab 各版本 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 .diff-line、19.x grid 的 div.line_holder、blob 视图的 tr#LC10。 */
+const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line], [data-interop-line]';
 const FILE_SELECTOR = '.diff-file, .file-holder, [data-testid="diff-file"], [data-file-path]';
 const CODE_SELECTOR = '.line_content, code, .blob-code';
 const HEADER_SELECTOR = '.file-header, .file-header-content, [data-testid="diff-file-header"]';
-/** 行号属性两种拼写都在流通：新版 GitLab 写 data-linenumber，旧版写 data-line-number。 */
-const LINE_ATTRS = ['data-old-line-number', 'data-new-line-number', 'data-linenumber', 'data-line-number', 'data-line'];
-/** 文件级折叠（大文件默认收起）与「隐藏的 N 行」段内折叠，控件选择器分开：前者一次点完，后者要逐个试。 */
+/**
+ * 文件级折叠（大文件默认收起、用户手动收起文件）与「隐藏的 N 行」段内折叠，控件选择器分开：前者一次点完，后者要逐个试。
+ * 19.x 的文件收起开关没有 js- 钩子，只剩 aria-label 可以认。
+ */
 const FILE_EXPAND_SELECTOR = '.diff-collapsed a, .diff-collapsed button, [data-testid="diff-file-collapsed"] a, '
   + '[data-testid="diff-file-collapsed"] button, .js-show-diff, a.js-load-diff, button.js-load-diff, '
-  + '.diff-content.collapsed button, .collapsed-diff button';
+  + '.diff-content.collapsed button, .collapsed-diff button, '
+  + 'button[aria-label="Show file contents"], button[aria-label="显示文件内容"]';
 const LINE_EXPAND_SELECTOR = 'a.js-expand-lines, button.js-expand-lines, a.js-expand-line-range, '
   + 'button.js-expand-line-range, .line_content.unfold a, .line_content.unfold button, td.unfold a, td.unfold button, '
   + 'tr.expand a, tr.expand button, [data-testid="diff-expand-button"], [data-diff-toggle-entity="expansion"] a, '
@@ -61,42 +64,6 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs: number): Promis
     if (Date.now() >= deadline) return undefined;
     await settle(160);
   }
-}
-
-function attrLine(node: Element | null | undefined): number | undefined {
-  if (!node) return undefined;
-  for (const attr of LINE_ATTRS) {
-    const line = Number(node.getAttribute(attr));
-    if (Number.isInteger(line) && line > 0) return line;
-  }
-  const fromId = /^(?:LC|L)(\d+)$/.exec(node.id);
-  return fromId ? Number(fromId[1]) : undefined;
-}
-
-/** 只认「整格就是一个数字」的文本：行号格里还挂着「+」评论按钮时文本读不出行号。 */
-function plainNumber(value: string | null | undefined): number | undefined {
-  const text = value?.trim() ?? '';
-  return /^\d+$/.test(text) ? Number(text) : undefined;
-}
-
-/** GitLab 的行 id 本身就编码了两侧行号：sha_<old>_<new>，缺哪侧哪段就是空。 */
-function idLines(row: HTMLElement): { old?: number; new?: number } {
-  const sha = /^sha_(\d*)_(\d*)$/.exec(row.id);
-  if (sha) return { old: Number(sha[1]) || undefined, new: Number(sha[2]) || undefined };
-  const single = /^(?:LC|L)(\d+)$/.exec(row.id);
-  return single ? { new: Number(single[1]) } : {};
-}
-
-function gutterLine(row: HTMLElement, side: 'old' | 'new'): number | undefined {
-  const gutter = row.querySelector<HTMLElement>(side === 'old' ? '.old_line, [data-side="old"]' : '.new_line, [data-side="new"]');
-  if (!gutter) return undefined;
-  return attrLine(gutter)
-    ?? attrLine(gutter.querySelector<HTMLElement>('a, [data-linenumber], [data-line-number], [data-line]'))
-    ?? plainNumber(gutter.textContent);
-}
-
-function rowLine(row: HTMLElement, side: 'old' | 'new'): number | undefined {
-  return gutterLine(row, side) ?? idLines(row)[side] ?? attrLine(row);
 }
 
 function otherSide(side: 'old' | 'new'): 'old' | 'new' {
@@ -173,7 +140,7 @@ function findFileContainer(doc: Document, target: LocateTarget): HTMLElement | u
 function findRow(container: HTMLElement, target: LocateTarget): HTMLElement | undefined {
   if (!(target.line > 0)) return undefined;
   for (const side of [target.side, otherSide(target.side)]) {
-    const row = rowsOf(container).find((candidate) => rowLine(candidate, side) === target.line);
+    const row = rowsOf(container).find((candidate) => rowLineNumber(candidate, side) === target.line);
     if (row) return row;
   }
   return undefined;
@@ -194,7 +161,7 @@ function rowByContent(container: HTMLElement, target: LocateTarget): HTMLElement
       .replace(/\s+/g, ' ')
       .trim();
     if (text !== wanted) continue;
-    const line = rowLine(row, target.side) ?? rowLine(row, otherSide(target.side)) ?? 0;
+    const line = rowLineNumber(row, target.side) ?? rowLineNumber(row, otherSide(target.side)) ?? 0;
     const gap = Math.abs(line - target.line);
     if (gap < bestGap) { bestGap = gap; best = row; }
   }
@@ -211,7 +178,7 @@ function nearestExpander(container: HTMLElement, expanders: HTMLElement[], targe
     if (index < 0) continue;
     let previous: number | undefined;
     for (let cursor = index - 1; cursor >= 0 && previous === undefined; cursor -= 1) {
-      previous = rowLine(rows[cursor], target.side) ?? rowLine(rows[cursor], otherSide(target.side));
+      previous = rowLineNumber(rows[cursor], target.side) ?? rowLineNumber(rows[cursor], otherSide(target.side));
     }
     if (previous !== undefined && previous >= target.line) continue;
     const rank = previous ?? Number.NEGATIVE_INFINITY;
@@ -266,7 +233,7 @@ function rowsInRange(container: HTMLElement, target: LocateTarget, anchor: HTMLE
   if (!(target.line > 0)) return [anchor];
   const end = Math.max(target.line, target.endLine);
   const ranged = rowsOf(container).filter((row) => {
-    const line = rowLine(row, target.side) ?? rowLine(row, otherSide(target.side));
+    const line = rowLineNumber(row, target.side) ?? rowLineNumber(row, otherSide(target.side));
     return line !== undefined && line >= target.line && line <= end;
   });
   return ranged.length > 0 ? ranged : [anchor];

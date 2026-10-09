@@ -1,3 +1,4 @@
+import { cellLineNumber, rowLineNumber, sideOfNode } from './dom-line-number';
 import type { CodeSelection } from './types';
 
 type Side = NonNullable<CodeSelection['side']>;
@@ -7,16 +8,12 @@ interface LineAnchor {
   line?: number;
 }
 
-/** GitLab 各版本的 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 tr[data-line]、blob 视图的 tr#LC10。 */
-const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line], [id^="LC"]';
+/** GitLab 各版本的 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 tr[data-line]、19.x grid 的 div.line_holder、blob 视图的 tr#LC10。 */
+const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line], [data-interop-line], [id^="LC"]';
 /** 选区可能落在代码格里，也可能落在行号格里。 */
-const CELL_SELECTOR = '.line_content, .diff-line-numbers, .line_numbers, .old_line, .new_line, .blob-code, td';
-/** 行号格：格内文本就是行号本身，可以安全解析（代码格不行）。 */
-const GUTTER_SELECTOR = '.old_line, .new_line, .diff-line-numbers, .line_numbers, td[id^="L"], [data-side]';
+const CELL_SELECTOR = '.line_content, .diff-line-num, .diff-line-numbers, .line_numbers, .old_line, .new_line, .blob-code, td';
 const BLOB_SELECTOR = '.blob-viewer, .blob-content, table.text-file';
 const FILE_SELECTOR = '.diff-file, .file-holder, .blob-viewer';
-/** 代码格：格内文本是代码，任何情况下都不能拿来当行号。 */
-const CODE_SELECTOR = '.line_content, .blob-code';
 /** 只有落在 diff / blob 代码区里的选区才有位置语义；讨论区、MR 描述、页面文案一律只带原文。 */
 const CODE_AREA_SELECTOR = '.diff-file, .file-holder, .diff-content, .diff-table, .line_holder, .diff-line, '
   + '.blob-viewer, .blob-content, .file-content, .text-file, [data-testid="diff-file"], [data-testid="diff-content"], [data-file-path]';
@@ -26,87 +23,17 @@ function trimmed(value: string | null | undefined): string | undefined {
   return text ? text : undefined;
 }
 
-/** 只接受「整格就是一个数字」的文本，避免把代码里的数字当成行号。 */
-function lineNumber(value: string | null | undefined): number | undefined {
-  const match = value?.trim().match(/^\d+$/);
-  const line = match ? Number(match[0]) : undefined;
-  return line !== undefined && line > 0 ? line : undefined;
-}
-
-function idLineNumber(node: Element | null | undefined): number | undefined {
-  const match = node?.id.match(/^(?:LC|L)(\d+)$/);
-  return match ? Number(match[1]) : undefined;
-}
-
-/** 行号格 / 行容器上的 old、new 标记，决定行号按哪一侧解释。 */
-function sideOf(node: Element | null | undefined): Side | undefined {
-  if (!node) return undefined;
-  const explicit = node instanceof HTMLElement ? node.dataset.side : undefined;
-  if (explicit === 'old' || node.classList.contains('old_line') || node.classList.contains('old')) return 'old';
-  if (explicit === 'new' || node.classList.contains('new_line') || node.classList.contains('new')) return 'new';
-  return undefined;
-}
-
-function isGutter(cell: HTMLElement): boolean {
-  return !cell.matches(CODE_SELECTOR) && cell.matches(GUTTER_SELECTOR);
-}
-
-function guttersOf(row: HTMLElement | null): { old?: HTMLElement; new?: HTMLElement; plain?: HTMLElement } {
-  const gutters: { old?: HTMLElement; new?: HTMLElement; plain?: HTMLElement } = {};
-  for (const cell of row?.querySelectorAll<HTMLElement>(GUTTER_SELECTOR) ?? []) {
-    if (!isGutter(cell)) continue;
-    const side = sideOf(cell);
-    if (side === 'old' && !gutters.old) gutters.old = cell;
-    else if (side === 'new' && !gutters.new) gutters.new = cell;
-    else if (!side && !gutters.plain) gutters.plain = cell;
-  }
-  return gutters;
-}
-
-/** 属性 / id 读行号：新旧版本的 data-linenumber / data-line-number 都要认，代码内容里的数字不是行号。 */
-function attrLineNumber(node: Element | null | undefined, side: Side): number | undefined {
-  const data = node instanceof HTMLElement ? node.dataset : undefined;
-  const sources = [
-    side === 'old' ? data?.oldLineNumber : data?.newLineNumber,
-    data?.linenumber,
-    data?.lineNumber,
-    data?.line,
-  ];
-  for (const source of sources) {
-    const line = lineNumber(source);
-    if (line !== undefined) return line;
-  }
-  return idLineNumber(node);
-}
-
-function gutterLineNumber(node: HTMLElement | undefined, side: Side): number | undefined {
-  if (!node) return undefined;
-  const anchor = node.querySelector<HTMLElement>('[data-linenumber], [data-line-number], [data-line], [id^="L"]');
-  return attrLineNumber(node, side) ?? attrLineNumber(anchor, side) ?? lineNumber(node.textContent);
-}
-
-function cellLineNumber(cell: HTMLElement | null, side: Side): number | undefined {
-  if (!cell) return undefined;
-  return isGutter(cell) ? gutterLineNumber(cell, side) : attrLineNumber(cell, side);
-}
-
-/** 优先命中侧的行号格，其次行容器属性，最后无侧别行号格（blob / 简化 DOM）。 */
-function lineOf(row: HTMLElement | null, cell: HTMLElement | null, side: Side): number | undefined {
-  const gutters = guttersOf(row);
-  const sources = side === 'old'
-    ? [gutterLineNumber(gutters.old, 'old'), attrLineNumber(row, 'old'), cellLineNumber(cell, 'old'), gutterLineNumber(gutters.plain, 'old')]
-    : [gutterLineNumber(gutters.new ?? gutters.plain, 'new'), attrLineNumber(row, 'new'), cellLineNumber(cell, 'new')];
-  return sources.find((line) => line !== undefined);
-}
-
+/**
+ * 行号读法与 finding-highlight 共用 dom-line-number：先行容器（行号格 / 行属性 / 行内子节点），
+ * 再选区所在格子（自身属性、格内 span#LC11 这类子节点、19.x grid 挂在父层的 data-interop-line）。
+ */
 function anchorOf(element: Element | null): LineAnchor {
   const cell = element?.closest<HTMLElement>(CELL_SELECTOR) ?? null;
   const row = (cell ?? element)?.closest<HTMLElement>(ROW_SELECTOR) ?? null;
-  const side = sideOf(cell) ?? sideOf(row) ?? (row?.closest(BLOB_SELECTOR) ? 'unified' : 'new');
-  return { side, line: lineOf(row, cell, side) };
+  const side: Side = sideOfNode(cell) ?? sideOfNode(row) ?? (row?.closest(BLOB_SELECTOR) ? 'unified' : 'new');
+  return { side, line: rowLineNumber(row, side) ?? cellLineNumber(cell, side, row) };
 }
 
-/** rename 文件标题形如「old/path.ts → new/path.ts」，取箭头后面的新路径。 */
 function titlePath(container: Element | null | undefined): string | undefined {
   const node = container?.querySelector<HTMLElement>(
     '.file-title-new, .file-title-name, .file-title-content a, .file-header-content, .file-title',
