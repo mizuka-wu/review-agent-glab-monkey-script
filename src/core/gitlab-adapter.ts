@@ -1,6 +1,6 @@
 import { normalizeFileDiff } from './diff';
 import { buildFullTextComment } from './findings';
-import { projectApiIdentifier } from './gitlab-url';
+import { parseGitLabUrl, projectApiIdentifier } from './gitlab-url';
 import { debugBus } from './debug-bus';
 import { httpRequest } from './http';
 import type {
@@ -14,6 +14,7 @@ import type {
   MergeRequestRef,
   PageContext,
   PositionLineRef,
+  RecentMergeRequest,
   PublishedComment,
   PublishedDiscussion,
 } from './types';
@@ -70,6 +71,16 @@ function errorCode(status: number) {
 }
 
 type RawDiff = Parameters<typeof normalizeFileDiff>[0];
+
+interface RawMergeRequestSummary {
+  iid: number;
+  title?: string;
+  state?: string;
+  source_branch?: string;
+  target_branch?: string;
+  updated_at?: string;
+  web_url?: string;
+}
 
 /** 空值字段一律不发：GitLab 收到 position[base_sha]= 会把整个 diff_refs 判为不完整。 */
 function setPositionField(payload: URLSearchParams, key: string, value: string) {
@@ -506,6 +517,36 @@ export class GitLabAdapter {
     }));
   }
 
+  /**
+   * 跨项目的最近活动 MR（scope=all）：给「参考 MR」选择器当候选。
+   * per_page 上限 20：再大 GitLab 会直接拒绝。
+   */
+  async listRecentMergeRequests(
+    options: { state?: 'opened' | 'all'; limit?: number; signal?: AbortSignal } = {},
+  ): Promise<RecentMergeRequest[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 20, 20));
+    const data = await this.request<RawMergeRequestSummary[]>(
+      `/api/v4/merge_requests?scope=all&state=${options.state ?? 'opened'}&order_by=updated_at&sort=desc&per_page=${limit}`,
+      { signal: options.signal },
+    );
+    const recent: RecentMergeRequest[] = [];
+    for (const item of data) {
+      if (!item.web_url) continue;
+      const parsed = parseGitLabUrl(new URL(item.web_url));
+      if (!parsed.projectPath || !parsed.mergeRequestIid) continue;
+      recent.push({
+        ref: { origin: parsed.origin, projectPath: parsed.projectPath, iid: parsed.mergeRequestIid },
+        title: item.title ?? '',
+        state: item.state ?? 'opened',
+        sourceBranch: item.source_branch ?? '',
+        targetBranch: item.target_branch ?? '',
+        updatedAt: item.updated_at ?? '',
+        webUrl: item.web_url,
+      });
+    }
+    return recent;
+  }
+
   async getGitLog(path: string, ref: string, signal?: AbortSignal) {
     const data = await this.request<{ id: string; short_id: string; title: string; created_at: string; author_name: string }[]>(
       `/api/v4/projects/${this.projectRef()}/repository/commits?ref_name=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}&per_page=10`,
@@ -528,4 +569,9 @@ export function mergeRequestRefFromPage(page: PageContext): MergeRequestRef | un
     projectNumericId: page.projectNumericId,
     mergeRequestIid: page.mergeRequestIid,
   };
+}
+
+/** 参考 MR 可能在别的项目甚至别的 GitLab 实例上：按链接自己的 origin + 项目路径建适配器。 */
+export function projectAdapter(origin: string, projectPath: string, gitlabToken = ''): GitLabAdapter {
+  return new GitLabAdapter({ origin, route: 'unknown', projectPath }, gitlabToken);
 }

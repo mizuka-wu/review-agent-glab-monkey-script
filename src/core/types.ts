@@ -103,6 +103,37 @@ export interface MergeRequestContext extends MergeRequestRef {
   diffRefs: DiffRefs;
 }
 
+/** 用户粘贴/勾选的另一个 MR：只作为当前评审的参考上下文，永不作为发布目标。 */
+export interface MrLinkRef {
+  origin: string;
+  projectPath: string;
+  iid: number;
+}
+
+export type ReferenceMrStatus = 'loading' | 'ready' | 'failed';
+
+export interface ReferenceMr {
+  ref: MrLinkRef;
+  status: ReferenceMrStatus;
+  title?: string;
+  headSha?: string;
+  files: FileDiff[];
+  addedAt: string;
+  /** 拉取失败/为空的原因，直接展示给用户，不静默吞掉。 */
+  error?: string;
+}
+
+/** GitLab「最近活动 MR」列表条目（scope=all，跨项目）。 */
+export interface RecentMergeRequest {
+  ref: MrLinkRef;
+  title: string;
+  state: string;
+  sourceBranch: string;
+  targetBranch: string;
+  updatedAt: string;
+  webUrl: string;
+}
+
 export type GitLabRoute =
   | 'merge-request'
   | 'diff'
@@ -262,6 +293,10 @@ export interface ReviewContext {
   files: ReviewContextFile[];
   selection?: CodeSelection;
   background?: string;
+  /** 参考 MR：只读上下文，不产出 Finding，也不参与发布位置解析。 */
+  references?: ReferenceMr[];
+  /** 参考块实际拼进输入的字符数。 */
+  referenceCharacters?: number;
   estimatedCharacters: number;
   budgetCharacters: number;
   omittedFiles: { path: string; reason: NonNullable<ReviewContextFile['omittedReason']> }[];

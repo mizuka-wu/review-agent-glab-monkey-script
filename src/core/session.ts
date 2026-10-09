@@ -1,3 +1,4 @@
+import { mrLinkLabel } from './reference-mrs';
 import type {
   Finding,
   FindingAnchor,
@@ -8,6 +9,7 @@ import type {
   FindingStatus,
   FullFileOmission,
   MergeRequestRef,
+  ReferenceMrStatus,
   ReviewContext,
   RuntimeSettings,
 } from './types';
@@ -47,6 +49,9 @@ export interface ReviewSessionContextSummary {
   omittedFullFiles: FullFileOmission[];
   estimatedCharacters: number;
   budgetCharacters: number;
+  /** 本次评审参考过的其他 MR（只读上下文，不是评审对象）。 */
+  references?: { label: string; title?: string; status: ReferenceMrStatus; files: number }[];
+  referenceCharacters?: number;
 }
 
 export interface ReviewSessionManifest {
@@ -147,6 +152,7 @@ export function fromSessionFinding(finding: SessionFinding): Finding {
 }
 
 export function summarizeReviewContext(context: ReviewContext): ReviewSessionContextSummary {
+  const references = context.references ?? [];
   return {
     includedFiles: context.files.filter((file) => file.included).length,
     omittedFiles: context.omittedFiles,
@@ -154,6 +160,15 @@ export function summarizeReviewContext(context: ReviewContext): ReviewSessionCon
     omittedFullFiles: context.omittedFullFiles,
     estimatedCharacters: context.estimatedCharacters,
     budgetCharacters: context.budgetCharacters,
+    ...(references.length > 0 ? {
+      references: references.map((reference) => ({
+        label: mrLinkLabel(reference.ref),
+        title: reference.title,
+        status: reference.status,
+        files: reference.files.length,
+      })),
+      referenceCharacters: context.referenceCharacters ?? 0,
+    } : {}),
   };
 }
 

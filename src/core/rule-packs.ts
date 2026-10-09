@@ -292,10 +292,14 @@ function isFileLevel(rule: RuleDef): boolean {
   return rule.fileLevel === true || rule.id === 'builtin-missing-test';
 }
 
-export function runRulePackReview(files: FileDiff[], packs: RulePack[]): Finding[] {
+/**
+ * contextFiles 是参考变更（配套的其他 MR）：只参与「整个变更集是否已经补了测试」这类跨文件判断，
+ * 本身绝不产出 Finding —— 参考 MR 不是评审对象，也不会有发布位置。
+ */
+export function runRulePackReview(files: FileDiff[], packs: RulePack[], contextFiles: FileDiff[] = []): Finding[] {
   const findings: Finding[] = [];
   const inventory = enabledRulesOf(packs);
-  const hasTestChange = files.some((candidate) => testPattern.test(candidate.newPath));
+  const hasTestChange = [...files, ...contextFiles].some((candidate) => testPattern.test(candidate.newPath));
 
   for (const file of files) {
     const language = detectLanguage(file.newPath);

@@ -1,6 +1,7 @@
 import type {
   CodeSelection,
   FileDiff,
+  ReferenceMr,
   ReviewContext,
   ReviewContextFile,
 } from './types';
@@ -45,6 +46,9 @@ export function buildReviewContext(input: {
   selection?: CodeSelection;
   background?: string;
   budgetCharacters?: number;
+  /** 参考 MR 只读上下文：不占 diff 预算，但字符数如实计入上下文规模。 */
+  references?: ReferenceMr[];
+  referenceCharacters?: number;
 }): ReviewContext {
   const budgetCharacters = input.budgetCharacters ?? 60_000;
   const sourceFiles = input.files.length > 0 ? input.files : input.selection ? [selectionFile(input.selection)] : [];
@@ -69,11 +73,15 @@ export function buildReviewContext(input: {
     estimatedCharacters += size;
   }
 
+  const referenceCharacters = input.referenceCharacters ?? 0;
+
   return {
     files,
     selection: input.selection,
     background: input.background?.trim() || undefined,
-    estimatedCharacters,
+    references: input.references ?? [],
+    referenceCharacters,
+    estimatedCharacters: estimatedCharacters + referenceCharacters,
     budgetCharacters,
     omittedFiles,
     fullFiles: [],

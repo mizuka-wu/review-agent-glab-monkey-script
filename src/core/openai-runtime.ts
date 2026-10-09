@@ -549,11 +549,12 @@ export class OpenAIRuntime {
     language: RuntimeSettings['language'],
     signal?: AbortSignal,
     background?: string,
-    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string },
+    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string },
   ) {
     const context = [
       selection ? selectionContext(selection) : diffContext(files),
       background ? `\n\n业务背景：\n${background}` : '',
+      options?.references?.trim() ? `\n\n${options.references.trim()}` : '',
       options?.projectPrompt?.trim()
         ? `\n\n## 项目补充要求（该项目维护者配置，与上述内容冲突时以本节为准）\n${options.projectPrompt.trim()}`
         : '',

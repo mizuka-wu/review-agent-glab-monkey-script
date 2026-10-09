@@ -4,6 +4,9 @@ import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } f
 import { parseModelFindings } from './findings';
 import { corroborateFindings, hardenFindings } from './finding-hardening';
 import { reflectFindings } from './reflection';
+import {
+  isReferenceOnlyPath, mrLinkLabel, referenceContextBlock, referenceFilesOf, referenceOnlyPathKeys,
+} from './reference-mrs';
 import { groupFilesIntoBundles, mapWithConcurrency } from './review-bundles';
 import { BUILT_IN_PACK, countEnabledRules, runRulePackReview, type RulePack } from './rule-packs';
 import type {
@@ -13,6 +16,7 @@ import type {
   FindingSource,
   FullFileOmission,
   FullFileSnapshot,
+  ReferenceMr,
   ReviewContext,
   ReviewEngineResult,
   RuntimeSettings,
@@ -20,7 +24,7 @@ import type {
 
 interface ReviewRuntime {
   configured: boolean;
-  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string }): Promise<string>;
+  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string }): Promise<string>;
   reflect(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal): Promise<string>;
 }
 
@@ -115,8 +119,15 @@ export class ReviewEngine {
     projectPrompt?: string;
     /** 关闭后只跑规则检查，即使模型已配置。 */
     model?: boolean;
+    /** 其他 MR 的变更，只作为参考上下文拼进本次输入：不产出 Finding，也不参与发布位置解析。 */
+    references?: ReferenceMr[];
   }): Promise<ReviewEngineResult> {
-    const baseContext = buildReviewContext(input);
+    const references = input.references ?? [];
+    const referenceFiles = referenceFilesOf(references);
+    const referenceBlock = referenceContextBlock(references);
+    const baseContext = buildReviewContext({ ...input, referenceCharacters: referenceBlock.characters });
+    // 参考 MR 独有的路径：模型对它们产出的 Finding 一律丢弃，参考变更不是评审对象。
+    const referencePaths = referenceOnlyPathKeys(references, baseContext.files);
     const diffFiles = includedFiles(baseContext);
     let fullFiles: FullFileSnapshot[] = [];
     let omittedFullFiles: FullFileOmission[] = [];
@@ -136,11 +147,20 @@ export class ReviewEngine {
     const warnings = context.omittedFiles.length > 0
       ? [`省略 ${context.omittedFiles.length} 个文件：${context.omittedFiles.map((item) => `${item.path} (${item.reason})`).join(', ')}`]
       : [];
+    for (const reference of references) {
+      const label = mrLinkLabel(reference.ref);
+      if (reference.status === 'failed') warnings.push(`参考 MR ${label} 拉取失败：${reference.error ?? '未知原因'}。本次评审没有它的上下文。`);
+      else if (reference.status === 'loading') warnings.push(`参考 MR ${label} 还没拉取完成，本次评审没有它的上下文。`);
+      else if (reference.files.length === 0) warnings.push(`参考 MR ${label} 没有可用的变更文件。`);
+    }
+    if (referenceBlock.text) {
+      warnings.push(`已注入 ${references.filter((reference) => reference.status === 'ready').length} 个参考 MR（${referenceBlock.fileCount} 个文件 · ${referenceBlock.characters} 字符）作为只读上下文，不会为它们生成 Finding。`);
+    }
 
     // 阶段一：确定性规则检查。不依赖模型，未配置 API Key 时同样运行。
     const rulePacksEnabled = input.rules !== false;
     // 规则结果已经是结构化 Finding，保留原始换行和规则溯源信息，不再二次归一化。
-    const ruleFindings = rulePacksEnabled ? runRulePackReview(files, this.rulePacks) : [];
+    const ruleFindings = rulePacksEnabled ? runRulePackReview(files, this.rulePacks, referenceFiles) : [];
     input.onRuleFindings?.(ruleFindings);
     const stages: ReviewEngineResult['stages'] = {
       rules: { ran: rulePacksEnabled, findings: ruleFindings.length, rules: rulePacksEnabled ? countEnabledRules(this.rulePacks) : 0 },
@@ -152,19 +172,25 @@ export class ReviewEngine {
 
     // 阶段二：AI 评审。模型失败不拖垮规则结果。
     let modelFindings: Finding[] = [];
+    let referenceScopedDropped = 0;
+    const currentOnly = (parsed: Finding[]) => parsed.filter((finding) => {
+      if (!isReferenceOnlyPath(finding.path, referencePaths)) return true;
+      referenceScopedDropped += 1;
+      return false;
+    });
     if (this.runtime.configured && input.model !== false) {
       stages.model.ran = true;
       try {
         const bundles = groupFilesIntoBundles(files);
         if (bundles.length <= 1) {
-          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking, projectPrompt: input.projectPrompt });
-          modelFindings = parseModelFindings(raw, files);
+          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking, projectPrompt: input.projectPrompt, references: referenceBlock.text || undefined });
+          modelFindings = currentOnly(parseModelFindings(raw, files));
         } else {
           const bundleErrors: string[] = [];
           const perBundle = await mapWithConcurrency(bundles, 3, async (bundle) => {
             try {
-              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, { projectPrompt: input.projectPrompt });
-              const parsed = parseModelFindings(raw, bundle);
+              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, { projectPrompt: input.projectPrompt, references: referenceBlock.text || undefined });
+              const parsed = currentOnly(parseModelFindings(raw, bundle));
               input.onBundleFindings?.(parsed);
               return parsed;
             } catch (error) {
@@ -181,6 +207,9 @@ export class ReviewEngine {
           }
         }
         stages.model.findings = modelFindings.length;
+        if (referenceScopedDropped > 0) {
+          warnings.push(`丢弃了 ${referenceScopedDropped} 条落在参考 MR 上的 AI Finding：参考变更只作上下文，不是评审对象。`);
+        }
 
         if (input.loadFile && input.fullFileRef) {
           const knownPaths = new Set(fullFiles.map((file) => file.path));
@@ -189,6 +218,7 @@ export class ReviewEngine {
             ...finding.evidence.map((evidence) => evidence.path),
           ]))]
             .filter((path) => !knownPaths.has(path))
+            .filter((path) => !isReferenceOnlyPath(path, referencePaths))
             .filter(fullFileEligible);
           const additional = await loadFullFiles(candidatePaths, input.fullFileRef, input.loadFile, {}, input.signal);
           fullFiles = mergeFullFiles(fullFiles, additional.files);
