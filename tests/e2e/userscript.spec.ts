@@ -763,7 +763,7 @@ test.describe('mock mode', () => {
     await expect(panel.getByText('禁止报告命名风格问题').first()).toBeVisible({ timeout: 10000 });
   });
 
-  test('recalls per-project supplementary prompts from history with the arrow keys', async ({ page }) => {
+  test('recalls per-project supplementary prompts from the history button, not the arrow keys', async ({ page }) => {
     await routeGitLab(page);
     // 旧版是「每项目一个单值」，升级后必须原样变成 1 条历史，不能丢用户已经存好的提示
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
@@ -781,26 +781,27 @@ test.describe('mock mode', () => {
     ) as { projectPromptHistory?: Record<string, string[]> }).projectPromptHistory);
 
     // 打字只改当前值；失焦才是保存点，历史这时候才追加
-    await box.fill('第二版：禁止报告命名风格问题');
+    const second = '第二版：禁止报告命名风格问题\n金额一律用 decimal';
+    await box.fill(second);
     await expect.poll(storedHistory).toEqual({ 'acme/app': ['第一版：金额计算必须用 decimal'] });
     await box.blur();
-    await expect.poll(storedHistory).toEqual({
-      'acme/app': ['第二版：禁止报告命名风格问题', '第一版：金额计算必须用 decimal'],
-    });
+    await expect.poll(storedHistory).toEqual({ 'acme/app': [second, '第一版：金额计算必须用 decimal'] });
 
-    // ↑ 往回翻，↓ 回到更新的一条，Esc 把正在写的内容还回去
+    // ↑↓ / Esc 完全交还给多行光标：光标照常上下移动，人工输入的内容一个字都不改
     await box.click();
-    await box.press('ArrowUp');
-    await expect(box).toHaveValue('第二版：禁止报告命名风格问题');
-    await box.press('ArrowUp');
-    await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
-    await expect(page.getByText('历史 2/2 · ↑↓ 切换 · Esc 回到编辑中的内容')).toBeVisible();
-    await box.press('ArrowDown');
-    await expect(box).toHaveValue('第二版：禁止报告命名风格问题');
-    await box.press('ArrowUp');
-    await box.press('ArrowUp');
-    await box.press('Escape');
-    await expect(box).toHaveValue('第二版：禁止报告命名风格问题');
+    await box.evaluate((el) => {
+      const node = el as HTMLTextAreaElement;
+      node.setSelectionRange(node.value.length, node.value.length);
+    });
+    const caretBefore = await box.evaluate((el) => (el as HTMLTextAreaElement).selectionStart);
+    await page.keyboard.press('ArrowUp');
+    const caretAfter = await box.evaluate((el) => (el as HTMLTextAreaElement).selectionStart);
+    expect(caretAfter).toBeLessThan(caretBefore);
+    await expect(box).toHaveValue(second);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Escape');
+    await expect(box).toHaveValue(second);
+    await expect(page.getByText('已保存 2 条历史（每项目最多 10 条）· 点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标')).toBeVisible();
 
     // 历史列表：点条目填回输入框，也能单删一条噪声（不影响当前生效值）
     await page.getByRole('button', { name: '项目补充要求历史' }).click();

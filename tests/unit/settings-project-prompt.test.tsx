@@ -61,7 +61,21 @@ function selectProject(key: string) {
   fireEvent.click(screen.getByRole('button', { name: key === 'acme/app' ? 'acme/app（当前）' : key }));
 }
 const listOf = () => screen.getByRole('listbox', { name: '项目补充要求历史列表' });
+const historyButton = () => screen.getByRole('button', { name: '项目补充要求历史' });
 const stored = () => JSON.parse(screen.getByTestId('stored').textContent ?? '{}');
+
+/** 打开历史列表并点第 index 条：↑↓ 已经不是入口，挑历史只能走按钮。 */
+function pickEntry(index: number) {
+  fireEvent.click(historyButton());
+  fireEvent.click(within(listOf()).getAllByRole('option')[index]);
+}
+
+/** 派发原生按键事件：defaultPrevented 直接说明这一次按键有没有被脚本拦下来。 */
+function press(key: string) {
+  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+  box().dispatchEvent(event);
+  return event;
+}
 
 afterEach(cleanup);
 
@@ -72,23 +86,39 @@ describe('设置页项目补充 System Prompt 历史', () => {
       projectPromptHistory: { 'acme/app': ['第二版', '第一版'], 'acme/other': ['别的项目'] },
     }} />);
     expect(screen.getByText('已缓存 2 个项目的补充提示，共 3 条历史（每项目最多 10 条）；起始页「开始一次混合评审」里也能直接编辑当前项目。')).toBeInTheDocument();
-    expect(screen.getByText('注入 acme/app 的混合评审 user 消息；按项目保留最近 10 条历史，输入框里 ↑↓ 翻看')).toBeInTheDocument();
+    expect(screen.getByText('注入 acme/app 的混合评审 user 消息；按项目保留最近 10 条历史，点输入框右上角的历史按钮翻看')).toBeInTheDocument();
+    expect(screen.queryByText(/输入框里 ↑↓ 翻看/)).not.toBeInTheDocument();
   });
 
-  it('↑↓ 在设置页输入框里同样翻该项目的历史', () => {
+  it('设置页输入框同样不劫持 ↑↓ / Esc：内容不变、按键不被拦截', () => {
+    render(<Harness settings={{
+      projectPrompts: { 'acme/app': '第一行\n第二行' },
+      projectPromptHistory: { 'acme/app': ['第一行\n第二行', '第一版', '第零版'] },
+    }} />);
+    box().setSelectionRange(4, 4);
+
+    expect(press('ArrowUp').defaultPrevented).toBe(false);
+    expect(press('ArrowDown').defaultPrevented).toBe(false);
+    expect(box()).toHaveValue('第一行\n第二行');
+    expect(box().selectionStart).toBe(4);
+    expect(stored().prompts['acme/app']).toBe('第一行\n第二行');
+
+    expect(press('Escape').defaultPrevented).toBe(false);
+    expect(box()).toHaveValue('第一行\n第二行');
+  });
+
+  it('历史按钮坐在输入框右上角，点开挑一条填回', () => {
     render(<Harness settings={{
       projectPrompts: { 'acme/app': '第二版' },
       projectPromptHistory: { 'acme/app': ['第二版', '第一版', '第零版'] },
     }} />);
-    expect(box()).toHaveValue('第二版');
+    expect(historyButton()).toHaveTextContent('3');
+    expect(box().style.paddingRight).toBe('56px');
 
-    fireEvent.keyDown(box(), { key: 'ArrowUp' });
-    fireEvent.keyDown(box(), { key: 'ArrowUp' });
+    pickEntry(1);
     expect(box()).toHaveValue('第一版');
     expect(stored().prompts['acme/app']).toBe('第一版');
-
-    fireEvent.keyDown(box(), { key: 'Escape' });
-    expect(box()).toHaveValue('第二版');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
   it('失焦保存把当前值追加进该项目历史', () => {
@@ -111,11 +141,11 @@ describe('设置页项目补充 System Prompt 历史', () => {
     }} />);
     selectProject('acme/other');
     expect(box()).toHaveValue('别的项目');
-    expect(screen.getByRole('button', { name: '项目补充要求历史' })).toHaveTextContent('2');
+    expect(historyButton()).toHaveTextContent('2');
 
-    fireEvent.keyDown(box(), { key: 'ArrowUp' });
-    fireEvent.keyDown(box(), { key: 'ArrowUp' });
+    pickEntry(1);
     expect(box()).toHaveValue('别的项目旧版');
+    expect(stored().prompts['acme/other']).toBe('别的项目旧版');
   });
 
   it('列表里单删一条历史，当前生效值不动', () => {
@@ -123,7 +153,7 @@ describe('设置页项目补充 System Prompt 历史', () => {
       projectPrompts: { 'acme/app': '第二版' },
       projectPromptHistory: { 'acme/app': ['第二版', '写错的一条'] },
     }} />);
-    fireEvent.click(screen.getByRole('button', { name: '项目补充要求历史' }));
+    fireEvent.click(historyButton());
     fireEvent.click(within(listOf()).getAllByRole('button', { name: '删除这条补充要求' })[1]);
     expect(stored().history['acme/app']).toEqual(['第二版']);
     expect(stored().prompts['acme/app']).toBe('第二版');
@@ -139,13 +169,16 @@ describe('设置页项目补充 System Prompt 历史', () => {
     expect(stored().history).toEqual({});
     expect(box()).toHaveValue('');
     expect(screen.queryByRole('button', { name: '项目补充要求历史' })).not.toBeInTheDocument();
+    expect(screen.getByText('失焦后自动存进历史，之后可以点历史按钮挑回之前写过的版本')).toBeInTheDocument();
   });
 
   it('只有历史、当前值为空的项目也会出现在下拉里', () => {
     render(<Harness settings={{ projectPromptHistory: { 'acme/legacy': ['很久以前的要求'] } }} />);
     selectProject('acme/legacy');
     expect(box()).toHaveValue('');
-    fireEvent.keyDown(box(), { key: 'ArrowUp' });
+    press('ArrowUp');
+    expect(box()).toHaveValue('');
+    pickEntry(0);
     expect(box()).toHaveValue('很久以前的要求');
   });
 });
