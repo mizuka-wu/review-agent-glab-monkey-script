@@ -1133,6 +1133,37 @@ test.describe('mock mode', () => {
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
     await expect(page.getByRole('complementary', { name: 'Review Agent' })).toBeVisible();
   });
+
+  // --- 设置页布局回归：最窄面板下开关不被压扁、设置区不出现横向滚动 ---
+  test('keeps settings switches full-size and the settings scroller free of horizontal scroll', async ({ page }) => {
+    await routeGitLab(page);
+    await page.addInitScript({
+      content: `localStorage.setItem('review-agent-ui-v1', ${JSON.stringify(JSON.stringify({ width: 380, top: 72, right: 16, open: false, hintDismissed: true }))});`,
+    });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+      repoIndex: { enabled: true, maxFiles: 800, maxBytes: 12582912, maxIndexes: 6 },
+      mcp: { enabled: true, servers: [{ id: 'mcp-1', name: 'fs', url: 'http://127.0.0.1:3000/mcp', enabled: true }] },
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('tab', { name: /设置/ }).click();
+    await expect(page.getByText('关闭思考输出')).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const shadow = document.getElementById('review-agent-glab-root')?.shadowRoot;
+      const aside = shadow?.querySelector('aside[aria-label="Review Agent"]');
+      const scroller = aside?.querySelector('.ra-scroll');
+      if (!aside || !scroller) return { overflow: Number.NaN, switches: [] as number[] };
+      const switches = [...shadow.querySelectorAll('[role="switch"]')]
+        .map((el) => Math.round(el.getBoundingClientRect().width));
+      return { overflow: scroller.scrollWidth - scroller.clientWidth, switches };
+    });
+
+    expect(metrics.overflow, '设置页不应出现横向滚动').toBeLessThanOrEqual(0);
+    expect(metrics.switches.length, '设置页应渲染出开关').toBeGreaterThanOrEqual(6);
+    expect(metrics.switches, '开关不应被同行文案压扁').toEqual(metrics.switches.map(() => 40));
+  });
 });
 
 test.describe('real GitLab mode', () => {
