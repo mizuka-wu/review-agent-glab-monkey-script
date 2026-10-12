@@ -233,7 +233,7 @@ export interface RuntimeSettings {
   projectPrompts: Record<string, string>;
   /**
    * 按项目保存的补充要求历史，最新在前、每项目最多 PROJECT_PROMPT_HISTORY_LIMIT 条。
-   * 打字只改 projectPrompts，失焦才把当前值追加到这里，↑↓ 翻的就是这份列表。
+   * 打字只改 projectPrompts，失焦才把当前值追加到这里，历史列表里挑的就是这份列表。
    */
   projectPromptHistory: Record<string, string[]>;
   /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */

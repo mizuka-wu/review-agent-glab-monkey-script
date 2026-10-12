@@ -374,7 +374,7 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
     <Field
       label="项目补充 System Prompt"
       hint={effectiveKey
-        ? `注入 ${effectiveKey} 的混合评审 user 消息；按项目保留最近 ${PROJECT_PROMPT_HISTORY_LIMIT} 条历史，输入框里 ↑↓ 翻看`
+        ? `注入 ${effectiveKey} 的混合评审 user 消息；按项目保留最近 ${PROJECT_PROMPT_HISTORY_LIMIT} 条历史，点输入框右上角的历史按钮翻看`
         : '当前页面没有项目上下文'}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

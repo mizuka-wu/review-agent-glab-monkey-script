@@ -2304,7 +2304,7 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
   /** 大于 0 说明这次是复位回来的：把焦点交回 prompt 输入框，首次挂载不打断用户在页面上的操作。 */
   focusTick: number;
   projectPrompt: string;
-  /** 该项目保存过的补充要求，最新在前，↑↓ 翻的就是它。 */
+  /** 该项目保存过的补充要求，最新在前，历史列表里挑的就是它。 */
   projectPromptHistory: string[];
   onProjectPromptChange: (value: string) => void;
   /** 失焦保存点：写入当前值并追加历史。 */
@@ -2350,7 +2350,7 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
         {hasMr && projectKey && (
           <div style={{ marginTop: 10, textAlign: 'left' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
-              项目补充要求（按 {projectKey} 记住最近 {PROJECT_PROMPT_HISTORY_LIMIT} 次，↑↓ 翻历史，注入混合评审 system prompt）
+              项目补充要求（按 {projectKey} 记住最近 {PROJECT_PROMPT_HISTORY_LIMIT} 次，点输入框右上角的历史按钮挑回旧版本，注入混合评审 system prompt）
             </div>
             <ProjectPromptInput
               ariaLabel="项目补充要求"

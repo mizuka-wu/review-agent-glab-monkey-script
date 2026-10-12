@@ -13,7 +13,7 @@ export interface ProjectPromptState {
 
 /**
  * 历史统一成「最新在前」的 trim 后文本：丢掉空白项、按内容去重（保留最靠前那条）、截断到上限。
- * 存 trim 后的值，去重和 ↑↓ 翻历史才对「同样内容」表现一致；注入评审时本来也会再 trim 一次。
+ * 存 trim 后的值，去重和历史列表里的条目才对「同样内容」表现一致；注入评审时本来也会再 trim 一次。
  */
 export function normalizeProjectPromptHistory(entries: unknown): string[] {
   if (!Array.isArray(entries)) return [];
@@ -82,7 +82,7 @@ export function setProjectPrompt(settings: RuntimeSettings, key: string, value: 
   return { ...settings, projectPrompts: prompts };
 }
 
-/** 保存点：落当前值 + 追加历史。清空只删当前值，历史保留，方便 ↑ 把刚才那条捞回来。 */
+/** 保存点：落当前值 + 追加历史。清空只删当前值，历史保留，方便从历史列表把刚才那条捞回来。 */
 export function commitProjectPrompt(settings: RuntimeSettings, key: string, value: string): RuntimeSettings {
   if (!key) return settings;
   const history: ProjectPromptHistoryMap = { ...(settings.projectPromptHistory ?? {}) };
