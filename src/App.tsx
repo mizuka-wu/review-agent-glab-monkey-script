@@ -2095,7 +2095,7 @@ export default function App({ page }: AppProps) {
           )}
 
           {tab === 'settings' && (
-            <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto' }}>
+            <div className="ra-scroll" style={{ flex: '1 1 0%', minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
               <SettingsView
                 settings={settings}
                 onSettingsChange={setSettings}

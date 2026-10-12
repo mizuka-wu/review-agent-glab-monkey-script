@@ -86,6 +86,21 @@ export function SettingsView(props: SettingsViewProps) {
   );
 }
 
+// ─── Switch row：左文案右开关；文案可收缩换行，开关保持 40px 不被压扁 ───
+function SwitchRow({ title, desc, checked, onChange }: {
+  title: string; desc: string; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{title}</div>
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, overflowWrap: 'anywhere' }}>{desc}</div>
+      </div>
+      <Toggle ariaLabel={title} checked={checked} onChange={onChange} />
+    </div>
+  );
+}
+
 // ─── Readiness overview ───
 function StatusSection({ settings, rulePacks }: SettingsViewProps) {
   const issues = modelConfigurationIssues(settings);
@@ -226,18 +241,12 @@ function ModelSection({ settings, onSettingsChange, onSettingsCommit, onSave, on
             onChange={m => onSettingsCommit({ ...settings, model: m })}
           />
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>关闭思考输出</div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                通过 chat_template_kwargs.enable_thinking=false 关闭 omlx / vLLM 系服务端的思考过程
-              </div>
-            </div>
-            <Toggle
-              checked={settings.thinking === 'off'}
-              onChange={v => onSettingsChange({ ...settings, thinking: v ? 'off' : 'default' })}
-            />
-          </div>
+          <SwitchRow
+            title="关闭思考输出"
+            desc="通过 chat_template_kwargs.enable_thinking=false 关闭 omlx / vLLM 系服务端的思考过程"
+            checked={settings.thinking === 'off'}
+            onChange={v => onSettingsChange({ ...settings, thinking: v ? 'off' : 'default' })}
+          />
 
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <Btn variant="ghost" icon={<X size={14} />} onClick={onClearApiKey}>清除密钥</Btn>
@@ -421,7 +430,7 @@ function ReviewSection({ settings, onSettingsChange, onSettingsCommit, projectKe
             />
           </Field>
           <ProjectPromptManager settings={settings} projectKey={projectKey} onCommit={onSettingsCommit} />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
           <Field label="审查强度" hint="只影响 AI 结果">
             <Select
               value={settings.effort}
@@ -444,19 +453,12 @@ function ReviewSection({ settings, onSettingsChange, onSettingsCommit, projectKe
             />
           </Field>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>允许应用修复</div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                对可修复的 Finding 用模型生成补丁，确认后提交回 MR 源分支（不碰目标分支）；关闭时「应用修复」入口不显示
-              </div>
-            </div>
-            <Toggle
-              ariaLabel="允许应用修复"
-              checked={settings.applyFixEnabled}
-              onChange={(v) => onSettingsChange({ ...settings, applyFixEnabled: v })}
-            />
-          </div>
+          <SwitchRow
+            title="允许应用修复"
+            desc="对可修复的 Finding 用模型生成补丁，确认后提交回 MR 源分支（不碰目标分支）；关闭时「应用修复」入口不显示"
+            checked={settings.applyFixEnabled}
+            onChange={(v) => onSettingsChange({ ...settings, applyFixEnabled: v })}
+          />
         </div>
       </CardBody>
     </Card>
@@ -477,18 +479,15 @@ function RepoIndexSection({ settings, onSettingsChange }: SettingsViewProps) {
       />
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>启用仓库索引</div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                把仓库文件缓存到浏览器 OPFS，构建符号表；GitLab REST 没有符号级 API
-              </div>
-            </div>
-            <Toggle checked={repo.enabled} onChange={(v) => patch({ enabled: v })} />
-          </div>
+          <SwitchRow
+            title="启用仓库索引"
+            desc="把仓库文件缓存到浏览器 OPFS，构建符号表；GitLab REST 没有符号级 API"
+            checked={repo.enabled}
+            onChange={(v) => patch({ enabled: v })}
+          />
           {repo.enabled && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
                 <Field label="最大文件数" hint="超出部分不索引">
                   <Input
                     mono value={String(repo.maxFiles)}
@@ -502,7 +501,7 @@ function RepoIndexSection({ settings, onSettingsChange }: SettingsViewProps) {
                   />
                 </Field>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
                 <Field label="保留索引份数" hint="不同 branch/commit 各一份，超出自动清理最旧">
                   <Input
                     mono value={String(repo.maxIndexes)}
@@ -510,15 +509,12 @@ function RepoIndexSection({ settings, onSettingsChange }: SettingsViewProps) {
                   />
                 </Field>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Review 注入仓库上下文</div>
-                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                    把「变更文件定义了哪些符号、被 Diff 外谁调用」加入模型提示词
-                  </div>
-                </div>
-                <Toggle checked={settings.repoContext} onChange={(v) => onSettingsChange({ ...settings, repoContext: v })} />
-              </div>
+              <SwitchRow
+                title="Review 注入仓库上下文"
+                desc="把「变更文件定义了哪些符号、被 Diff 外谁调用」加入模型提示词"
+                checked={settings.repoContext}
+                onChange={(v) => onSettingsChange({ ...settings, repoContext: v })}
+              />
             </>
           )}
         </div>
@@ -567,7 +563,7 @@ function UsageSection({ usageSummary, onClearUsage }: SettingsViewProps) {
     <Card>
       <CardHeader icon={<TestTube size={16} />} title="Token 用量" />
       <CardBody>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
           {[
             { label: '调用次数', value: String(usageSummary.callCount) },
             { label: '输入 Tokens', value: formatTokenCount(usageSummary.totalInputTokens) },
@@ -731,21 +727,15 @@ function DebugSection({ settings, onSettingsChange, onOpenDebug }: SettingsViewP
       />
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>显示调试标签页</div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                记录 GitLab / 模型 / MCP / 索引的每次请求、发给模型的完整提示词、console 报错与运行时快照
-              </div>
-            </div>
-            <Toggle
-              checked={settings.debugEnabled}
-              onChange={v => {
-                onSettingsChange({ ...settings, debugEnabled: v });
-                if (v) onOpenDebug();
-              }}
-            />
-          </div>
+          <SwitchRow
+            title="显示调试标签页"
+            desc="记录 GitLab / 模型 / MCP / 索引的每次请求、发给模型的完整提示词、console 报错与运行时快照"
+            checked={settings.debugEnabled}
+            onChange={v => {
+              onSettingsChange({ ...settings, debugEnabled: v });
+              if (v) onOpenDebug();
+            }}
+          />
           {settings.debugEnabled && (
             <Btn variant="outline" size="sm" icon={<Bug size={13} />} onClick={onOpenDebug}>打开调试面板</Btn>
           )}
@@ -772,13 +762,12 @@ function McpSection({ settings, onSettingsChange }: SettingsViewProps) {
       />
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>启用 MCP</div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>连接外部工具服务器扩展 Agent 能力</div>
-            </div>
-            <Toggle checked={settings.mcp.enabled} onChange={v => onSettingsChange({ ...settings, mcp: { ...settings.mcp, enabled: v } })} />
-          </div>
+          <SwitchRow
+            title="启用 MCP"
+            desc="连接外部工具服务器扩展 Agent 能力"
+            checked={settings.mcp.enabled}
+            onChange={v => onSettingsChange({ ...settings, mcp: { ...settings.mcp, enabled: v } })}
+          />
           {settings.mcp.enabled && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {servers.map((entry, index) => (

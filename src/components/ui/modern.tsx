@@ -306,6 +306,7 @@ export function Toggle({ checked, onChange, ariaLabel }: { checked: boolean; onC
         width: 40, height: 22, borderRadius: 11, border: 0, cursor: 'pointer',
         background: checked ? C.primary : C.border,
         transition: C.transition, position: 'relative', padding: 0,
+        flexShrink: 0,
       }}>
       <span style={{
         position: 'absolute', top: 3, left: checked ? 21 : 3,
