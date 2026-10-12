@@ -15,6 +15,7 @@ import { RepoPanel } from './components/review/RepoPanel';
 import { BatchPublishDialog, PublishDialog } from './components/review/PublishDialog';
 import { FixDialog, type FixStage } from './components/review/FixDialog';
 import { SelectionToolbar } from './components/review/SelectionToolbar';
+import { ProjectPromptInput } from './components/review/ProjectPromptInput';
 import { SettingsView, ModelPicker } from './components/SettingsView';
 import {
   Banner, Btn, IconButton, InjectAnimations, Pill, Select, Tabs, Toggle, tokens as C,
@@ -56,6 +57,10 @@ import {
 import {
   PROMPT_HISTORY_KEY, loadPromptHistory, pushPromptHistory, removePromptHistory, savePromptHistory,
 } from './core/prompt-history';
+import {
+  PROJECT_PROMPT_HISTORY_LIMIT, commitProjectPrompt, projectPromptHistoryOf, removeProjectPromptEntry,
+  setProjectPrompt,
+} from './core/project-prompts';
 import {
   loadReferenceMrs, mrLinkKey, mrLinkLabel, mrWebUrl, parseMrLinks, type MrLinkParseFailure,
 } from './core/reference-mrs';
@@ -1996,7 +2001,10 @@ export default function App({ page }: AppProps) {
                     focusTick={promptFocus}
                     projectKey={page.projectPath ?? ''}
                     projectPrompt={(settings.projectPrompts ?? {})[page.projectPath ?? ''] ?? ''}
-                    onProjectPromptChange={(value) => commitSettings({ ...settings, projectPrompts: { ...(settings.projectPrompts ?? {}), [page.projectPath ?? '']: value } })}
+                    projectPromptHistory={projectPromptHistoryOf(settings, page.projectPath ?? '')}
+                    onProjectPromptChange={(value) => commitSettings(setProjectPrompt(settings, page.projectPath ?? '', value))}
+                    onProjectPromptCommit={(value) => commitSettings(commitProjectPrompt(settings, page.projectPath ?? '', value))}
+                    onRemoveProjectPromptEntry={(entry) => commitSettings(removeProjectPromptEntry(settings, page.projectPath ?? '', entry))}
                     loading={loading}
                     filesCount={files.length}
                     enabledRuleCount={enabledRuleCount}
@@ -2290,13 +2298,18 @@ export default function App({ page }: AppProps) {
 
 }
 
-function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings, projectKey, projectPrompt, onProjectPromptChange, focusTick }: {
+function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, savedSession, sessionHistory, showHistory, onToggleHistory, onOpenSession, onResume, onStart, onOpenSettings, projectKey, projectPrompt, projectPromptHistory, onProjectPromptChange, onProjectPromptCommit, onRemoveProjectPromptEntry, focusTick }: {
   loading: boolean; filesCount: number; enabledRuleCount: number; modelReady: boolean; hasMr: boolean;
   projectKey: string;
   /** 大于 0 说明这次是复位回来的：把焦点交回 prompt 输入框，首次挂载不打断用户在页面上的操作。 */
   focusTick: number;
   projectPrompt: string;
+  /** 该项目保存过的补充要求，最新在前，↑↓ 翻的就是它。 */
+  projectPromptHistory: string[];
   onProjectPromptChange: (value: string) => void;
+  /** 失焦保存点：写入当前值并追加历史。 */
+  onProjectPromptCommit: (value: string) => void;
+  onRemoveProjectPromptEntry: (entry: string) => void;
   savedSession?: ReviewSessionManifest;
   sessionHistory: ReviewSessionManifest[];
   showHistory: boolean;
@@ -2337,20 +2350,18 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
         {hasMr && projectKey && (
           <div style={{ marginTop: 10, textAlign: 'left' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
-              项目补充要求（按 {projectKey} 记住，注入混合评审 system prompt）
+              项目补充要求（按 {projectKey} 记住最近 {PROJECT_PROMPT_HISTORY_LIMIT} 次，↑↓ 翻历史，注入混合评审 system prompt）
             </div>
-            <textarea
-              ref={promptRef}
-              aria-label="项目补充要求"
-              autoComplete="off"
+            <ProjectPromptInput
+              ariaLabel="项目补充要求"
+              inputRef={promptRef}
               value={projectPrompt}
-              onChange={(e) => onProjectPromptChange(e.target.value)}
+              history={projectPromptHistory}
+              onChange={onProjectPromptChange}
+              onCommit={onProjectPromptCommit}
+              onRemoveEntry={onRemoveProjectPromptEntry}
               placeholder="可选：本项目评审的额外约束，例如「金额计算必须用 decimal」「不要评论命名风格」。"
-              style={{
-                marginTop: 4, width: '100%', minHeight: 64, resize: 'vertical', padding: 7,
-                borderRadius: C.radiusSm, border: `1px solid ${C.border}`, fontSize: 12, lineHeight: 1.6,
-                fontFamily: 'inherit', color: C.text, background: C.bg, outline: 'none',
-              }}
+              style={{ marginTop: 4 }}
             />
           </div>
         )}

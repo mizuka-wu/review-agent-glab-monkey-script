@@ -229,8 +229,13 @@ export interface RuntimeSettings {
   mcp: McpSettings;
   auth: AuthSettings;
   repoIndex: RepoIndexSettings;
-  /** 按项目（projectPath）配置的 Review 补充 system prompt。 */
+  /** 按项目（projectPath）配置的 Review 补充 system prompt（当前生效值）。 */
   projectPrompts: Record<string, string>;
+  /**
+   * 按项目保存的补充要求历史，最新在前、每项目最多 PROJECT_PROMPT_HISTORY_LIMIT 条。
+   * 打字只改 projectPrompts，失焦才把当前值追加到这里，↑↓ 翻的就是这份列表。
+   */
+  projectPromptHistory: Record<string, string[]>;
   /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */
   repoContext: boolean;
   /** 调试标签页开关（默认关闭，在设置中打开）。 */

@@ -29,6 +29,11 @@ import { formatTokenCount, formatCost } from '../core/usage';
 import { BUILT_IN_PACK, countEnabledRules, type RulePack } from '../core/rule-packs';
 import { modelConfigurationIssues } from '../core/settings';
 import {
+  PROJECT_PROMPT_HISTORY_LIMIT, commitProjectPrompt, countProjectPromptEntries, removeProjectPrompt,
+  removeProjectPromptEntry, setProjectPrompt,
+} from '../core/project-prompts';
+import { ProjectPromptInput } from './review/ProjectPromptInput';
+import {
   Card, CardHeader, CardBody, Btn, Input, Select, Segmented, Toggle,
   Field, Badge, Banner, Divider, Spinner, tokens as C,
 } from './ui/modern';
@@ -355,25 +360,22 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
   settings: RuntimeSettings; projectKey: string; onCommit: (s: RuntimeSettings) => void;
 }) {
   const prompts = settings.projectPrompts ?? {};
-  const keys = [...new Set([projectKey, ...Object.keys(prompts)])].filter(Boolean);
+  const histories = settings.projectPromptHistory ?? {};
+  const keys = [...new Set([projectKey, ...Object.keys(prompts), ...Object.keys(histories)])].filter(Boolean);
   const [managedKey, setManagedKey] = useState(projectKey || keys[0] || '');
   const effectiveKey = managedKey || projectKey;
-  const setPrompt = (key: string, value: string) => {
-    const next = { ...prompts };
-    if (value.trim()) next[key] = value;
-    else delete next[key];
-    onCommit({ ...settings, projectPrompts: next });
-  };
+  const history = histories[effectiveKey] ?? [];
+  const hasEntry = effectiveKey in prompts || history.length > 0;
   const removeKey = (key: string) => {
-    const next = { ...prompts };
-    delete next[key];
-    onCommit({ ...settings, projectPrompts: next });
+    onCommit(removeProjectPrompt(settings, key));
     if (managedKey === key) setManagedKey(projectKey);
   };
   return (
     <Field
       label="项目补充 System Prompt"
-      hint={effectiveKey ? `注入 ${effectiveKey} 的混合评审 user 消息；按项目记住` : '当前页面没有项目上下文'}
+      hint={effectiveKey
+        ? `注入 ${effectiveKey} 的混合评审 user 消息；按项目保留最近 ${PROJECT_PROMPT_HISTORY_LIMIT} 条历史，输入框里 ↑↓ 翻看`
+        : '当前页面没有项目上下文'}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -385,27 +387,26 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
           />
           <Btn
             variant="ghost" size="sm" icon={<Trash2 size={13} />}
-            disabled={!effectiveKey || !(effectiveKey in prompts)}
-            title="删除该项目的补充提示"
+            disabled={!effectiveKey || !hasEntry}
+            title="删除该项目的补充提示与全部历史"
             onClick={() => removeKey(effectiveKey)}
           >
             删除
           </Btn>
         </div>
-        <textarea
-          autoComplete="off"
+        <ProjectPromptInput
+          ariaLabel="项目补充 System Prompt"
           value={prompts[effectiveKey] ?? ''}
-          onChange={(e) => setPrompt(effectiveKey, e.target.value)}
+          history={history}
+          onChange={(value) => onCommit(setProjectPrompt(settings, effectiveKey, value))}
+          onCommit={(value) => onCommit(commitProjectPrompt(settings, effectiveKey, value))}
+          onRemoveEntry={(entry) => onCommit(removeProjectPromptEntry(settings, effectiveKey, entry))}
           disabled={!effectiveKey}
           placeholder="例如：本仓库禁止直接查表，必须走 repository 层；涉及金额计算必须使用 decimal；不要在报告里评论命名风格。"
-          style={{
-            width: '100%', minHeight: 84, resize: 'vertical', padding: 8,
-            borderRadius: C.radiusSm, border: `1px solid ${C.border}`, fontSize: 12, lineHeight: 1.6,
-            fontFamily: 'inherit', color: C.text, background: C.bgSubtle, outline: 'none',
-          }}
+          style={{ minHeight: 84, padding: 8, background: C.bgSubtle }}
         />
         <div style={{ fontSize: 11, color: C.textMuted }}>
-          已缓存 {Object.keys(prompts).length} 个项目的补充提示；起始页「开始一次混合评审」里也能直接编辑当前项目。
+          已缓存 {Object.keys(prompts).length} 个项目的补充提示，共 {countProjectPromptEntries(histories)} 条历史（每项目最多 {PROJECT_PROMPT_HISTORY_LIMIT} 条）；起始页「开始一次混合评审」里也能直接编辑当前项目。
         </div>
       </div>
     </Field>

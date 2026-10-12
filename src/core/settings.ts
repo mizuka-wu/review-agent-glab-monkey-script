@@ -1,4 +1,5 @@
 import type { McpSettings, ModelProvider, RuntimeSettings } from './types';
+import { migrateProjectPrompts } from './project-prompts';
 
 /** 旧版单服务器配置迁移为服务器列表。 */
 function migrateMcp(mcp: Partial<McpSettings> & { serverUrl?: string }): McpSettings {
@@ -49,6 +50,7 @@ export const defaultSettings: RuntimeSettings = {
   mcp: { enabled: false, servers: [] },
   repoIndex: { enabled: true, maxFiles: 400, maxBytes: 12 * 1024 * 1024, maxIndexes: 6 },
   projectPrompts: {},
+  projectPromptHistory: {},
   repoContext: true,
   debugEnabled: false,
   thinking: 'default',
@@ -183,13 +185,15 @@ export async function loadSettings(): Promise<RuntimeSettings> {
       ? await gmStorage()?.getValue(STORAGE_KEY, {})
       : JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
     const partial = stored as Partial<RuntimeSettings>;
+    const projectPrompts = migrateProjectPrompts(partial.projectPrompts, partial.projectPromptHistory);
     return deobfuscateSettings({
       ...defaultSettings,
       ...partial,
       mcp: migrateMcp((partial.mcp ?? {}) as Partial<McpSettings> & { serverUrl?: string }),
       auth: { ...defaultSettings.auth, ...(partial.auth ?? {}) },
       repoIndex: { ...defaultSettings.repoIndex, ...(partial.repoIndex ?? {}) },
-      projectPrompts: { ...(partial.projectPrompts ?? {}) },
+      projectPrompts: projectPrompts.prompts,
+      projectPromptHistory: projectPrompts.history,
     });
   } catch {
     return defaultSettings;
