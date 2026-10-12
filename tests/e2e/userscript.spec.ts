@@ -763,6 +763,61 @@ test.describe('mock mode', () => {
     await expect(panel.getByText('禁止报告命名风格问题').first()).toBeVisible({ timeout: 10000 });
   });
 
+  test('recalls per-project supplementary prompts from history with the arrow keys', async ({ page }) => {
+    await routeGitLab(page);
+    // 旧版是「每项目一个单值」，升级后必须原样变成 1 条历史，不能丢用户已经存好的提示
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      reviewMode: 'rules', gitlabToken: '', language: 'zh-CN',
+      projectPrompts: { 'acme/app': '第一版：金额计算必须用 decimal' },
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    const box = page.getByRole('textbox', { name: '项目补充要求' });
+    await expect(box).toBeVisible();
+    await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
+    await expect(page.getByRole('button', { name: '项目补充要求历史' })).toHaveText('1');
+
+    const storedHistory = () => page.evaluate(() => (JSON.parse(
+      localStorage.getItem('review-agent-settings-v1') ?? '{}',
+    ) as { projectPromptHistory?: Record<string, string[]> }).projectPromptHistory);
+
+    // 打字只改当前值；失焦才是保存点，历史这时候才追加
+    await box.fill('第二版：禁止报告命名风格问题');
+    await expect.poll(storedHistory).toEqual({ 'acme/app': ['第一版：金额计算必须用 decimal'] });
+    await box.blur();
+    await expect.poll(storedHistory).toEqual({
+      'acme/app': ['第二版：禁止报告命名风格问题', '第一版：金额计算必须用 decimal'],
+    });
+
+    // ↑ 往回翻，↓ 回到更新的一条，Esc 把正在写的内容还回去
+    await box.click();
+    await box.press('ArrowUp');
+    await expect(box).toHaveValue('第二版：禁止报告命名风格问题');
+    await box.press('ArrowUp');
+    await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
+    await expect(page.getByText('历史 2/2 · ↑↓ 切换 · Esc 回到编辑中的内容')).toBeVisible();
+    await box.press('ArrowDown');
+    await expect(box).toHaveValue('第二版：禁止报告命名风格问题');
+    await box.press('ArrowUp');
+    await box.press('ArrowUp');
+    await box.press('Escape');
+    await expect(box).toHaveValue('第二版：禁止报告命名风格问题');
+
+    // 历史列表：点条目填回输入框，也能单删一条噪声（不影响当前生效值）
+    await page.getByRole('button', { name: '项目补充要求历史' }).click();
+    const list = page.getByRole('listbox', { name: '项目补充要求历史列表' });
+    await expect(list.getByRole('option')).toHaveCount(2);
+    await list.getByRole('option').nth(1).click();
+    await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
+    await expect(list).toHaveCount(0);
+
+    await page.getByRole('button', { name: '项目补充要求历史' }).click();
+    await expect(list.getByRole('option')).toHaveCount(2);
+    await list.getByRole('option').filter({ hasText: '第二版：禁止报告命名风格问题' })
+      .getByRole('button', { name: '删除这条补充要求' }).click();
+    await expect.poll(storedHistory).toEqual({ 'acme/app': ['第一版：金额计算必须用 decimal'] });
+    await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
+  });
+
   test('session viewer replays findings, marks fixed and hides handled', async ({ page }) => {
     await routeGitLab(page);
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs');
