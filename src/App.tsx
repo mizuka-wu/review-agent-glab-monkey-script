@@ -390,8 +390,8 @@ export default function App({ page }: AppProps) {
   }, [chatSessions, activeChatId]);
 
   useEffect(() => {
-    // Token 与「Commit 信息进上下文」开关都在设置里：设置读出来之前先发请求，
-    // 就会按默认值多打一次 commits 接口（开关是关的也照打），所以等设置就绪再读 MR。
+    // Token 与「Commit 信息进上下文」开关都在设置里：设置读出来之前先发请求，就会按出厂默认
+    // （开关关）漏掉 commits，用户打开着还得把 MR 整个重读一遍，所以等设置就绪再读 MR。
     if (!settingsLoaded) return;
     const controller = new AbortController();
     if (!mergeRequestRef) {
