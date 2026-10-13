@@ -14,6 +14,9 @@ const draft = (input: Partial<Finding> = {}): Finding => ({
 const noop = () => undefined;
 const OUT_OF_DIFF = 'Diff 中找不到第 99 行，且无法按 Finding 内容自动修正位置';
 const RUNNING = '评审进行中，请等本次 Review 结束后再发布';
+const BUSY = '正在提交到 GitLab，请稍候…';
+const DANGER_BG = '#fee2e2';
+const LOADING_BG = '#f8f9fb';
 
 function panelProps(overrides: Partial<FindingsPanelProps> = {}): FindingsPanelProps {
   return {
@@ -221,6 +224,35 @@ describe('publish dialogs', () => {
     expect(screen.getByRole('button', { name: '确认行内评论' })).toBeDisabled();
     expect(screen.getByText('当前无法发布')).toBeVisible();
     expect(screen.getByText(RUNNING)).toBeVisible();
+    // 真阻断仍然是红色告警，只有「进行中」才换 loading
+    expect(screen.getByText('当前无法发布').closest('div[style*="background"]')).toHaveStyle({ backgroundColor: DANGER_BG });
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('shows a loading notice instead of a red block while a single publish is in flight', () => {
+    render(<PublishDialog
+      finding={draft()} body="comment" onBodyChange={noop} publishing mode="inline"
+      busyReason={BUSY} meta={meta} onCancel={noop} onConfirm={noop}
+    />);
+    expect(screen.getByRole('button', { name: '发布中…' })).toBeDisabled();
+    expect(screen.queryByText('当前无法发布')).toBeNull();
+
+    const loading = screen.getByRole('status');
+    expect(loading).toHaveTextContent('正在发布…');
+    expect(loading).toHaveTextContent(BUSY);
+    expect(loading).toHaveAttribute('aria-busy', 'true');
+    expect(loading.querySelector('[data-spinner]')).not.toBeNull();
+    expect(loading).toHaveStyle({ backgroundColor: LOADING_BG });
+    expect(loading).not.toHaveStyle({ backgroundColor: DANGER_BG });
+  });
+
+  it('keeps the full-text fallback notice hidden while the publish is in flight', () => {
+    render(<PublishDialog
+      finding={draft({ line: 99 })} body="comment" onBodyChange={noop} publishing mode="full"
+      positionIssue={OUT_OF_DIFF} busyReason={BUSY} meta={meta} onCancel={noop} onConfirm={noop}
+    />);
+    expect(screen.getByRole('status')).toHaveTextContent('正在发布…');
+    expect(screen.queryByText('将发布为 MR 级全文评论')).toBeNull();
   });
 
   it('blocks confirming when the comment body is empty', () => {
@@ -266,5 +298,22 @@ describe('publish dialogs', () => {
     />);
     expect(screen.getByRole('button', { name: '确认批量行内评论 1 条' })).toBeDisabled();
     expect(screen.getByText('当前无法发布')).toBeVisible();
+    expect(screen.getByText('当前无法发布').closest('div[style*="background"]')).toHaveStyle({ backgroundColor: DANGER_BG });
+  });
+
+  it('shows a loading notice instead of a red block while the batch publish is in flight', () => {
+    render(<BatchPublishDialog
+      findings={[draft()]} publishing publishMode={() => 'inline'} busyReason={BUSY}
+      meta={meta} onCancel={noop} onConfirm={noop}
+    />);
+    expect(screen.getByRole('button', { name: '发布中…' })).toBeDisabled();
+    expect(screen.queryByText('当前无法发布')).toBeNull();
+
+    const loading = screen.getByRole('status');
+    expect(loading).toHaveTextContent('正在发布…');
+    expect(loading).toHaveTextContent(BUSY);
+    expect(loading.querySelector('[data-spinner]')).not.toBeNull();
+    expect(loading).toHaveStyle({ backgroundColor: LOADING_BG });
+    expect(loading).not.toHaveStyle({ backgroundColor: DANGER_BG });
   });
 });
