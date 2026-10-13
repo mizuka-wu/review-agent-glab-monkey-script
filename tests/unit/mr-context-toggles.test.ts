@@ -24,6 +24,7 @@ const baseSettings = {
   mcp: { enabled: false, servers: [] }, auth: { mode: 'bearer', customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
   repoIndex: { enabled: false, maxFiles: 100, maxBytes: 1000, maxIndexes: 3 },
   projectPrompts: {}, repoContext: false, debugEnabled: false, thinking: 'default',
+  // 出厂默认两个开关都是关的：引擎用例要验的是「打开后」的行为，这里显式打开
   includeMrDescription: true, includeMrCommits: true,
 } as unknown as RuntimeSettings;
 
@@ -89,27 +90,44 @@ describe('两个开关的默认值与两级迁移', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  it('defaults to on so the behaviour matches the previous release', () => {
-    expect(defaultSettings.includeMrDescription).toBe(true);
-    expect(defaultSettings.includeMrCommits).toBe(true);
+  it('defaults to off so nothing reaches the context until the user turns it on', () => {
+    expect(defaultSettings.includeMrDescription).toBe(false);
+    expect(defaultSettings.includeMrCommits).toBe(false);
   });
 
-  it('fills both with true when nothing was ever stored', async () => {
+  it('fills both with false when nothing was ever stored', async () => {
     const loaded = await loadSettings();
-    expect(loaded.includeMrDescription).toBe(true);
-    expect(loaded.includeMrCommits).toBe(true);
+    expect(loaded.includeMrDescription).toBe(false);
+    expect(loaded.includeMrCommits).toBe(false);
   });
 
-  it('fills both with true for settings saved by an older version', async () => {
+  it('fills both with false for settings saved before the switches existed', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       provider: 'openai', modelBaseUrl: 'https://gw.test/v1', model: 'm', repoContext: false,
       debugEnabled: true, applyFixEnabled: true,
     }));
     const loaded = await loadSettings();
-    expect(loaded.includeMrDescription).toBe(true);
-    expect(loaded.includeMrCommits).toBe(true);
+    expect(loaded.includeMrDescription).toBe(false);
+    expect(loaded.includeMrCommits).toBe(false);
     expect(loaded.repoContext).toBe(false);
     expect(loaded.applyFixEnabled).toBe(true);
+  });
+
+  it('reads back a true stored by the release that defaulted to on, and defaults the untouched one off', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      provider: 'openai', modelBaseUrl: 'https://gw.test/v1', model: 'm', includeMrDescription: true,
+    }));
+    const loaded = await loadSettings();
+    expect(loaded.includeMrDescription).toBe(true);
+    expect(loaded.includeMrCommits).toBe(false);
+  });
+
+  it('keeps an explicit on across a save/load round trip', async () => {
+    await saveSettings(settings({ includeMrDescription: true, includeMrCommits: true, apiKey: 'key' }));
+    const loaded = await loadSettings();
+    expect(loaded.includeMrDescription).toBe(true);
+    expect(loaded.includeMrCommits).toBe(true);
+    expect(loaded.apiKey).toBe('key');
   });
 
   it('keeps an explicit off across a save/load round trip', async () => {
@@ -141,6 +159,24 @@ describe('ReviewEngine skips the whole section when the switch is off', () => {
     const baseline = await new ReviewEngine(runtimeReturning(), settings())
       .run({ files: currentFiles, mrCommits: COMMITS });
     expect(result.context.estimatedCharacters).toBe(baseline.context.estimatedCharacters);
+  });
+
+  it('drops both blocks and charges nothing when the engine runs on the shipped defaults', async () => {
+    const runtime = runtimeReturning();
+    const result = await new ReviewEngine(runtime, defaultSettings)
+      .run({ files: currentFiles, mrDescription: DESCRIPTION, mrCommits: COMMITS });
+
+    expect(reviewOptions(runtime).mrDescription).toBeUndefined();
+    expect(reviewOptions(runtime).mrCommits).toBeUndefined();
+    expect(result.context.descriptionCharacters).toBe(0);
+    expect(result.context.commitsCharacters).toBe(0);
+    const summary = summarizeReviewContext(result.context);
+    expect(summary.descriptionCharacters).toBeUndefined();
+    expect(summary.commitsCharacters).toBeUndefined();
+
+    const bare = await new ReviewEngine(runtimeReturning(), settings({ includeMrDescription: false, includeMrCommits: false }))
+      .run({ files: currentFiles, mrDescription: DESCRIPTION, mrCommits: COMMITS });
+    expect(result.context.estimatedCharacters).toBe(bare.context.estimatedCharacters);
   });
 
   it('drops the commits block and stops charging its characters', async () => {
@@ -407,14 +443,20 @@ function settingsView(patch: Partial<RuntimeSettings> = {}, onSettingsChange = (
 describe('SettingsView exposes the two switches', () => {
   afterEach(() => cleanup());
 
-  it('renders both on by default next to the review settings', () => {
+  it('renders both off by default next to the review settings', () => {
     settingsView();
     const description = screen.getByRole('switch', { name: 'MR 说明进上下文' });
     const commits = screen.getByRole('switch', { name: 'Commit 信息进上下文' });
-    expect(description.getAttribute('aria-checked')).toBe('true');
-    expect(commits.getAttribute('aria-checked')).toBe('true');
+    expect(description.getAttribute('aria-checked')).toBe('false');
+    expect(commits.getAttribute('aria-checked')).toBe('false');
     expect(screen.getByText(/关闭后整段不渲染、字符不入账，省 token/)).toBeTruthy();
     expect(screen.getByText(/关闭后连 commits 接口都不打，省 token/)).toBeTruthy();
+  });
+
+  it('reflects a stored on state', () => {
+    settingsView({ includeMrDescription: true, includeMrCommits: true });
+    expect(screen.getByRole('switch', { name: 'MR 说明进上下文' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('switch', { name: 'Commit 信息进上下文' }).getAttribute('aria-checked')).toBe('true');
   });
 
   it('reflects a stored off state', () => {
@@ -423,14 +465,24 @@ describe('SettingsView exposes the two switches', () => {
     expect(screen.getByRole('switch', { name: 'Commit 信息进上下文' }).getAttribute('aria-checked')).toBe('false');
   });
 
-  it('flips one switch without touching the other', () => {
+  it('flips one switch on without touching the other', () => {
     const changed: RuntimeSettings[] = [];
     settingsView({}, (next) => changed.push(next));
     fireEvent.click(screen.getByRole('switch', { name: 'Commit 信息进上下文' }));
 
     expect(changed).toHaveLength(1);
-    expect(changed[0].includeMrCommits).toBe(false);
-    expect(changed[0].includeMrDescription).toBe(true);
+    expect(changed[0].includeMrCommits).toBe(true);
+    expect(changed[0].includeMrDescription).toBe(false);
+  });
+
+  it('flips one stored switch off without touching the other', () => {
+    const changed: RuntimeSettings[] = [];
+    settingsView({ includeMrDescription: true, includeMrCommits: true }, (next) => changed.push(next));
+    fireEvent.click(screen.getByRole('switch', { name: 'MR 说明进上下文' }));
+
+    expect(changed).toHaveLength(1);
+    expect(changed[0].includeMrDescription).toBe(false);
+    expect(changed[0].includeMrCommits).toBe(true);
   });
 });
 
@@ -525,7 +577,7 @@ describe('the switches in the app review flow', () => {
 
   it('never calls the commits endpoint and sends no commits block when the switch is off', async () => {
     const calls = stubNetwork();
-    mount({ includeMrCommits: false });
+    mount({ includeMrDescription: true, includeMrCommits: false });
     await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
     await waitFor(() => expect(commitsCalls(calls)).toHaveLength(0));
 
@@ -543,7 +595,7 @@ describe('the switches in the app review flow', () => {
 
   it('keeps the MR body request but drops the description block when its switch is off', async () => {
     const calls = stubNetwork();
-    mount({ includeMrDescription: false });
+    mount({ includeMrDescription: false, includeMrCommits: true });
     await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
 
     await runReview();
@@ -574,9 +626,30 @@ describe('the switches in the app review flow', () => {
     expect(screen.getByText('硬编码 API Key 应移至安全配置')).toBeInTheDocument();
   });
 
-  it('injects both sections for settings saved before the switches existed', async () => {
+  it('injects neither section for settings saved before the switches existed', async () => {
     const calls = stubNetwork();
     mount();
+    await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
+    expect(commitsCalls(calls)).toHaveLength(0);
+
+    await runReview();
+
+    expect(commitsCalls(calls)).toHaveLength(0);
+    const prompts = reviewPrompts(calls);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain('MR 说明');
+    expect(prompts[0]).not.toContain('重试最多 3 次');
+    expect(prompts[0]).not.toContain('MR Commits');
+    expect(prompts[0]).not.toContain('网关超时后指数退避重试');
+    // 缺省关只影响这两段：diff 与评审本身照旧
+    expect(prompts[0]).toContain('src/payment.ts');
+    expect(screen.getByText('硬编码 API Key 应移至安全配置')).toBeInTheDocument();
+    expect(screen.queryByText(/读取 MR 数据失败/)).not.toBeInTheDocument();
+  });
+
+  it('injects both sections once the user turns both switches on', async () => {
+    const calls = stubNetwork();
+    mount({ includeMrDescription: true, includeMrCommits: true });
     await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
     expect(commitsCalls(calls).length).toBeGreaterThan(0);
 
@@ -592,7 +665,7 @@ describe('the switches in the app review flow', () => {
 
   it('logs the description injection only while its switch is on', async () => {
     stubNetwork();
-    mount({ includeMrDescription: false });
+    mount({ includeMrDescription: false, includeMrCommits: true });
     await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
     debugBus.clear();
 
@@ -605,7 +678,7 @@ describe('the switches in the app review flow', () => {
 
   it('logs both injections when both switches are on', async () => {
     stubNetwork();
-    mount();
+    mount({ includeMrDescription: true, includeMrCommits: true });
     await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
     debugBus.clear();
 
@@ -614,5 +687,18 @@ describe('the switches in the app review flow', () => {
     const messages = debugBus.getLogs().map((entry) => entry.message);
     expect(messages.some((message) => message.includes('注入 MR 说明'))).toBe(true);
     expect(messages.some((message) => message.includes('注入 MR 提交记录 1 条'))).toBe(true);
+  });
+
+  it('logs neither injection while the defaults stay off', async () => {
+    stubNetwork();
+    mount();
+    await waitFor(() => expect(screen.getByText('Harden checkout payment error handling')).toBeInTheDocument());
+    debugBus.clear();
+
+    await runReview();
+
+    const messages = debugBus.getLogs().map((entry) => entry.message);
+    expect(messages.some((message) => message.includes('注入 MR 说明'))).toBe(false);
+    expect(messages.some((message) => message.includes('注入 MR 提交记录'))).toBe(false);
   });
 });

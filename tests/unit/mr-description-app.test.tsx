@@ -26,9 +26,11 @@ const modelFindings = JSON.stringify({
   }],
 });
 
+// 说明段出厂默认不进上下文：这里显式打开，验的是「打开后」的全链路行为
 const HYBRID = {
   provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
   reviewMode: 'hybrid', gitlabToken: 'glpat-test', language: 'zh-CN', effort: 'balanced',
+  includeMrDescription: true,
 };
 
 interface Call { url: string; method: string; body: string }

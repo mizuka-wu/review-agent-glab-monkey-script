@@ -528,9 +528,11 @@ describe('MR commits in the app review flow', () => {
     origin: 'https://gitlab.test', route: 'diff', projectPath: 'acme/app',
     projectNumericId: 42, mergeRequestIid: 248,
   };
+  // Commits 段出厂默认不进上下文：这里显式打开，验的是「打开后」的全链路行为
   const HYBRID = {
     provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
     reviewMode: 'hybrid', gitlabToken: 'glpat-test', language: 'zh-CN', effort: 'balanced',
+    includeMrCommits: true,
   };
   const currentDiff = {
     old_path: 'src/payment.ts', new_path: 'src/payment.ts',

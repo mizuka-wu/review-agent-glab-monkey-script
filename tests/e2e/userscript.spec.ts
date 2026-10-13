@@ -775,6 +775,8 @@ test.describe('mock mode', () => {
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
       provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
       gitlabToken: '', effort: 'balanced', language: 'zh-CN', debugEnabled: true, projectPrompts: {},
+      // 说明与提交段出厂默认不进上下文：这个用例验的是两段都在时的消息顺序
+      includeMrDescription: true, includeMrCommits: true,
     });
     await page.getByRole('button', { name: '打开 Review Agent' }).click();
     const promptBox = page.getByPlaceholder(/可选：本项目评审的额外约束/);
@@ -910,6 +912,8 @@ test.describe('mock mode', () => {
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
       provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
       gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+      // 说明与提交段出厂默认不进上下文：这个用例验的是两段都在时当前 MR 与参考 MR 同口径
+      includeMrDescription: true, includeMrCommits: true,
     });
     await openReferencePanel(page);
     const panel = referencePanel(page);
