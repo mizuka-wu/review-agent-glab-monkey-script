@@ -1,7 +1,7 @@
-import { MR_DESCRIPTION_BUDGET_CHARACTERS, truncateToBudget } from './context';
+import { MR_DESCRIPTION_BUDGET_CHARACTERS, formatMrCommits, truncateToBudget } from './context';
 import { diffContext } from './diff';
 import { enabledRulesOf, type RulePack } from './rule-packs';
-import type { FileDiff } from './types';
+import type { FileDiff, MrCommit } from './types';
 
 export interface DelegationMeta {
   project?: string;
@@ -19,6 +19,8 @@ export function buildDelegationContext(input: {
   background?: string;
   /** MR 说明：外部 Agent 同样需要需求背景才能判断实现是否符合意图。 */
   description?: string;
+  /** MR 提交记录：需求细节常常只写在 commit message 里。 */
+  commits?: MrCommit[];
   meta?: DelegationMeta;
 }): string {
   const rules = enabledRulesOf(input.packs);
@@ -56,6 +58,9 @@ export function buildDelegationContext(input: {
     input.description?.trim()
       ? truncateToBudget(input.description.trim(), MR_DESCRIPTION_BUDGET_CHARACTERS)
       : '(无)',
+    '',
+    '## MR Commits',
+    formatMrCommits(input.commits ?? []) || '(无)',
     '',
     '## 参考背景',
     input.background?.trim() || '(无)',

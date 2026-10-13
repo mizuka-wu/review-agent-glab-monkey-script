@@ -1,5 +1,7 @@
 import { anchorFindings } from './anchor';
-import { buildReviewContext, fileOmissionReason, includedFiles, mrDescriptionContext } from './context';
+import {
+  buildReviewContext, fileOmissionReason, includedFiles, mrCommitsContext, mrDescriptionContext,
+} from './context';
 import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } from './full-file';
 import { parseModelFindings } from './findings';
 import { corroborateFindings, hardenFindings } from './finding-hardening';
@@ -16,6 +18,7 @@ import type {
   FindingSource,
   FullFileOmission,
   FullFileSnapshot,
+  MrCommit,
   ReferenceMr,
   ReviewContext,
   ReviewEngineResult,
@@ -24,7 +27,7 @@ import type {
 
 interface ReviewRuntime {
   configured: boolean;
-  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string; mrDescription?: string }): Promise<string>;
+  review(files: FileDiff[], selection: CodeSelection | undefined, language: RuntimeSettings['language'], signal?: AbortSignal, background?: string, options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string; mrDescription?: string; mrCommits?: string }): Promise<string>;
   reflect(payload: string, language: RuntimeSettings['language'], signal?: AbortSignal): Promise<string>;
 }
 
@@ -103,6 +106,8 @@ export class ReviewEngine {
     background?: string;
     /** 当前 MR 的说明（GitLab description）：作为需求背景注入模型上下文，空说明整段不渲染。 */
     mrDescription?: string;
+    /** 当前 MR 的提交记录：commit message 里常写着需求细节，空列表 / 拉取失败整段不渲染。 */
+    mrCommits?: MrCommit[];
     signal?: AbortSignal;
     loadFile?: FullFileLoader;
     fullFileRef?: string;
@@ -128,10 +133,12 @@ export class ReviewEngine {
     const referenceFiles = referenceFilesOf(references);
     const referenceBlock = referenceContextBlock(references);
     const descriptionBlock = mrDescriptionContext(input.mrDescription);
+    const commitsBlock = mrCommitsContext(input.mrCommits);
     const baseContext = buildReviewContext({
       ...input,
       referenceCharacters: referenceBlock.characters,
       descriptionCharacters: descriptionBlock.length,
+      commitsCharacters: commitsBlock.length,
     });
     // 参考 MR 独有的路径：模型对它们产出的 Finding 一律丢弃，参考变更不是评审对象。
     const referencePaths = referenceOnlyPathKeys(references, baseContext.files);
@@ -190,13 +197,13 @@ export class ReviewEngine {
       try {
         const bundles = groupFilesIntoBundles(files);
         if (bundles.length <= 1) {
-          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking, projectPrompt: input.projectPrompt, references: referenceBlock.text || undefined, mrDescription: descriptionBlock || undefined });
+          const raw = await this.runtime.review(files, input.selection, this.settings.language, input.signal, input.background, { onToken: input.onModelToken, onThinking: input.onModelThinking, projectPrompt: input.projectPrompt, references: referenceBlock.text || undefined, mrDescription: descriptionBlock || undefined, mrCommits: commitsBlock || undefined });
           modelFindings = currentOnly(parseModelFindings(raw, files));
         } else {
           const bundleErrors: string[] = [];
           const perBundle = await mapWithConcurrency(bundles, 3, async (bundle) => {
             try {
-              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, { projectPrompt: input.projectPrompt, references: referenceBlock.text || undefined, mrDescription: descriptionBlock || undefined });
+              const raw = await this.runtime.review(bundle, input.selection, this.settings.language, input.signal, input.background, { projectPrompt: input.projectPrompt, references: referenceBlock.text || undefined, mrDescription: descriptionBlock || undefined, mrCommits: commitsBlock || undefined });
               const parsed = currentOnly(parseModelFindings(raw, bundle));
               input.onBundleFindings?.(parsed);
               return parsed;

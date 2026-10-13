@@ -107,6 +107,18 @@ export interface MergeRequestContext extends MergeRequestRef {
   diffRefs: DiffRefs;
 }
 
+/** MR 的一条提交：很多需求细节只写在 commit message 里，评审时作为背景注入。 */
+export interface MrCommit {
+  id: string;
+  shortId: string;
+  /** commit 标题，GitLab 取的是 message 第一行。 */
+  title: string;
+  /** commit 完整正文（含标题行）。 */
+  message: string;
+  authorName: string;
+  createdAt: string;
+}
+
 /** 用户粘贴/勾选的另一个 MR：只作为当前评审的参考上下文，永不作为发布目标。 */
 export interface MrLinkRef {
   origin: string;
@@ -122,6 +134,8 @@ export interface ReferenceMr {
   title?: string;
   /** 参考 MR 的说明：同样只读，用来理解配套改动的意图。 */
   description?: string;
+  /** 参考 MR 的提交记录：同样只读，拿不到就没有这一段。 */
+  commits?: MrCommit[];
   headSha?: string;
   files: FileDiff[];
   addedAt: string;
@@ -315,6 +329,8 @@ export interface ReviewContext {
   background?: string;
   /** MR 说明块实际拼进输入的字符数（空说明为 0，不渲染该段）。 */
   descriptionCharacters?: number;
+  /** MR commits 块实际拼进输入的字符数（拿不到提交为 0，不渲染该段）。 */
+  commitsCharacters?: number;
   /** 参考 MR：只读上下文，不产出 Finding，也不参与发布位置解析。 */
   references?: ReferenceMr[];
   /** 参考块实际拼进输入的字符数。 */

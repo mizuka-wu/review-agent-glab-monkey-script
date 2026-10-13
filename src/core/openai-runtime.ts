@@ -550,11 +550,12 @@ export class OpenAIRuntime {
     language: RuntimeSettings['language'],
     signal?: AbortSignal,
     background?: string,
-    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string; mrDescription?: string },
+    options?: { onToken?: (token: string) => void; onThinking?: (token: string) => void; projectPrompt?: string; references?: string; mrDescription?: string; mrCommits?: string },
   ) {
     const context = [
       selection ? selectionContext(selection) : diffContext(files),
       options?.mrDescription?.trim() ? `\n\n${options.mrDescription.trim()}` : '',
+      options?.mrCommits?.trim() ? `\n\n${options.mrCommits.trim()}` : '',
       background ? `\n\n业务背景：\n${background}` : '',
       options?.references?.trim() ? `\n\n${options.references.trim()}` : '',
       options?.projectPrompt?.trim()

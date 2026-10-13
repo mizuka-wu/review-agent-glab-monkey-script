@@ -12,6 +12,7 @@ import type {
   Finding,
   MergeRequestContext,
   MergeRequestRef,
+  MrCommit,
   PageContext,
   PositionLineRef,
   RecentMergeRequest,
@@ -35,6 +36,30 @@ interface RequestOptions {
   headers?: Record<string, string>;
   body?: string | URLSearchParams;
   signal?: AbortSignal;
+}
+
+/** MR commits API 的一条原始提交：字段随 GitLab 版本有出入，缺失一律落成空串。 */
+interface RawMrCommit {
+  id?: string;
+  short_id?: string;
+  title?: string;
+  message?: string;
+  author_name?: string;
+  created_at?: string;
+}
+
+/** title 缺失时用 message 第一行顶上：GitLab 自己也是这么算 title 的。 */
+export function normalizeMrCommit(raw: RawMrCommit): MrCommit {
+  const id = String(raw.id ?? '');
+  const message = String(raw.message ?? '');
+  return {
+    id,
+    shortId: String(raw.short_id ?? id.slice(0, 8)),
+    title: String(raw.title ?? message.split('\n')[0] ?? ''),
+    message,
+    authorName: String(raw.author_name ?? ''),
+    createdAt: String(raw.created_at ?? ''),
+  };
 }
 
 /** GitLab commits API 的一个文件动作：content 是完整文件内容，不是增量。 */
@@ -316,6 +341,27 @@ export class GitLabAdapter {
       sha: String(data.sha ?? diffRefs.headSha),
       diffRefs,
     };
+  }
+
+  /**
+   * MR 的提交列表：需求细节常常只写在 commit message 里，评审要当背景读。
+   * 一页 100 条已经等于上下文条数上限，只有整页拿满时才继续翻页，
+   * 多读的页只用于在省略标记里给出准确条数（上限 3 页 / 300 条）。
+   */
+  async listMrCommits(
+    ref: MergeRequestRef,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<MrCommit[]> {
+    const raw: RawMrCommit[] = [];
+    for (let page = 1; page <= 3; page += 1) {
+      const data = await this.request<RawMrCommit[]>(
+        `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/commits?per_page=100&page=${page}`,
+        { signal: options.signal },
+      );
+      raw.push(...data);
+      if (data.length < 100) break;
+    }
+    return raw.map(normalizeMrCommit);
   }
 
   async listDiffs(

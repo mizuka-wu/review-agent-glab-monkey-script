@@ -1,4 +1,6 @@
-import { MR_DESCRIPTION_BUDGET_CHARACTERS, truncateToBudget } from './context';
+import {
+  MR_COMMITS_BUDGET_CHARACTERS, MR_DESCRIPTION_BUDGET_CHARACTERS, formatMrCommits, truncateToBudget,
+} from './context';
 import { repoPathCandidates } from './diff';
 import { parseGitLabUrl } from './gitlab-url';
 import { mapWithConcurrency } from './review-bundles';
@@ -6,6 +8,7 @@ import type {
   FileDiff,
   MergeRequestContext,
   MergeRequestRef,
+  MrCommit,
   MrLinkRef,
   ReferenceMr,
 } from './types';
@@ -104,6 +107,8 @@ export function parseMrLinks(text: string, fallbackOrigin?: string): MrLinkParse
 export interface ReferenceMrApi {
   getMergeRequest(ref: MergeRequestRef): Promise<MergeRequestContext>;
   listDiffs(ref: MergeRequestRef, options?: { signal?: AbortSignal }): Promise<FileDiff[]>;
+  /** 可选：参考 MR 的提交记录，只当背景读。 */
+  listMrCommits?(ref: MergeRequestRef, options?: { signal?: AbortSignal }): Promise<MrCommit[]>;
 }
 
 export type ReferenceMrApiFactory = (ref: MrLinkRef) => ReferenceMrApi;
@@ -126,14 +131,17 @@ export async function loadReferenceMr(ref: MrLinkRef, api: ReferenceMrApi, signa
   const target = referenceMergeRequestRef(ref);
   const addedAt = new Date().toISOString();
   try {
-    const [context, files] = await Promise.all([
+    const [context, files, commits] = await Promise.all([
       api.getMergeRequest(target),
       api.listDiffs(target, { signal }),
+      // 提交记录只是背景资料：这个接口挂了不能连累参考 diff，退化成「这个参考没有 Commits 段」
+      api.listMrCommits?.(target, { signal }).catch(() => []) ?? [],
     ]);
     return {
       ref, status: 'ready', files, addedAt,
       title: context.title,
       description: context.description?.trim() || undefined,
+      ...(commits.length > 0 ? { commits } : {}),
       headSha: context.diffRefs.headSha,
       ...(files.length === 0 ? { error: '这个 MR 没有读到任何变更文件（可能是空 MR，或 diff 还没生成）' } : {}),
     };
@@ -218,6 +226,12 @@ export function referenceContextBlock(
     if (description) {
       const cap = Math.min(MR_DESCRIPTION_BUDGET_CHARACTERS, Math.floor(perReference / 2));
       lines.push(`#### [参考 ${label}] MR 说明（只读背景，不是评审对象）\n${truncateToBudget(description, cap)}`);
+    }
+    const commits = reference.commits ?? [];
+    if (commits.length > 0) {
+      // 提交记录最多占四分之一：说明 + 提交加起来也不能把参考 diff 挤光。
+      const cap = Math.min(MR_COMMITS_BUDGET_CHARACTERS, Math.floor(perReference / 4));
+      lines.push(`#### [参考 ${label}] MR Commits（只读背景，不是评审对象）\n${formatMrCommits(commits, cap)}`);
     }
 
     let used = lines.join('\n').length;

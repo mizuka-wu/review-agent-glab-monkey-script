@@ -52,6 +52,8 @@ export interface ReviewSessionContextSummary {
   budgetCharacters: number;
   /** 本次评审注入的 MR 说明块字符数（0 表示这个 MR 没写说明）。 */
   descriptionCharacters?: number;
+  /** 本次评审注入的 MR commits 块字符数（0 表示没拿到提交记录）。 */
+  commitsCharacters?: number;
   /** 本次评审参考过的其他 MR（只读上下文，不是评审对象）。 */
   references?: { label: string; title?: string; status: ReferenceMrStatus; files: number }[];
   referenceCharacters?: number;
@@ -165,6 +167,7 @@ export function summarizeReviewContext(context: ReviewContext): ReviewSessionCon
     estimatedCharacters: context.estimatedCharacters,
     budgetCharacters: context.budgetCharacters,
     ...(context.descriptionCharacters ? { descriptionCharacters: context.descriptionCharacters } : {}),
+    ...(context.commitsCharacters ? { commitsCharacters: context.commitsCharacters } : {}),
     ...(references.length > 0 ? {
       references: references.map((reference) => ({
         label: mrLinkLabel(reference.ref),

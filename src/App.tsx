@@ -70,8 +70,8 @@ import { httpTransport } from './core/http';
 import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
 import type {
   ChatMessage, CodeSelection, DiscussionPosition, FileDiff, Finding, MergeRequestContext,
-  MergeRequestRef, MrLinkRef, PageContext, ProjectPromptHistoryEntry, PublishMode, ReferenceMr,
-  ReviewStageReport, RuntimeSettings,
+  MergeRequestRef, MrCommit, MrLinkRef, PageContext, ProjectPromptHistoryEntry, PublishMode,
+  ReferenceMr, ReviewStageReport, RuntimeSettings,
 } from './core/types';
 
 function locateLabel(path: string, line: number) {
@@ -193,6 +193,8 @@ export default function App({ page }: AppProps) {
   const [toolEvents, setToolEvents] = useState<AgentLoopEvent[]>([]);
 
   const [mrContext, setMrContext] = useState<MergeRequestContext | undefined>(undefined);
+  /** MR 的提交记录：commit message 里常写着需求细节，评审时当背景注入。拉不到就是空数组。 */
+  const [mrCommits, setMrCommits] = useState<MrCommit[]>([]);
   const [files, setFiles] = useState<FileDiff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -397,9 +399,17 @@ export default function App({ page }: AppProps) {
       page.route === 'commit' && page.commitSha
         ? api.listCommitDiffs(page.commitSha)
         : api.listDiffs(mergeRequestRef, { signal: controller.signal }),
-    ]).then(([context, diffs]) => {
+      // commits 只是评审背景：这一个接口挂了不能连累 MR 主体与 diff，退化成「不带 commit 上下文」
+      api.listMrCommits(mergeRequestRef, { signal: controller.signal }).catch((error: unknown) => {
+        if (controller.signal.aborted) return [] as MrCommit[];
+        addLog('warn', 'gitlab', '读取 MR 提交列表失败，本次评审不带 commit 上下文',
+          error instanceof Error ? error.message : String(error));
+        return [] as MrCommit[];
+      }),
+    ]).then(([context, diffs, commits]) => {
       if (controller.signal.aborted) return;
       setMrContext(context);
+      setMrCommits(commits);
       setFiles(diffs);
       setLoading(false);
       addLog('info', 'gitlab', `已从 GitLab API 读取 ${diffs.length} 个变更文件`, `head ${context.diffRefs.headSha.slice(0, 8)}`);
@@ -966,6 +976,7 @@ export default function App({ page }: AppProps) {
       lastBackgroundRef.current = repoContext;
       const mrDescription = mrContext?.description?.trim() ?? '';
       if (mrDescription) addLog('info', 'review', `注入 MR 说明 ${mrDescription.length} 字符（需求背景）`);
+      if (mrCommits.length > 0) addLog('info', 'review', `注入 MR 提交记录 ${mrCommits.length} 条（commit message 需求背景）`);
       const projectPrompt = (settings.projectPrompts ?? {})[page.projectPath ?? '']?.trim();
       if (projectPrompt) addLog('info', 'review', `注入项目补充 prompt ${projectPrompt.length} 字符（${page.projectPath}）`);
       const result = await reviewEngine.run({
@@ -976,6 +987,7 @@ export default function App({ page }: AppProps) {
         model: runModel,
         references: reviewReferences,
         mrDescription,
+        mrCommits,
         background: repoContext ? `仓库符号上下文（本地索引 @${repoIndex?.status.ref.slice(0, 8)}）：\n${repoContext}` : undefined,
         loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
@@ -1399,6 +1411,7 @@ export default function App({ page }: AppProps) {
       packs: rulePacks,
       background: lastBackgroundRef.current || undefined,
       description: mrContext?.description,
+      commits: mrCommits,
       meta: {
         project: page.projectPath ?? undefined,
         mergeRequestIid: mergeRequestRef?.mergeRequestIid,
@@ -1551,11 +1564,17 @@ export default function App({ page }: AppProps) {
   const reloadMrChanges = useCallback(async () => {
     if (!mergeRequestRef) return;
     try {
-      const [context, diffs] = await Promise.all([
+      const [context, diffs, commits] = await Promise.all([
         api.getMergeRequest(mergeRequestRef),
         api.listDiffs(mergeRequestRef),
+        api.listMrCommits(mergeRequestRef).catch((error: unknown) => {
+          addLog('warn', 'gitlab', '刷新 MR 提交列表失败，本次评审不带 commit 上下文',
+            error instanceof Error ? error.message : String(error));
+          return [] as MrCommit[];
+        }),
       ]);
       setMrContext(context);
+      setMrCommits(commits);
       setFiles(diffs);
       addLog('info', 'gitlab', `已刷新 MR 变更（${diffs.length} 个文件）`, `head ${context.diffRefs.headSha.slice(0, 8)}`);
     } catch (error) {
