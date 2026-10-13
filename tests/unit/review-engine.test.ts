@@ -13,6 +13,8 @@ const settings = {
   language: 'zh-CN' as const,
   mcp: { enabled: false, serverUrl: '' },
   auth: { mode: 'bearer' as const, customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
+  includeMrDescription: true,
+  includeMrCommits: true,
 };
 
 const file = normalizeFileDiff({

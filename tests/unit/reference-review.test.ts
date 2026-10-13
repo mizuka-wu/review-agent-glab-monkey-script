@@ -11,6 +11,7 @@ const settings = {
   mcp: { enabled: false, servers: [] }, auth: { mode: 'bearer', customHeaders: {}, apiKeyHeader: 'Authorization', apiKeyQueryParam: 'key' },
   repoIndex: { enabled: false, maxFiles: 100, maxBytes: 1000, maxIndexes: 3 },
   projectPrompts: {}, repoContext: false, debugEnabled: false, thinking: 'default',
+  includeMrDescription: true, includeMrCommits: true,
 } as unknown as RuntimeSettings;
 
 const companionRef: MrLinkRef = { origin: 'https://other.test', projectPath: 'platform/sdk', iid: 12 };
