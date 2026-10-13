@@ -221,6 +221,12 @@ export interface RepoIndexSettings {
   maxIndexes: number;
 }
 
+/** 全局历史池里的一条：内容 + 当初是在哪个项目下存进去的（列表里显示成来源标注）。 */
+export interface ProjectPromptHistoryEntry {
+  value: string;
+  projectKey: string;
+}
+
 export interface RuntimeSettings {
   provider: ModelProvider;
   modelBaseUrl: string;
@@ -236,10 +242,11 @@ export interface RuntimeSettings {
   /** 按项目（projectPath）配置的 Review 补充 system prompt（当前生效值）。 */
   projectPrompts: Record<string, string>;
   /**
-   * 按项目保存的补充要求历史，最新在前、每项目最多 PROJECT_PROMPT_HISTORY_LIMIT 条。
-   * 打字只改 projectPrompts，失焦才把当前值追加到这里，历史列表里挑的就是这份列表。
+   * 全局共用的补充要求历史池（跨项目共享一个列表），最新在前、最多 GLOBAL_PROMPT_HISTORY_LIMIT 条，
+   * 每条记住来源项目。打字只改 projectPrompts，失焦才把当前值追加到这里，
+   * 起始页和设置页两个输入框的历史列表挑的都是这一份。
    */
-  projectPromptHistory: Record<string, string[]>;
+  projectPromptHistory: ProjectPromptHistoryEntry[];
   /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */
   repoContext: boolean;
   /** 调试标签页开关（默认关闭，在设置中打开）。 */

@@ -50,7 +50,7 @@ export const defaultSettings: RuntimeSettings = {
   mcp: { enabled: false, servers: [] },
   repoIndex: { enabled: true, maxFiles: 400, maxBytes: 12 * 1024 * 1024, maxIndexes: 6 },
   projectPrompts: {},
-  projectPromptHistory: {},
+  projectPromptHistory: [],
   repoContext: true,
   debugEnabled: false,
   thinking: 'default',

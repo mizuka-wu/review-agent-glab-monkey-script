@@ -59,7 +59,7 @@ import {
   PROMPT_HISTORY_KEY, loadPromptHistory, pushPromptHistory, removePromptHistory, savePromptHistory,
 } from './core/prompt-history';
 import {
-  PROJECT_PROMPT_HISTORY_LIMIT, commitProjectPrompt, projectPromptHistoryOf, removeProjectPromptEntry,
+  GLOBAL_PROMPT_HISTORY_LIMIT, commitProjectPrompt, projectPromptHistoryPool, removeProjectPromptEntry,
   setProjectPrompt,
 } from './core/project-prompts';
 import {
@@ -70,7 +70,8 @@ import { httpTransport } from './core/http';
 import { clearUsage, getUsageSummary, type UsageSummary } from './core/usage';
 import type {
   ChatMessage, CodeSelection, DiscussionPosition, FileDiff, Finding, MergeRequestContext,
-  MergeRequestRef, MrLinkRef, PageContext, PublishMode, ReferenceMr, ReviewStageReport, RuntimeSettings,
+  MergeRequestRef, MrLinkRef, PageContext, ProjectPromptHistoryEntry, PublishMode, ReferenceMr,
+  ReviewStageReport, RuntimeSettings,
 } from './core/types';
 
 function locateLabel(path: string, line: number) {
@@ -2021,10 +2022,10 @@ export default function App({ page }: AppProps) {
                     focusTick={promptFocus}
                     projectKey={page.projectPath ?? ''}
                     projectPrompt={(settings.projectPrompts ?? {})[page.projectPath ?? ''] ?? ''}
-                    projectPromptHistory={projectPromptHistoryOf(settings, page.projectPath ?? '')}
+                    projectPromptHistory={projectPromptHistoryPool(settings)}
                     onProjectPromptChange={(value) => commitSettings(setProjectPrompt(settings, page.projectPath ?? '', value))}
                     onProjectPromptCommit={(value) => commitSettings(commitProjectPrompt(settings, page.projectPath ?? '', value))}
-                    onRemoveProjectPromptEntry={(entry) => commitSettings(removeProjectPromptEntry(settings, page.projectPath ?? '', entry))}
+                    onRemoveProjectPromptEntry={(entry) => commitSettings(removeProjectPromptEntry(settings, entry))}
                     loading={loading}
                     filesCount={files.length}
                     enabledRuleCount={enabledRuleCount}
@@ -2319,8 +2320,8 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
   /** 大于 0 说明这次是复位回来的：把焦点交回 prompt 输入框，首次挂载不打断用户在页面上的操作。 */
   focusTick: number;
   projectPrompt: string;
-  /** 该项目保存过的补充要求，最新在前，历史列表里挑的就是它。 */
-  projectPromptHistory: string[];
+  /** 全局共用的补充要求历史池，最新在前，每条带来源项目；历史列表里挑的就是它。 */
+  projectPromptHistory: ProjectPromptHistoryEntry[];
   onProjectPromptChange: (value: string) => void;
   /** 失焦保存点：写入当前值并追加历史。 */
   onProjectPromptCommit: (value: string) => void;
@@ -2365,7 +2366,7 @@ function IdleReview({ loading, filesCount, enabledRuleCount, modelReady, hasMr, 
         {hasMr && projectKey && (
           <div style={{ marginTop: 10, textAlign: 'left' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary }}>
-              项目补充要求（按 {projectKey} 记住最近 {PROJECT_PROMPT_HISTORY_LIMIT} 次，点输入框右上角的历史按钮挑回旧版本，注入混合评审 system prompt）
+              项目补充要求（当前项目 {projectKey}；历史所有项目共用一个池子，最近 {GLOBAL_PROMPT_HISTORY_LIMIT} 次，点输入框右上角的历史按钮挑回旧版本，注入混合评审 system prompt）
             </div>
             <ProjectPromptInput
               ariaLabel="项目补充要求"

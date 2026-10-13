@@ -29,8 +29,8 @@ import { formatTokenCount, formatCost } from '../core/usage';
 import { BUILT_IN_PACK, countEnabledRules, type RulePack } from '../core/rule-packs';
 import { modelConfigurationIssues } from '../core/settings';
 import {
-  PROJECT_PROMPT_HISTORY_LIMIT, commitProjectPrompt, countProjectPromptEntries, removeProjectPrompt,
-  removeProjectPromptEntry, setProjectPrompt,
+  GLOBAL_PROMPT_HISTORY_LIMIT, commitProjectPrompt, countHistoryProjects, countProjectPromptEntries,
+  projectPromptHistoryPool, removeProjectPrompt, removeProjectPromptEntry, setProjectPrompt,
 } from '../core/project-prompts';
 import { ProjectPromptInput } from './review/ProjectPromptInput';
 import {
@@ -360,12 +360,11 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
   settings: RuntimeSettings; projectKey: string; onCommit: (s: RuntimeSettings) => void;
 }) {
   const prompts = settings.projectPrompts ?? {};
-  const histories = settings.projectPromptHistory ?? {};
-  const keys = [...new Set([projectKey, ...Object.keys(prompts), ...Object.keys(histories)])].filter(Boolean);
+  const pool = projectPromptHistoryPool(settings);
+  const keys = [...new Set([projectKey, ...Object.keys(prompts), ...pool.map((entry) => entry.projectKey)])].filter(Boolean);
   const [managedKey, setManagedKey] = useState(projectKey || keys[0] || '');
   const effectiveKey = managedKey || projectKey;
-  const history = histories[effectiveKey] ?? [];
-  const hasEntry = effectiveKey in prompts || history.length > 0;
+  const hasEntry = effectiveKey in prompts || pool.some((entry) => entry.projectKey === effectiveKey);
   const removeKey = (key: string) => {
     onCommit(removeProjectPrompt(settings, key));
     if (managedKey === key) setManagedKey(projectKey);
@@ -374,7 +373,7 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
     <Field
       label="项目补充 System Prompt"
       hint={effectiveKey
-        ? `注入 ${effectiveKey} 的混合评审 user 消息；按项目保留最近 ${PROJECT_PROMPT_HISTORY_LIMIT} 条历史，点输入框右上角的历史按钮翻看`
+        ? `注入 ${effectiveKey} 的混合评审 user 消息；历史所有项目共用一个池子（最近 ${GLOBAL_PROMPT_HISTORY_LIMIT} 条），点输入框右上角的历史按钮翻看`
         : '当前页面没有项目上下文'}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -388,7 +387,7 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
           <Btn
             variant="ghost" size="sm" icon={<Trash2 size={13} />}
             disabled={!effectiveKey || !hasEntry}
-            title="删除该项目的补充提示与全部历史"
+            title="删除该项目的补充提示与它在历史池里的条目"
             onClick={() => removeKey(effectiveKey)}
           >
             删除
@@ -397,16 +396,16 @@ function ProjectPromptManager({ settings, projectKey, onCommit }: {
         <ProjectPromptInput
           ariaLabel="项目补充 System Prompt"
           value={prompts[effectiveKey] ?? ''}
-          history={history}
+          history={pool}
           onChange={(value) => onCommit(setProjectPrompt(settings, effectiveKey, value))}
           onCommit={(value) => onCommit(commitProjectPrompt(settings, effectiveKey, value))}
-          onRemoveEntry={(entry) => onCommit(removeProjectPromptEntry(settings, effectiveKey, entry))}
+          onRemoveEntry={(entry) => onCommit(removeProjectPromptEntry(settings, entry))}
           disabled={!effectiveKey}
           placeholder="例如：本仓库禁止直接查表，必须走 repository 层；涉及金额计算必须使用 decimal；不要在报告里评论命名风格。"
           style={{ minHeight: 84, padding: 8, background: C.bgSubtle }}
         />
         <div style={{ fontSize: 11, color: C.textMuted }}>
-          已缓存 {Object.keys(prompts).length} 个项目的补充提示，共 {countProjectPromptEntries(histories)} 条历史（每项目最多 {PROJECT_PROMPT_HISTORY_LIMIT} 条）；起始页「开始一次混合评审」里也能直接编辑当前项目。
+          历史池全局共用：共 {countProjectPromptEntries(pool)} 条历史（上限 {GLOBAL_PROMPT_HISTORY_LIMIT} 条），来自 {countHistoryProjects(pool)} 个项目；已缓存 {Object.keys(prompts).length} 个项目的当前补充提示。起始页「开始一次混合评审」里也能直接编辑当前项目。
         </div>
       </div>
     </Field>

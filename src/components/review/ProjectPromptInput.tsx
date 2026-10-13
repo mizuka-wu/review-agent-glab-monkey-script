@@ -1,14 +1,15 @@
 import { useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { History, Trash2 } from 'lucide-react';
-import { PROJECT_PROMPT_HISTORY_LIMIT } from '../../core/project-prompts';
+import { GLOBAL_PROMPT_HISTORY_LIMIT } from '../../core/project-prompts';
+import type { ProjectPromptHistoryEntry } from '../../core/types';
 import { tokens as C } from '../ui/modern';
 
 export interface ProjectPromptInputProps {
   ariaLabel: string;
   /** 当前生效的补充要求（受控）。 */
   value: string;
-  /** 该项目已保存的历史，最新在前。 */
-  history: string[];
+  /** 全局共用的历史池，最新在前，每条带来源项目。 */
+  history: ProjectPromptHistoryEntry[];
   /** 打字实时更新当前值，不动历史。 */
   onChange: (value: string) => void;
   /** 失焦即保存点：把当前值追加进历史。 */
@@ -23,6 +24,7 @@ export interface ProjectPromptInputProps {
 /**
  * 项目补充要求输入框：多行文本，↑↓ / Esc 一律交还给光标与人工编辑，历史只从输入框右上角的按钮进。
  * （旧版把 ↑↓ 劫持成翻历史，会打断正常输入，已按用户反馈撤掉。）
+ * 历史池跨项目共用，所以每条右下角标出来源项目，选中只把 value 填回输入框。
  */
 export function ProjectPromptInput({
   ariaLabel, value, history, onChange, onCommit, onRemoveEntry,
@@ -33,9 +35,9 @@ export function ProjectPromptInput({
   const [showHistory, setShowHistory] = useState(false);
 
   /** 列表上 mousedown 已 preventDefault：输入框不会失焦，也就不会在 click 落地前被 blur 关掉。 */
-  const useEntry = (entry: string) => {
+  const useEntry = (entry: ProjectPromptHistoryEntry) => {
     setShowHistory(false);
-    onChange(entry);
+    onChange(entry.value);
     nodeRef.current?.focus();
   };
 
@@ -69,7 +71,7 @@ export function ProjectPromptInput({
           <button
             type="button" aria-label="项目补充要求历史" aria-expanded={showHistory} disabled={disabled}
             onClick={() => setShowHistory((open) => !open)}
-            title={`最近 ${history.length} 条保存过的补充要求，点开挑一条填回输入框`}
+            title={`最近 ${history.length} 条保存过的补充要求（所有项目共用一个历史池），点开挑一条填回输入框`}
             style={{
               position: 'absolute', top: 5, right: 5, zIndex: 32, display: 'flex', alignItems: 'center', gap: 3,
               height: 20, padding: '0 6px', fontSize: 10.5, lineHeight: 1, borderRadius: C.radiusSm,
@@ -83,7 +85,7 @@ export function ProjectPromptInput({
 
       <div style={{ fontSize: 10.5, color: C.textMuted, overflowWrap: 'anywhere' }}>
         {history.length > 0
-          ? `已保存 ${history.length} 条历史（每项目最多 ${PROJECT_PROMPT_HISTORY_LIMIT} 条）· 点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标`
+          ? `已保存 ${history.length} 条历史（所有项目共用，最多 ${GLOBAL_PROMPT_HISTORY_LIMIT} 条）· 点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标`
           : '失焦后自动存进历史，之后可以点历史按钮挑回之前写过的版本'}
       </div>
 
@@ -101,21 +103,29 @@ export function ProjectPromptInput({
           >
             {history.map((entry, index) => (
               <div
-                key={`${index}-${entry.slice(0, 24)}`} role="option" aria-selected={entry === value}
+                key={`${index}-${entry.value.slice(0, 24)}`} role="option" aria-selected={entry.value === value}
                 onClick={() => useEntry(entry)} title="点击填回输入框"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6, padding: '5px 7px', borderRadius: C.radiusSm,
-                  cursor: 'pointer', background: entry === value ? C.primaryLight : 'transparent',
+                  cursor: 'pointer', background: entry.value === value ? C.primaryLight : 'transparent',
                 }}
               >
-                <span style={{
-                  flex: 1, minWidth: 0, fontSize: 11, lineHeight: 1.5, color: C.text, whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word', maxHeight: 44, overflow: 'hidden',
-                }}>{entry}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{
+                    display: 'block', fontSize: 11, lineHeight: 1.5, color: C.text, whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word', maxHeight: 44, overflow: 'hidden',
+                  }}>{entry.value}</span>
+                  {entry.projectKey && (
+                    <span style={{
+                      display: 'block', marginTop: 2, textAlign: 'right', fontSize: 9.5, lineHeight: 1.3,
+                      color: C.textMuted, overflowWrap: 'anywhere',
+                    }}>{entry.projectKey}</span>
+                  )}
+                </span>
                 {onRemoveEntry && (
                   <button
                     type="button" aria-label="删除这条补充要求"
-                    onClick={(event) => { event.stopPropagation(); onRemoveEntry(entry); }}
+                    onClick={(event) => { event.stopPropagation(); onRemoveEntry(entry.value); }}
                     style={iconBtn}
                   ><Trash2 size={11} /></button>
                 )}
