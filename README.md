@@ -270,8 +270,8 @@ Draft → User Confirm → GitLab Discussion Publish
 
 ## 测试
 
-- **680 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线、prompt 与项目补充要求全局历史池（三级迁移/去重/30 上限/来源标注/跨项目点选与单删）、MR 说明上下文（渲染/截断/空值跳过/参考 MR 拼接）
-- **41 个 Playwright E2E**：24 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、快速操作、流式输出、运行中停止、模型失败横幅、模型自动切换、面板内划词隐藏、项目补充提示注入（含 MR 说明段）、项目补充要求历史按钮（全局池 + 来源项目标注）、prompt 历史、参考 MR（含参考说明）、应用修复、会话回放、设置页布局、元数据等）+ 17 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理、真实选区行号、真实行内 Discussion 发布、真实修复提交等）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
+- **725 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线、prompt 与项目补充要求全局历史池（三级迁移/去重/30 上限/来源标注/跨项目点选与单删）、MR 说明上下文（渲染/截断/空值跳过/参考 MR 拼接）、MR commit 记录上下文（段渲染/100 条与 4000 字符截断/单条 message 截断/空值与接口失败跳过/参考 MR 拼接/App 全链路）
+- **41 个 Playwright E2E**：24 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、快速操作、流式输出、运行中停止、模型失败横幅、模型自动切换、面板内划词隐藏、项目补充提示注入（含 MR 说明与 MR Commits 段）、项目补充要求历史按钮（全局池 + 来源项目标注）、prompt 历史、参考 MR（含参考说明与参考提交记录）、应用修复、会话回放、设置页布局、元数据等）+ 17 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理、真实选区行号、真实行内 Discussion 发布、真实修复提交等）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
 - **8 个评测 fixture**：安全/调试日志/弱类型/缺少测试/干净代码/多文件/性能/密钥泄漏
 - **合并门禁**：`pnpm typecheck` + `pnpm test:unit` + `pnpm test:e2e` + `pnpm build`
 

@@ -128,6 +128,16 @@ const mergeRequest = {
   diff_refs: { base_sha: 'base-sha', head_sha: 'head-sha', start_sha: 'start-sha' },
 };
 
+/** MR 的提交记录：需求细节常常只写在 commit message 里，评审要当背景读。 */
+const mrCommits = [
+  {
+    id: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', short_id: 'a1b2c3d4',
+    title: 'feat(pay): 支付失败重试 3 次',
+    message: 'feat(pay): 支付失败重试 3 次\n\n需求：网关超时后指数退避重试，最多 3 次；任何级别日志都不能打印 apiKey。',
+    author_name: 'mizuka', created_at: '2026-10-09T09:00:00.000Z',
+  },
+];
+
 const repoFiles: Record<string, string> = {
   'src/auth.ts': 'export function verifyToken(token: string) {\n  return token.length > 0;\n}\n',
   'src/handler.ts': 'import { verifyToken } from "./auth";\nexport function handler() {\n  return verifyToken("x");\n}\n',
@@ -200,6 +210,15 @@ const companionMergeRequest = {
   diff_refs: { base_sha: 'c-base', head_sha: 'c0ffee1234567890', start_sha: 'c-base' },
 };
 
+const companionCommits = [
+  {
+    id: 'c0ffee1234567890c0ffee1234567890c0ffee12', short_id: 'c0ffee12',
+    title: 'feat(sdk): 新增 token 下发接口',
+    message: 'feat(sdk): 新增 token 下发接口\n\n配套：字段与 acme/app 的重试逻辑对齐，token 前缀固定 tk_。',
+    author_name: 'sdk-bot', created_at: '2026-10-09T08:00:00.000Z',
+  },
+];
+
 const companionDiff = {
   old_path: 'src/companion.ts',
   new_path: 'src/companion.ts',
@@ -229,7 +248,9 @@ async function routeCompanion(page: Page, requests: string[] = [], options?: { s
     const status = options?.status ?? 200;
     const headers = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' };
     const body = status === 200
-      ? url.pathname.endsWith('/diffs') ? [companionDiff] : companionMergeRequest
+      ? url.pathname.endsWith('/diffs') ? [companionDiff]
+        : url.pathname.endsWith('/commits') ? companionCommits
+          : companionMergeRequest
       : { message: `${status} Not Found` };
     await route.fulfill({ status, headers, body: JSON.stringify(body) });
   });
@@ -237,7 +258,7 @@ async function routeCompanion(page: Page, requests: string[] = [], options?: { s
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[]; fixResponse?: string; commitStatus?: number; commits?: MockCommit[] }) {
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[]; fixResponse?: string; commitStatus?: number; commits?: MockCommit[]; mrCommits?: unknown[] }) {
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -331,6 +352,10 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/diffs')) {
       await route.fulfill({ json: options?.diffs ?? [diff] });
+      return;
+    }
+    if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/commits')) {
+      await route.fulfill({ json: options?.mrCommits ?? mrCommits });
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248')) {
@@ -763,9 +788,11 @@ test.describe('mock mode', () => {
     await page.getByRole('button', { name: /提示词 \d+/ }).click();
     await panel.getByText(/条消息 · 响应/).first().click();
     await expect(panel.getByText('禁止报告命名风格问题').first()).toBeVisible({ timeout: 10000 });
-    // MR 说明与补充要求在同一条用户消息里：说明在前，补充要求在最后
+    // MR 说明、commit 记录与补充要求在同一条用户消息里：说明在前，commits 紧随，补充要求在最后
     await expect(panel.getByText(/MR 说明（提交者写的需求背景/).first()).toBeVisible({ timeout: 10000 });
     await expect(panel.getByText(/支付失败必须给出可操作的错误提示/).first()).toBeVisible({ timeout: 10000 });
+    await expect(panel.getByText(/MR Commits（提交者写在 commit message 里的需求与实现说明/).first()).toBeVisible({ timeout: 10000 });
+    await expect(panel.getByText(/网关超时后指数退避重试，最多 3 次/).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('recalls supplementary prompts from the shared history button, not the arrow keys', async ({ page }) => {
@@ -911,6 +938,11 @@ test.describe('mock mode', () => {
     expect(reviewPrompt).toContain('支付失败必须给出可操作的错误提示');
     expect(reviewPrompt).toContain(`[参考 ${companionLabel}] MR 说明（只读背景，不是评审对象）`);
     expect(reviewPrompt).toContain('SDK 侧配套改动：新增 token 下发接口');
+    // 当前 MR 与参考 MR 的 commit 记录同样都进了这一次调用
+    expect(reviewPrompt).toContain('MR Commits（提交者写在 commit message 里的需求与实现说明');
+    expect(reviewPrompt).toContain('网关超时后指数退避重试，最多 3 次');
+    expect(reviewPrompt).toContain(`[参考 ${companionLabel}] MR Commits（只读背景，不是评审对象）`);
+    expect(reviewPrompt).toContain('配套：字段与 acme/app 的重试逻辑对齐');
 
     // 参考 MR 不产出 Finding，运行说明里如实写明
     await expect(page.getByText('参考仓库里的 Token 也写死了')).toHaveCount(0);
