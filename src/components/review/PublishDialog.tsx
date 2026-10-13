@@ -48,7 +48,7 @@ export function Dialog({ labelId, title, subtitle, onClose, children, footer }: 
   );
 }
 
-export function PublishDialog({ finding, body, onBodyChange, publishing, mode, positionIssue, blockReason, meta, onCancel, onConfirm }: {
+export function PublishDialog({ finding, body, onBodyChange, publishing, mode, positionIssue, blockReason, busyReason, meta, onCancel, onConfirm }: {
   finding: Finding;
   body: string;
   onBodyChange: (value: string) => void;
@@ -59,11 +59,15 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, mode, p
   positionIssue?: string;
   /** 会导致发布失败的状态；非空时确认按钮直接禁用。 */
   blockReason?: string;
+  /** 发布进行中的说明；非空时用 loading 提示，不是报错。 */
+  busyReason?: string;
   meta: { projectPath: string; mergeRequestIid?: number; headSha?: string };
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const inline = mode === 'inline';
+  /** 进行中与真阻断互斥展示：进行中优先，别让 loading 看起来像报错。 */
+  const notice = busyReason ?? blockReason;
   return (
     <Dialog
       labelId="publish-title"
@@ -75,8 +79,8 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, mode, p
           <Btn variant="outline" onClick={onCancel}>返回修改</Btn>
           <Btn
             variant="primary" icon={inline ? <MessageSquare size={13} /> : <FileText size={13} />} loading={publishing}
-            disabled={!body.trim() || Boolean(blockReason)}
-            title={!body.trim() ? '评论内容不能为空' : blockReason}
+            disabled={!body.trim() || Boolean(notice)}
+            title={!body.trim() ? '评论内容不能为空' : notice}
             onClick={onConfirm}
           >
             {publishing ? '发布中…' : inline ? '确认行内评论' : '确认全文评论'}
@@ -92,19 +96,25 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, mode, p
           </div>
         </div>
 
-        {blockReason && (
+        {busyReason && (
+          <Banner tone="loading" title="正在发布…">
+            {busyReason}
+          </Banner>
+        )}
+
+        {!busyReason && blockReason && (
           <Banner tone="danger" icon={<AlertTriangle size={14} />} title="当前无法发布">
             {blockReason}
           </Banner>
         )}
 
-        {!blockReason && !inline && (
+        {!notice && !inline && (
           <Banner tone="warning" icon={<FileText size={14} />} title="将发布为 MR 级全文评论">
             {positionIssue ?? '当前没有可用的 diff 行号，评论会发布到 MR 评论区，正文里带上文件与行号。'}
           </Banner>
         )}
 
-        {!blockReason && inline && finding.anchor?.corrected && (
+        {!notice && inline && finding.anchor?.corrected && (
           <Banner tone="info" title="评论位置已自动修正">
             原行号不在当前 Diff 行内，已按 Finding 内容重新定位到 {finding.path}:{finding.line}。
           </Banner>
@@ -127,7 +137,7 @@ export function PublishDialog({ finding, body, onBodyChange, publishing, mode, p
   );
 }
 
-export function BatchPublishDialog({ findings, publishing, publishMode, skipped = 0, blockReason, meta, onCancel, onConfirm }: {
+export function BatchPublishDialog({ findings, publishing, publishMode, skipped = 0, blockReason, busyReason, meta, onCancel, onConfirm }: {
   findings: Finding[];
   publishing: boolean;
   /** 每条会发成行内评论还是 MR 级全文评论。 */
@@ -136,6 +146,8 @@ export function BatchPublishDialog({ findings, publishing, publishMode, skipped 
   skipped?: number;
   /** 会导致发布失败的状态；非空时确认按钮直接禁用。 */
   blockReason?: string;
+  /** 发布进行中的说明；非空时用 loading 提示，不是报错。 */
+  busyReason?: string;
   meta: { projectPath: string; mergeRequestIid?: number; headSha?: string };
   onCancel: () => void;
   onConfirm: () => void;
@@ -154,8 +166,8 @@ export function BatchPublishDialog({ findings, publishing, publishMode, skipped 
           <Btn variant="outline" onClick={onCancel}>取消</Btn>
           <Btn
             variant="primary" icon={<MessageSquare size={13} />} loading={publishing}
-            disabled={findings.length === 0 || Boolean(blockReason)}
-            title={blockReason ?? (findings.length === 0 ? '没有可发布的 Finding' : undefined)}
+            disabled={findings.length === 0 || Boolean(busyReason ?? blockReason)}
+            title={busyReason ?? blockReason ?? (findings.length === 0 ? '没有可发布的 Finding' : undefined)}
             onClick={onConfirm}
           >
             {publishing ? '发布中…' : `确认${publishModeLabel('批量', inline, full)} ${findings.length} 条`}
@@ -168,7 +180,10 @@ export function BatchPublishDialog({ findings, publishing, publishMode, skipped 
           将为选中的 {findings.length} 个 Finding 逐条创建评论（{publishModeSummary(inline, full) || '无可发布条目'}），
           行内位置不可用的会降级为 MR 级全文评论，失败的条目会保留在列表中。
         </div>
-        {blockReason && (
+        {busyReason && (
+          <Banner tone="loading" title="正在发布…">{busyReason}</Banner>
+        )}
+        {!busyReason && blockReason && (
           <Banner tone="danger" icon={<AlertTriangle size={14} />} title="当前无法发布">{blockReason}</Banner>
         )}
         {skipped > 0 && (

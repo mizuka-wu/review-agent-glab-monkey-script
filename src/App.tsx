@@ -18,7 +18,8 @@ import { SelectionToolbar } from './components/review/SelectionToolbar';
 import { ProjectPromptInput } from './components/review/ProjectPromptInput';
 import { SettingsView, ModelPicker } from './components/SettingsView';
 import {
-  Banner, Btn, IconButton, InjectAnimations, Pill, Select, Tabs, Toggle, tokens as C,
+  Banner, Btn, IconButton, InjectAnimations, Pill, Select, Tabs, Toast, Toggle, tokens as C,
+  type ToastTone,
 } from './components/ui/modern';
 import { resolvePublishPosition, type PublishPosition } from './core/anchor';
 import { runAgentLoop, type AgentLoopEvent } from './core/agent-loop';
@@ -226,7 +227,11 @@ export default function App({ page }: AppProps) {
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [testing, setTesting] = useState(false);
 
-  const [toast, setToast] = useState('');
+  const [toast, setToastState] = useState<{ text: string; tone: ToastTone } | null>(null);
+  /** 提示浮层：默认中性播报；'loading' 是进行中（不自动消失，由结果提示替换）；'error' 才是报错。 */
+  const setToast = useCallback((text: string, tone: ToastTone = 'default') => {
+    setToastState(text ? { text, tone } : null);
+  }, []);
   const [repoIndex, setRepoIndex] = useState<RepoIndex | undefined>(undefined);
   const [repoStatus, setRepoStatus] = useState<RepoIndexStatus | undefined>(undefined);
 
@@ -278,15 +283,18 @@ export default function App({ page }: AppProps) {
     finding.status === 'draft' && Boolean(finding.comment.trim()), []);
 
   /** 只有点了必失败的状态才禁用发布入口；缺行号一律降级为全文评论，不留 4xx 给 GitLab。 */
-  const publishDisabledReason = !mergeRequestRef || !mrContext
+  const publishBlockedReason = !mergeRequestRef || !mrContext
     ? '当前页面不是 MR，无法创建 Discussion'
     : capabilities && !capabilities.canCreateDiscussions
       ? 'GitLab Token 没有创建 Discussion 的权限'
       : running
         ? '评审进行中，请等本次 Review 结束后再发布'
-        : publishing || batchPublishing || quickBusy
-          ? '正在执行发布操作，请稍候'
-          : undefined;
+        : undefined;
+  /** 发布进行中：只换成 loading 提示，不当成「无法发布」报错。 */
+  const publishBusyReason = publishing || batchPublishing || quickBusy
+    ? '正在提交到 GitLab，请稍候…'
+    : undefined;
+  const publishDisabledReason = publishBlockedReason ?? publishBusyReason;
   const canPublish = publishDisabledReason === undefined;
 
   const persistUi = useCallback((next: UiPrefs) => {
@@ -476,10 +484,10 @@ export default function App({ page }: AppProps) {
   }, [modelThinking, showThinking]);
 
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.tone === 'loading') return;
     const timer = window.setTimeout(() => setToast(''), 3600);
     return () => window.clearTimeout(timer);
-  }, [toast]);
+  }, [toast, setToast]);
 
   useEffect(() => {
     let active = true;
@@ -1336,9 +1344,13 @@ export default function App({ page }: AppProps) {
     const targets = resolvedFindings.filter(publishable);
     if (targets.length === 0) return;
     setQuickBusy(true);
+    setToast(`正在发布 ${targets.length} 条评论…`, 'loading');
     const { inline, full, published, failed } = await publishEach(mergeRequestRef, targets);
     setQuickBusy(false);
-    setToast(`已发布 ${publishedCountLabel(published, inline, full)}${failed > 0 ? `，失败 ${failed} 条` : ''}`);
+    setToast(
+      `已发布 ${publishedCountLabel(published, inline, full)}${failed > 0 ? `，失败 ${failed} 条` : ''}`,
+      failed > 0 && published === 0 ? 'error' : 'default',
+    );
   };
 
   const handleScanIndexed = async () => {
@@ -1400,13 +1412,14 @@ export default function App({ page }: AppProps) {
   const handleSummaryComment = async () => {
     if (!mergeRequestRef || findings.length === 0) return;
     setQuickBusy(true);
+    setToast('正在发布总评论…', 'loading');
     try {
       await api.createNote(mergeRequestRef, buildSummaryComment(findings));
       setToast('总评论已发布');
       addLog('info', 'publish', '已发布 MR 总评论');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setToast(`总评论发布失败：${message}`);
+      setToast(`总评论发布失败：${message}`, 'error');
       addLog('error', 'publish', '总评论发布失败', message);
     } finally {
       setQuickBusy(false);
@@ -1466,7 +1479,7 @@ export default function App({ page }: AppProps) {
     } catch (error) {
       const code = error instanceof GitLabApiError ? `${error.code}: ` : '';
       const message = error instanceof Error ? error.message : String(error);
-      setToast(`发布失败 ${code}${message}`);
+      setToast(`发布失败 ${code}${message}`, 'error');
       addLog('error', 'publish', '发布失败', `${code}${message}`);
       persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'failed' as const } : finding));
     } finally {
@@ -1497,7 +1510,10 @@ export default function App({ page }: AppProps) {
     setSelectedFindings(new Set());
     setBatchConfirm(false);
     setBatchPublishing(false);
-    setToast(`批量发布完成：${published} 成功${full > 0 ? `（${publishModeSummary(inline, full)}）` : ''}${failed > 0 ? `，${failed} 失败` : ''}`);
+    setToast(
+      `批量发布完成：${published} 成功${full > 0 ? `（${publishModeSummary(inline, full)}）` : ''}${failed > 0 ? `，${failed} 失败` : ''}`,
+      failed > 0 && published === 0 ? 'error' : 'default',
+    );
     addLog('info', 'publish', `批量发布 ${published} 成功（行内 ${inline} · 全文 ${full}）/ ${failed} 失败`);
   };
 
@@ -2252,7 +2268,8 @@ export default function App({ page }: AppProps) {
           publishing={publishing}
           mode={publishMode(publishFinding)}
           positionIssue={publishPositionIssue(publishFinding)}
-          blockReason={publishDisabledReason}
+          blockReason={publishBlockedReason}
+          busyReason={publishBusyReason}
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
           onCancel={() => setPublishFinding(undefined)}
           onConfirm={() => void confirmPublish()}
@@ -2265,7 +2282,8 @@ export default function App({ page }: AppProps) {
           publishing={batchPublishing}
           publishMode={publishMode}
           skipped={selectedFindings.size - publishableSelected.length}
-          blockReason={publishDisabledReason}
+          blockReason={publishBlockedReason}
+          busyReason={publishBusyReason}
           meta={{ projectPath: page.projectPath, mergeRequestIid: mergeRequestRef?.mergeRequestIid, headSha: mrContext?.diffRefs.headSha }}
           onCancel={() => setBatchConfirm(false)}
           onConfirm={() => void batchConfirmPublish()}
@@ -2289,14 +2307,7 @@ export default function App({ page }: AppProps) {
         />
       )}
 
-      {toast && (
-        <div role="status" style={{
-          position: 'fixed', zIndex: 2147483200, right: 18, bottom: 18, maxWidth: 360,
-          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', borderRadius: C.radius,
-          background: '#1e2536', color: '#f0f4f8', fontSize: 12, lineHeight: 1.5,
-          boxShadow: '0 8px 24px rgba(15,23,42,0.3)',
-        }}>{toast}</div>
-      )}
+      {toast && <Toast text={toast.text} tone={toast.tone} />}
     </div>
   );
 

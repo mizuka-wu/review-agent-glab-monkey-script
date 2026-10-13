@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode, type CSSProperties } from 'react';
-import { ChevronDown, Check, Copy, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Check, Copy, X } from 'lucide-react';
 
 // ─── Design tokens ───
 const C = {
@@ -115,7 +115,7 @@ export function Btn({ children, variant = 'secondary', size = 'md', icon, onClic
 // ─── Spinner ───
 export function Spinner({ size = 16, color = C.primary }: { size?: number; color?: string }) {
   return (
-    <span style={{ display: 'inline-block', width: size, height: size, border: `2px solid ${color}33`, borderTopColor: color, borderRadius: '50%', animation: 'ra-spin 0.6s linear infinite' }} />
+    <span data-spinner="" style={{ display: 'inline-block', width: size, height: size, border: `2px solid ${color}33`, borderTopColor: color, borderRadius: '50%', animation: 'ra-spin 0.6s linear infinite' }} />
   );
 }
 
@@ -391,20 +391,26 @@ export function Pill({ children, tone, count }: { children: ReactNode; tone?: So
 
 // ─── Banner ───
 export function Banner({ tone = 'info', title, children, action, onDismiss, icon }: {
-  tone?: 'info' | 'warning' | 'danger' | 'success'; title?: ReactNode; children?: ReactNode;
+  /** loading = 进行中的中性提示（带 spinner），不是错误。 */
+  tone?: 'info' | 'warning' | 'danger' | 'success' | 'loading'; title?: ReactNode; children?: ReactNode;
   action?: ReactNode; onDismiss?: () => void; icon?: ReactNode;
 }) {
   const palette = tone === 'warning' ? { fg: '#92400e', bg: C.warningBg, border: '#fcd9a0' }
     : tone === 'danger' ? { fg: '#991b1b', bg: C.dangerBg, border: '#f6bcbc' }
     : tone === 'success' ? { fg: '#166534', bg: C.successBg, border: '#b6e6c6' }
+    : tone === 'loading' ? { fg: C.textSecondary, bg: C.bgSubtle, border: C.border }
     : { fg: '#1e40af', bg: C.infoBg, border: '#c3d7f8' };
+  const leading = icon ?? (tone === 'loading' ? <Spinner size={13} color={C.textSecondary} /> : undefined);
   return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 11px',
-      background: palette.bg, border: `1px solid ${palette.border}`, borderRadius: C.radius,
-      color: palette.fg, fontSize: 12, lineHeight: 1.55,
-    }}>
-      {icon && <span style={{ display: 'flex', marginTop: 1, flexShrink: 0 }}>{icon}</span>}
+    <div
+      {...(tone === 'loading' ? { role: 'status', 'aria-busy': true } : {})}
+      style={{
+        display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 11px',
+        background: palette.bg, border: `1px solid ${palette.border}`, borderRadius: C.radius,
+        color: palette.fg, fontSize: 12, lineHeight: 1.55,
+      }}
+    >
+      {leading && <span style={{ display: 'flex', marginTop: 1, flexShrink: 0 }}>{leading}</span>}
       <div style={{ flex: 1, minWidth: 0 }}>
         {title && <div style={{ fontWeight: 700, marginBottom: children ? 2 : 0 }}>{title}</div>}
         {children && <div style={{ opacity: 0.92 }}>{children}</div>}
@@ -416,6 +422,31 @@ export function Banner({ tone = 'info', title, children, action, onDismiss, icon
           <X size={13} />
         </button>
       )}
+    </div>
+  );
+}
+
+// ─── Toast ───
+export type ToastTone = 'default' | 'loading' | 'error';
+
+/** 右下角浮层：default 中性播报，loading 进行中（带 spinner，由调用方用结果提示替换），error 明确报错。 */
+export function Toast({ text, tone = 'default' }: { text: string; tone?: ToastTone }) {
+  const error = tone === 'error';
+  return (
+    <div
+      role={error ? 'alert' : 'status'}
+      {...(tone === 'loading' ? { 'aria-busy': true } : {})}
+      style={{
+        position: 'fixed', zIndex: 2147483200, right: 18, bottom: 18, maxWidth: 360,
+        display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', borderRadius: C.radius,
+        background: error ? C.danger : '#1e2536', color: error ? '#fff' : '#f0f4f8',
+        fontSize: 12, lineHeight: 1.5, boxShadow: '0 8px 24px rgba(15,23,42,0.3)',
+        animation: 'ra-fade-in 0.18s ease',
+      }}
+    >
+      {tone === 'loading' && <Spinner size={13} color="#9db4d8" />}
+      {error && <AlertTriangle size={14} />}
+      <span>{text}</span>
     </div>
   );
 }
