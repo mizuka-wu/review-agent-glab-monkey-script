@@ -127,7 +127,17 @@ export function describeReferenceFailure(ref: MrLinkRef, error: unknown): string
   return detail;
 }
 
-export async function loadReferenceMr(ref: MrLinkRef, api: ReferenceMrApi, signal?: AbortSignal): Promise<ReferenceMr> {
+/** commits 为 false（「Commit 信息进上下文」关掉）时整个 commits 接口都不打，参考块里也没有 Commits 段。 */
+export interface ReferenceMrOptions {
+  commits?: boolean;
+}
+
+export async function loadReferenceMr(
+  ref: MrLinkRef,
+  api: ReferenceMrApi,
+  signal?: AbortSignal,
+  options?: ReferenceMrOptions,
+): Promise<ReferenceMr> {
   const target = referenceMergeRequestRef(ref);
   const addedAt = new Date().toISOString();
   try {
@@ -135,7 +145,9 @@ export async function loadReferenceMr(ref: MrLinkRef, api: ReferenceMrApi, signa
       api.getMergeRequest(target),
       api.listDiffs(target, { signal }),
       // 提交记录只是背景资料：这个接口挂了不能连累参考 diff，退化成「这个参考没有 Commits 段」
-      api.listMrCommits?.(target, { signal }).catch(() => []) ?? [],
+      options?.commits === false
+        ? []
+        : api.listMrCommits?.(target, { signal }).catch(() => []) ?? [],
     ]);
     return {
       ref, status: 'ready', files, addedAt,
@@ -155,8 +167,9 @@ export async function loadReferenceMrs(
   refs: MrLinkRef[],
   factory: ReferenceMrApiFactory,
   signal?: AbortSignal,
+  options?: ReferenceMrOptions,
 ): Promise<ReferenceMr[]> {
-  return mapWithConcurrency(refs, FETCH_CONCURRENCY, (ref) => loadReferenceMr(ref, factory(ref), signal));
+  return mapWithConcurrency(refs, FETCH_CONCURRENCY, (ref) => loadReferenceMr(ref, factory(ref), signal, options));
 }
 
 function pathKeys(path: string): string[] {
@@ -203,10 +216,12 @@ export interface ReferenceBlock {
 /**
  * 参考块：明确标注「只读上下文、不是评审对象」，每个文件都带上来源 MR，
  * 避免模型把参考路径当成当前 MR 的路径。
+ * sections 对应设置里的两个开关：关掉的那一段整块不渲染，字符也不占该参考的预算。
  */
 export function referenceContextBlock(
   references: ReferenceMr[],
   budgetCharacters: number = REFERENCE_BUDGET_CHARACTERS,
+  toggles?: { description?: boolean; commits?: boolean },
 ): ReferenceBlock {
   const ready = references.filter((reference) => reference.status === 'ready' && reference.files.length > 0);
   if (ready.length === 0) return { text: '', characters: 0, fileCount: 0 };
@@ -222,12 +237,12 @@ export function referenceContextBlock(
       `来源：${mrWebUrl(reference.ref)}${reference.headSha ? ` · head ${reference.headSha.slice(0, 8)}` : ''} · ${reference.files.length} 个变更文件`,
     ];
     // 说明最多占本 MR 预算的一半：参考 diff 才是主体，不能被说明挤光。
-    const description = reference.description?.trim();
+    const description = toggles?.description === false ? '' : reference.description?.trim();
     if (description) {
       const cap = Math.min(MR_DESCRIPTION_BUDGET_CHARACTERS, Math.floor(perReference / 2));
       lines.push(`#### [参考 ${label}] MR 说明（只读背景，不是评审对象）\n${truncateToBudget(description, cap)}`);
     }
-    const commits = reference.commits ?? [];
+    const commits = toggles?.commits === false ? [] : reference.commits ?? [];
     if (commits.length > 0) {
       // 提交记录最多占四分之一：说明 + 提交加起来也不能把参考 diff 挤光。
       const cap = Math.min(MR_COMMITS_BUDGET_CHARACTERS, Math.floor(perReference / 4));

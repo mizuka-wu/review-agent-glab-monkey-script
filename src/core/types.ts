@@ -263,6 +263,16 @@ export interface RuntimeSettings {
   projectPromptHistory: ProjectPromptHistoryEntry[];
   /** Review 时把"Diff 外调用点"等仓库符号上下文注入提示词。 */
   repoContext: boolean;
+  /**
+   * MR 说明（GitLab description）是否进评审上下文（默认开）。
+   * 关掉后当前 MR 与参考 MR 的说明段整段不渲染、字符不入账，省 token。
+   */
+  includeMrDescription: boolean;
+  /**
+   * MR 提交记录是否进评审上下文（默认开）。
+   * 关掉后连 commits 接口都不打，当前 MR 与参考 MR 的 Commits 段整段不渲染、字符不入账。
+   */
+  includeMrCommits: boolean;
   /** 调试标签页开关（默认关闭，在设置中打开）。 */
   debugEnabled: boolean;
   /** 'off' 时通过 chat_template_kwargs 关闭 omlx/vLLM 系服务端的思考输出。 */

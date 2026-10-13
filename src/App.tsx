@@ -310,14 +310,17 @@ export default function App({ page }: AppProps) {
   useEffect(() => {
     let active = true;
     void (async () => {
-      const [loaded, packs, summary] = await Promise.all([
-        loadSettings(),
+      // 设置先落地：读 MR 数据要等它（Token 与两个上下文开关都来自设置），
+      // 不能被规则包 / 用量的读取拖住，那两样失败也不该让面板停在「读取中」。
+      const loaded = await loadSettings();
+      if (!active) return;
+      setSettings(loaded);
+      setSettingsLoaded(true);
+      const [packs, summary] = await Promise.all([
         loadScopedRulePacks(PUBLIC_RULE_PACK_SCOPE),
         getUsageSummary().catch(() => null),
       ]);
       if (!active) return;
-      setSettings(loaded);
-      setSettingsLoaded(true);
       setPublicPacks(packs);
       if (summary && summary.callCount > 0) setUsageSummary(summary);
       addLog('info', 'settings', `模型${inspectConfiguration(loaded).modelReady ? '已配置' : '未配置'} · 规则 ${countEnabledRules(packs)} 条`);
@@ -387,6 +390,9 @@ export default function App({ page }: AppProps) {
   }, [chatSessions, activeChatId]);
 
   useEffect(() => {
+    // Token 与「Commit 信息进上下文」开关都在设置里：设置读出来之前先发请求，
+    // 就会按默认值多打一次 commits 接口（开关是关的也照打），所以等设置就绪再读 MR。
+    if (!settingsLoaded) return;
     const controller = new AbortController();
     if (!mergeRequestRef) {
       setLoading(false);
@@ -399,13 +405,16 @@ export default function App({ page }: AppProps) {
       page.route === 'commit' && page.commitSha
         ? api.listCommitDiffs(page.commitSha)
         : api.listDiffs(mergeRequestRef, { signal: controller.signal }),
-      // commits 只是评审背景：这一个接口挂了不能连累 MR 主体与 diff，退化成「不带 commit 上下文」
-      api.listMrCommits(mergeRequestRef, { signal: controller.signal }).catch((error: unknown) => {
-        if (controller.signal.aborted) return [] as MrCommit[];
-        addLog('warn', 'gitlab', '读取 MR 提交列表失败，本次评审不带 commit 上下文',
-          error instanceof Error ? error.message : String(error));
-        return [] as MrCommit[];
-      }),
+      // commits 只是评审背景：开关关掉就整个不打这个接口；打了但失败也不能连累 MR 主体与 diff，
+      // 一样退化成「不带 commit 上下文」
+      settings.includeMrCommits
+        ? api.listMrCommits(mergeRequestRef, { signal: controller.signal }).catch((error: unknown) => {
+          if (controller.signal.aborted) return [] as MrCommit[];
+          addLog('warn', 'gitlab', '读取 MR 提交列表失败，本次评审不带 commit 上下文',
+            error instanceof Error ? error.message : String(error));
+          return [] as MrCommit[];
+        })
+        : Promise.resolve([] as MrCommit[]),
     ]).then(([context, diffs, commits]) => {
       if (controller.signal.aborted) return;
       setMrContext(context);
@@ -424,7 +433,7 @@ export default function App({ page }: AppProps) {
       addLog('error', 'gitlab', '读取 MR 数据失败', message);
     });
     return () => controller.abort();
-  }, [api, mergeRequestRef, page.projectPath, page.route, page.commitSha, addLog]);
+  }, [api, mergeRequestRef, page.projectPath, page.route, page.commitSha, addLog, settingsLoaded, settings.includeMrCommits]);
 
   useEffect(() => {
     const onResize = () => {
@@ -778,7 +787,7 @@ export default function App({ page }: AppProps) {
     setReferenceBusy(true);
     addLog('info', 'reference', `拉取 ${refs.length} 个参考 MR`, refs.map(mrLinkLabel).join(', '));
     try {
-      const loaded = await loadReferenceMrs(refs, referenceApi, signal);
+      const loaded = await loadReferenceMrs(refs, referenceApi, signal, { commits: settings.includeMrCommits });
       setReferences((prev) => prev.map((item) => {
         const match = loaded.find((entry) => mrLinkKey(entry.ref) === mrLinkKey(item.ref));
         return match ? { ...match, addedAt: item.addedAt } : item;
@@ -975,8 +984,12 @@ export default function App({ page }: AppProps) {
       if (repoContext) addLog('debug', 'review', `注入仓库符号上下文 ${repoContext.length} 字符`);
       lastBackgroundRef.current = repoContext;
       const mrDescription = mrContext?.description?.trim() ?? '';
-      if (mrDescription) addLog('info', 'review', `注入 MR 说明 ${mrDescription.length} 字符（需求背景）`);
-      if (mrCommits.length > 0) addLog('info', 'review', `注入 MR 提交记录 ${mrCommits.length} 条（commit message 需求背景）`);
+      if (settings.includeMrDescription && mrDescription) {
+        addLog('info', 'review', `注入 MR 说明 ${mrDescription.length} 字符（需求背景）`);
+      }
+      if (settings.includeMrCommits && mrCommits.length > 0) {
+        addLog('info', 'review', `注入 MR 提交记录 ${mrCommits.length} 条（commit message 需求背景）`);
+      }
       const projectPrompt = (settings.projectPrompts ?? {})[page.projectPath ?? '']?.trim();
       if (projectPrompt) addLog('info', 'review', `注入项目补充 prompt ${projectPrompt.length} 字符（${page.projectPath}）`);
       const result = await reviewEngine.run({
@@ -1412,6 +1425,8 @@ export default function App({ page }: AppProps) {
       background: lastBackgroundRef.current || undefined,
       description: mrContext?.description,
       commits: mrCommits,
+      includeDescription: settings.includeMrDescription,
+      includeCommits: settings.includeMrCommits,
       meta: {
         project: page.projectPath ?? undefined,
         mergeRequestIid: mergeRequestRef?.mergeRequestIid,
@@ -1567,11 +1582,14 @@ export default function App({ page }: AppProps) {
       const [context, diffs, commits] = await Promise.all([
         api.getMergeRequest(mergeRequestRef),
         api.listDiffs(mergeRequestRef),
-        api.listMrCommits(mergeRequestRef).catch((error: unknown) => {
-          addLog('warn', 'gitlab', '刷新 MR 提交列表失败，本次评审不带 commit 上下文',
-            error instanceof Error ? error.message : String(error));
-          return [] as MrCommit[];
-        }),
+        // 与首次读取同一口径：开关关掉就不打 commits 接口
+        settings.includeMrCommits
+          ? api.listMrCommits(mergeRequestRef).catch((error: unknown) => {
+            addLog('warn', 'gitlab', '刷新 MR 提交列表失败，本次评审不带 commit 上下文',
+              error instanceof Error ? error.message : String(error));
+            return [] as MrCommit[];
+          })
+          : Promise.resolve([] as MrCommit[]),
       ]);
       setMrContext(context);
       setMrCommits(commits);
@@ -1582,7 +1600,7 @@ export default function App({ page }: AppProps) {
       addLog('warn', 'gitlab', '修复已提交，但刷新 MR 变更失败', message);
       setToast(`修复已提交，但刷新 MR 变更失败：${message}`);
     }
-  }, [api, mergeRequestRef, addLog]);
+  }, [api, mergeRequestRef, addLog, settings.includeMrCommits]);
 
   const openApplyFix = async (finding: Finding) => {
     // 开关关掉后入口不渲染，这里再挡一次：任何路径都走不到提交

@@ -21,6 +21,9 @@ export function buildDelegationContext(input: {
   description?: string;
   /** MR 提交记录：需求细节常常只写在 commit message 里。 */
   commits?: MrCommit[];
+  /** 与设置里的两个开关一致：关掉的那一段连标题都不导出，不留 `(无)` 空块。 */
+  includeDescription?: boolean;
+  includeCommits?: boolean;
   meta?: DelegationMeta;
 }): string {
   const rules = enabledRulesOf(input.packs);
@@ -54,14 +57,18 @@ export function buildDelegationContext(input: {
     diffContext(input.files),
     '```',
     '',
-    '## MR 说明',
-    input.description?.trim()
-      ? truncateToBudget(input.description.trim(), MR_DESCRIPTION_BUDGET_CHARACTERS)
-      : '(无)',
-    '',
-    '## MR Commits',
-    formatMrCommits(input.commits ?? []) || '(无)',
-    '',
+    ...(input.includeDescription === false ? [] : [
+      '## MR 说明',
+      input.description?.trim()
+        ? truncateToBudget(input.description.trim(), MR_DESCRIPTION_BUDGET_CHARACTERS)
+        : '(无)',
+      '',
+    ]),
+    ...(input.includeCommits === false ? [] : [
+      '## MR Commits',
+      formatMrCommits(input.commits ?? []) || '(无)',
+      '',
+    ]),
     '## 参考背景',
     input.background?.trim() || '(无)',
     '',

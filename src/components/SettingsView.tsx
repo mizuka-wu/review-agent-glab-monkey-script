@@ -454,6 +454,18 @@ function ReviewSection({ settings, onSettingsChange, onSettingsCommit, projectKe
           </Field>
           </div>
           <SwitchRow
+            title="MR 说明进上下文"
+            desc="把 MR 说明（description）当需求背景拼进提示词，参考 MR 的说明段同口径；关闭后整段不渲染、字符不入账，省 token"
+            checked={settings.includeMrDescription}
+            onChange={(v) => onSettingsChange({ ...settings, includeMrDescription: v })}
+          />
+          <SwitchRow
+            title="Commit 信息进上下文"
+            desc="把 MR 提交记录（短 sha + title + message 正文）当需求背景拼进提示词，参考 MR 的 Commits 段同口径；关闭后连 commits 接口都不打，省 token"
+            checked={settings.includeMrCommits}
+            onChange={(v) => onSettingsChange({ ...settings, includeMrCommits: v })}
+          />
+          <SwitchRow
             title="允许应用修复"
             desc="对可修复的 Finding 用模型生成补丁，确认后提交回 MR 源分支（不碰目标分支）；关闭时「应用修复」入口不显示"
             checked={settings.applyFixEnabled}

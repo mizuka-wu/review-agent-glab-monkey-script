@@ -52,6 +52,8 @@ export const defaultSettings: RuntimeSettings = {
   projectPrompts: {},
   projectPromptHistory: [],
   repoContext: true,
+  includeMrDescription: true,
+  includeMrCommits: true,
   debugEnabled: false,
   thinking: 'default',
   applyFixEnabled: false,

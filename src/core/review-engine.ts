@@ -7,7 +7,8 @@ import { parseModelFindings } from './findings';
 import { corroborateFindings, hardenFindings } from './finding-hardening';
 import { reflectFindings } from './reflection';
 import {
-  isReferenceOnlyPath, mrLinkLabel, referenceContextBlock, referenceFilesOf, referenceOnlyPathKeys,
+  REFERENCE_BUDGET_CHARACTERS, isReferenceOnlyPath, mrLinkLabel, referenceContextBlock, referenceFilesOf,
+  referenceOnlyPathKeys,
 } from './reference-mrs';
 import { groupFilesIntoBundles, mapWithConcurrency } from './review-bundles';
 import { BUILT_IN_PACK, countEnabledRules, runRulePackReview, type RulePack } from './rule-packs';
@@ -104,9 +105,15 @@ export class ReviewEngine {
     files: FileDiff[];
     selection?: CodeSelection;
     background?: string;
-    /** 当前 MR 的说明（GitLab description）：作为需求背景注入模型上下文，空说明整段不渲染。 */
+    /**
+     * 当前 MR 的说明（GitLab description）：作为需求背景注入模型上下文，空说明整段不渲染。
+     * 设置里的「MR 说明进上下文」关掉时整段跳过（含参考 MR 的说明段），字符也不入账。
+     */
     mrDescription?: string;
-    /** 当前 MR 的提交记录：commit message 里常写着需求细节，空列表 / 拉取失败整段不渲染。 */
+    /**
+     * 当前 MR 的提交记录：commit message 里常写着需求细节，空列表 / 拉取失败整段不渲染。
+     * 设置里的「Commit 信息进上下文」关掉时整段跳过（含参考 MR 的 Commits 段），字符也不入账。
+     */
     mrCommits?: MrCommit[];
     signal?: AbortSignal;
     loadFile?: FullFileLoader;
@@ -131,9 +138,15 @@ export class ReviewEngine {
   }): Promise<ReviewEngineResult> {
     const references = input.references ?? [];
     const referenceFiles = referenceFilesOf(references);
-    const referenceBlock = referenceContextBlock(references);
-    const descriptionBlock = mrDescriptionContext(input.mrDescription);
-    const commitsBlock = mrCommitsContext(input.mrCommits);
+    // 两个开关一关，当前 MR 与参考 MR 的对应段一起消失：不渲染、不留空块、字符不入账。
+    const includeDescription = this.settings.includeMrDescription;
+    const includeCommits = this.settings.includeMrCommits;
+    const referenceBlock = referenceContextBlock(references, REFERENCE_BUDGET_CHARACTERS, {
+      description: includeDescription,
+      commits: includeCommits,
+    });
+    const descriptionBlock = includeDescription ? mrDescriptionContext(input.mrDescription) : '';
+    const commitsBlock = includeCommits ? mrCommitsContext(input.mrCommits) : '';
     const baseContext = buildReviewContext({
       ...input,
       referenceCharacters: referenceBlock.characters,
