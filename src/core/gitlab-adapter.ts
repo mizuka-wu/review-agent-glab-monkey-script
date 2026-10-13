@@ -309,6 +309,7 @@ export class GitLabAdapter {
     return {
       ...ref,
       title: String(data.title ?? ''),
+      description: data.description == null ? '' : String(data.description),
       state: String(data.state ?? 'opened'),
       sourceBranch: String(data.source_branch ?? ''),
       targetBranch: String(data.target_branch ?? ''),

@@ -28,6 +28,7 @@
 ### 📋 Review 引擎
 - **规则包系统**：内置 24 条多语言规则（硬编码密钥、URL 凭据、SQL 注入、XSS、命令注入、TLS 校验关闭、弱哈希、可预测随机数、静态可变共享状态、Java `equals`、Kotlin `!!`、TS 非空断言、弱类型、吞异常、Go 丢弃 error、阻塞 sleep、跳过测试、调试输出、内网地址、TODO、冲突标记、缺少测试），按语言与 glob 路径作用域匹配、跳过注释行、单文件命中上限；支持自定义规则包（regex、作用域、语言、JSON 导入导出、逐条开关），并按 **公共 / 当前项目** 两种作用域分别存储、动态加载，项目自定义包覆盖同 id 公共包；内置规则以 `rule_docs/*.md` 语言文档为唯一来源（frontmatter + 匹配模式 + 正反例），生成器产出代码并带漂移检查
 - **Context Builder**：Diff 文件过滤（lockfile/生成文件/密钥/二进制排除）、字符预算截断、省略原因记录
+- **MR 说明进上下文**：当前 MR 的 `description` 作为需求背景拼进 review 的 user 消息（`## MR 说明` 段，紧跟 diff、在仓库符号背景之前；4000 字符预算截断并标注原文长度；纯标题 MR 整段不渲染，不留空块），让模型能判断「实现是否符合说明里的意图」，说明与变更不一致时直接在对应文件上报告；参考 MR 的说明按同口径拼进只读参考块（`#### [参考 g/p!12] MR 说明`，最多占该参考预算的一半，避免挤掉参考 diff），依旧只读——不产 Finding、不写回；Delegation 导出同样带 `## MR 说明` 段（空则写 `(无)`）
 - **Finding 锚定**：`existingCode` 多行精确匹配、旧/新侧行号推断、跨文件重定位
 - **大 MR 分组并发**：变更文件按目录内聚分组、每分组独立上下文并发评审（并发 3），分组失败保留其余结果
 - **评论反思**：模型对 AI Finding 自检（值不值得评 / 是否重复 / 位置是否正确），drop 项进 warnings；fast 强度跳过
@@ -268,8 +269,8 @@ Draft → User Confirm → GitLab Discussion Publish
 
 ## 测试
 
-- **616 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线、prompt 与项目补充要求历史
-- **41 个 Playwright E2E**：24 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、快速操作、流式输出、运行中停止、模型失败横幅、模型自动切换、面板内划词隐藏、项目补充提示注入、项目补充要求历史按钮、prompt 历史、参考 MR、应用修复、会话回放、设置页布局、元数据等）+ 17 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理、真实选区行号、真实行内 Discussion 发布、真实修复提交等）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
+- **645 个单元测试**：规则引擎、锚定、硬化、Provider、Agent 循环、MCP、能力探测、Markdown、安全存储、成本统计、仓库索引/符号表、调试总线、prompt 与项目补充要求历史、MR 说明上下文（渲染/截断/空值跳过/参考 MR 拼接）
+- **41 个 Playwright E2E**：24 个 mock 模式（规则 Review 发布、无 Key 规则 Review、选区对话、仓库索引+符号搜索、快速操作、流式输出、运行中停止、模型失败横幅、模型自动切换、面板内划词隐藏、项目补充提示注入（含 MR 说明段）、项目补充要求历史按钮、prompt 历史、参考 MR（含参考说明）、应用修复、会话回放、设置页布局、元数据等）+ 17 个真实 GitLab 模式（注入读 MR、规则 Review、真实本地模型混合 Review、仓库索引/符号/注册表管理、真实选区行号、真实行内 Discussion 发布、真实修复提交等）；真实模式需设置 `GITLAB_URL` + `GITLAB_MR_URL`，可选 `MODEL_BASE_URL` / `MODEL_NAME` / `GITLAB_USER` / `GITLAB_PASS`
 - **8 个评测 fixture**：安全/调试日志/弱类型/缺少测试/干净代码/多文件/性能/密钥泄漏
 - **合并门禁**：`pnpm typecheck` + `pnpm test:unit` + `pnpm test:e2e` + `pnpm build`
 

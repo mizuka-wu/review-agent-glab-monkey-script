@@ -1,3 +1,4 @@
+import { MR_DESCRIPTION_BUDGET_CHARACTERS, truncateToBudget } from './context';
 import { repoPathCandidates } from './diff';
 import { parseGitLabUrl } from './gitlab-url';
 import { mapWithConcurrency } from './review-bundles';
@@ -132,6 +133,7 @@ export async function loadReferenceMr(ref: MrLinkRef, api: ReferenceMrApi, signa
     return {
       ref, status: 'ready', files, addedAt,
       title: context.title,
+      description: context.description?.trim() || undefined,
       headSha: context.diffRefs.headSha,
       ...(files.length === 0 ? { error: '这个 MR 没有读到任何变更文件（可能是空 MR，或 diff 还没生成）' } : {}),
     };
@@ -211,6 +213,13 @@ export function referenceContextBlock(
       `### 参考 MR ${index + 1}：${label}${reference.title ? ` — ${reference.title}` : ''}`,
       `来源：${mrWebUrl(reference.ref)}${reference.headSha ? ` · head ${reference.headSha.slice(0, 8)}` : ''} · ${reference.files.length} 个变更文件`,
     ];
+    // 说明最多占本 MR 预算的一半：参考 diff 才是主体，不能被说明挤光。
+    const description = reference.description?.trim();
+    if (description) {
+      const cap = Math.min(MR_DESCRIPTION_BUDGET_CHARACTERS, Math.floor(perReference / 2));
+      lines.push(`#### [参考 ${label}] MR 说明（只读背景，不是评审对象）\n${truncateToBudget(description, cap)}`);
+    }
+
     let used = lines.join('\n').length;
     let included = 0;
 

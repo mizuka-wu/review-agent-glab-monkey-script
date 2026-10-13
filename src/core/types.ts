@@ -98,6 +98,8 @@ export interface MergeRequestRef {
 
 export interface MergeRequestContext extends MergeRequestRef {
   title: string;
+  /** MR 说明正文（GitLab 的 description，可能为空）。评审时作为需求背景注入模型上下文。 */
+  description: string;
   state: string;
   sourceBranch: string;
   targetBranch: string;
@@ -118,6 +120,8 @@ export interface ReferenceMr {
   ref: MrLinkRef;
   status: ReferenceMrStatus;
   title?: string;
+  /** 参考 MR 的说明：同样只读，用来理解配套改动的意图。 */
+  description?: string;
   headSha?: string;
   files: FileDiff[];
   addedAt: string;
@@ -302,6 +306,8 @@ export interface ReviewContext {
   files: ReviewContextFile[];
   selection?: CodeSelection;
   background?: string;
+  /** MR 说明块实际拼进输入的字符数（空说明为 0，不渲染该段）。 */
+  descriptionCharacters?: number;
   /** 参考 MR：只读上下文，不产出 Finding，也不参与发布位置解析。 */
   references?: ReferenceMr[];
   /** 参考块实际拼进输入的字符数。 */

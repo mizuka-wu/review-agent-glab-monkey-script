@@ -1,3 +1,4 @@
+import { MR_DESCRIPTION_BUDGET_CHARACTERS, truncateToBudget } from './context';
 import { diffContext } from './diff';
 import { enabledRulesOf, type RulePack } from './rule-packs';
 import type { FileDiff } from './types';
@@ -16,6 +17,8 @@ export function buildDelegationContext(input: {
   files: FileDiff[];
   packs: RulePack[];
   background?: string;
+  /** MR 说明：外部 Agent 同样需要需求背景才能判断实现是否符合意图。 */
+  description?: string;
   meta?: DelegationMeta;
 }): string {
   const rules = enabledRulesOf(input.packs);
@@ -48,6 +51,11 @@ export function buildDelegationContext(input: {
     '```diff',
     diffContext(input.files),
     '```',
+    '',
+    '## MR 说明',
+    input.description?.trim()
+      ? truncateToBudget(input.description.trim(), MR_DESCRIPTION_BUDGET_CHARACTERS)
+      : '(无)',
     '',
     '## 参考背景',
     input.background?.trim() || '(无)',

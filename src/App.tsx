@@ -955,6 +955,8 @@ export default function App({ page }: AppProps) {
         : '';
       if (repoContext) addLog('debug', 'review', `注入仓库符号上下文 ${repoContext.length} 字符`);
       lastBackgroundRef.current = repoContext;
+      const mrDescription = mrContext?.description?.trim() ?? '';
+      if (mrDescription) addLog('info', 'review', `注入 MR 说明 ${mrDescription.length} 字符（需求背景）`);
       const projectPrompt = (settings.projectPrompts ?? {})[page.projectPath ?? '']?.trim();
       if (projectPrompt) addLog('info', 'review', `注入项目补充 prompt ${projectPrompt.length} 字符（${page.projectPath}）`);
       const result = await reviewEngine.run({
@@ -964,6 +966,7 @@ export default function App({ page }: AppProps) {
         rules: runRules,
         model: runModel,
         references: reviewReferences,
+        mrDescription,
         background: repoContext ? `仓库符号上下文（本地索引 @${repoIndex?.status.ref.slice(0, 8)}）：\n${repoContext}` : undefined,
         loadFile: (path, ref) => api.getFile(path, ref),
         fullFileRef: mrContext?.diffRefs.headSha ?? page.commitSha,
@@ -1382,6 +1385,7 @@ export default function App({ page }: AppProps) {
       files,
       packs: rulePacks,
       background: lastBackgroundRef.current || undefined,
+      description: mrContext?.description,
       meta: {
         project: page.projectPath ?? undefined,
         mergeRequestIid: mergeRequestRef?.mergeRequestIid,

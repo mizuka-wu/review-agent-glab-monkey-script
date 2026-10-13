@@ -10,6 +10,34 @@ const lockfilePattern = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.loc
 const secretPattern = /(?:^|\/)(?:\.env(?:\..*)?|id_(?:rsa|ed25519)|.*\.(?:pem|p12|key))$/i;
 const generatedPattern = /(?:^|\/)(?:dist|build|vendor|node_modules|coverage|target)\/|(?:\.min\.js|\.generated\.|_generated\.|\.lock$)/i;
 
+/** MR 说明预算：说明是需求背景，够判断意图即可，不能挤掉 diff。 */
+export const MR_DESCRIPTION_BUDGET_CHARACTERS = 4_000;
+
+/** 截断处明示预算与原文长度，避免模型把半截需求当成完整需求。 */
+export function truncateToBudget(text: string, budgetCharacters: number): string {
+  if (budgetCharacters <= 0 || text.length <= budgetCharacters) return text;
+  return `${text.slice(0, budgetCharacters).trimEnd()}\n…（已按 ${budgetCharacters} 字符预算截断，原文 ${text.length} 字符）`;
+}
+
+/**
+ * 当前 MR 的说明块：提交者写的需求背景，让模型能判断实现是否符合意图。
+ * 空说明（纯标题 MR 很常见）返回空串，调用方据此整段不渲染，不留空块。
+ */
+export function mrDescriptionContext(
+  description?: string | null,
+  budgetCharacters: number = MR_DESCRIPTION_BUDGET_CHARACTERS,
+): string {
+  const text = description?.trim();
+  if (!text) return '';
+  return [
+    '## MR 说明（提交者写的需求背景，用来判断实现是否符合意图）',
+    '下面是当前 MR 的说明原文，只作为背景资料：不要对说明文字本身产出 finding，所有 finding 的 path 必须来自变更文件。',
+    '如果变更与说明里的需求不一致（漏做、做反、超出说明范围、说明里点名的场景没覆盖），就在对应文件上报告这个不一致。',
+    '',
+    truncateToBudget(text, budgetCharacters),
+  ].join('\n');
+}
+
 export function fileOmissionReason(file: FileDiff): NonNullable<ReviewContextFile['omittedReason']> | undefined {
   if (file.binary) return 'binary';
   if (file.generated || generatedPattern.test(file.newPath)) return 'generated';
@@ -46,6 +74,8 @@ export function buildReviewContext(input: {
   selection?: CodeSelection;
   background?: string;
   budgetCharacters?: number;
+  /** MR 说明块：只作为需求背景注入，不占 diff 预算，但字符数如实计入上下文规模。 */
+  descriptionCharacters?: number;
   /** 参考 MR 只读上下文：不占 diff 预算，但字符数如实计入上下文规模。 */
   references?: ReferenceMr[];
   referenceCharacters?: number;
@@ -74,14 +104,16 @@ export function buildReviewContext(input: {
   }
 
   const referenceCharacters = input.referenceCharacters ?? 0;
+  const descriptionCharacters = input.descriptionCharacters ?? 0;
 
   return {
     files,
     selection: input.selection,
     background: input.background?.trim() || undefined,
+    descriptionCharacters,
     references: input.references ?? [],
     referenceCharacters,
-    estimatedCharacters: estimatedCharacters + referenceCharacters,
+    estimatedCharacters: estimatedCharacters + referenceCharacters + descriptionCharacters,
     budgetCharacters,
     omittedFiles,
     fullFiles: [],
