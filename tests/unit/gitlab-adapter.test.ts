@@ -167,6 +167,32 @@ describe('GitLabAdapter', () => {
     await expect(adapter.getFile('src/a b.ts', 'head sha')).resolves.toBe('const value = 1;\n');
   });
 
+  it('reads the MR description so review can use it as requirement background', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      title: 'feat: pay',
+      description: '## 需求\n支付失败要给出可操作提示',
+      state: 'opened', source_branch: 'feat/pay', target_branch: 'main', sha: 'head',
+      diff_refs: { base_sha: 'base', head_sha: 'head', start_sha: 'start' },
+    }), { status: 200 }));
+    const adapter = new GitLabAdapter({ origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 }, '', fetcher);
+
+    const context = await adapter.getMergeRequest(ref);
+    expect(fetcher.mock.calls[0][0]).toContain('/api/v4/projects/group%2Fproject/merge_requests/7');
+    expect(context.description).toBe('## 需求\n支付失败要给出可操作提示');
+    expect(context.title).toBe('feat: pay');
+  });
+
+  it('maps a null or missing description to an empty string', async () => {
+    for (const payload of [
+      { title: 'no description', description: null, diff_refs: null },
+      { title: 'no description field', diff_refs: null },
+    ]) {
+      const fetcher = vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }));
+      const adapter = new GitLabAdapter({ origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 }, '', fetcher);
+      expect((await adapter.getMergeRequest(ref)).description).toBe('');
+    }
+  });
+
   it('rejects stale diff refs and deduplicates identical comments', async () => {
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input);

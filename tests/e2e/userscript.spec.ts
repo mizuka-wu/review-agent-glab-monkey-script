@@ -120,6 +120,7 @@ const mockHtml = `<!doctype html>
 
 const mergeRequest = {
   title: 'Harden checkout payment error handling',
+  description: '## 需求\n支付失败必须给出可操作的错误提示，且密钥不能进日志。',
   state: 'opened',
   source_branch: 'feature/payment',
   target_branch: 'main',
@@ -191,6 +192,7 @@ const companionLabel = 'platform/sdk!12';
 
 const companionMergeRequest = {
   title: 'feat: companion token endpoint',
+  description: 'SDK 侧配套改动：新增 token 下发接口，字段与当前 MR 对齐。',
   state: 'opened',
   source_branch: 'feat/token',
   target_branch: 'main',
@@ -761,6 +763,9 @@ test.describe('mock mode', () => {
     await page.getByRole('button', { name: /提示词 \d+/ }).click();
     await panel.getByText(/条消息 · 响应/).first().click();
     await expect(panel.getByText('禁止报告命名风格问题').first()).toBeVisible({ timeout: 10000 });
+    // MR 说明与补充要求在同一条用户消息里：说明在前，补充要求在最后
+    await expect(panel.getByText(/MR 说明（提交者写的需求背景/).first()).toBeVisible({ timeout: 10000 });
+    await expect(panel.getByText(/支付失败必须给出可操作的错误提示/).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('recalls per-project supplementary prompts from the history button, not the arrow keys', async ({ page }) => {
@@ -897,6 +902,11 @@ test.describe('mock mode', () => {
     expect(reviewPrompt).toContain('参考变更：其他 MR（只读上下文，不是评审对象）');
     expect(reviewPrompt).toContain(companionLabel);
     expect(reviewPrompt).toContain('COMPANION_TOKEN');
+    // 当前 MR 与参考 MR 的说明都进了这一次调用
+    expect(reviewPrompt).toContain('MR 说明（提交者写的需求背景');
+    expect(reviewPrompt).toContain('支付失败必须给出可操作的错误提示');
+    expect(reviewPrompt).toContain(`[参考 ${companionLabel}] MR 说明（只读背景，不是评审对象）`);
+    expect(reviewPrompt).toContain('SDK 侧配套改动：新增 token 下发接口');
 
     // 参考 MR 不产出 Finding，运行说明里如实写明
     await expect(page.getByText('参考仓库里的 Token 也写死了')).toHaveCount(0);

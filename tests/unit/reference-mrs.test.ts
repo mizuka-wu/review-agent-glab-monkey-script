@@ -182,9 +182,9 @@ describe('reference context block', () => {
 });
 
 describe('loading reference MRs', () => {
-  const mergeRequest = (title: string): MergeRequestContext => ({
+  const mergeRequest = (title: string, description = ''): MergeRequestContext => ({
     origin: companion.origin, projectPath: companion.projectPath, mergeRequestIid: companion.iid,
-    title, state: 'opened', sourceBranch: 'feat/x', targetBranch: 'main', sha: 'head',
+    title, description, state: 'opened', sourceBranch: 'feat/x', targetBranch: 'main', sha: 'head',
     diffRefs: { baseSha: 'base', headSha: 'abcdef1234567890', startSha: 'start' },
   });
 
