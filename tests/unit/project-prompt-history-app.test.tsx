@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../src/App';
 import { debugBus } from '../../src/core/debug-bus';
-import type { PageContext } from '../../src/core/types';
+import type { PageContext, ProjectPromptHistoryEntry } from '../../src/core/types';
 
 const page: PageContext = {
   origin: 'https://gitlab.test', route: 'diff', projectPath: 'acme/app',
@@ -41,7 +41,10 @@ function stubNetwork() {
   }));
 }
 
-/** 起始页的项目补充要求：旧单值 projectPrompts 会在 loadSettings 里被迁移成 1 条历史。 */
+/**
+ * 起始页的项目补充要求：历史池全局共用，落盘是一个数组；这里可以直接喂旧形态
+ * （单值 projectPrompts / 按项目分桶的 Record），loadSettings 会把它们迁移进全局池。
+ */
 function mount(projectPrompts: unknown, projectPromptHistory?: unknown) {
   localStorage.setItem('review-agent-settings-v1', JSON.stringify({
     reviewMode: 'rules', gitlabToken: '', language: 'zh-CN',
@@ -55,11 +58,14 @@ const box = () => screen.getByRole('textbox', { name: '项目补充要求' }) as
 const listOf = () => screen.getByRole('listbox', { name: '项目补充要求历史列表' });
 const historyButton = () => screen.getByRole('button', { name: '项目补充要求历史' });
 const stored = () => JSON.parse(localStorage.getItem('review-agent-settings-v1') ?? '{}');
+const storedPool = () => (stored().projectPromptHistory ?? []) as ProjectPromptHistoryEntry[];
+const storedValues = () => storedPool().map((entry) => entry.value);
+const options = () => within(listOf()).getAllByRole('option');
 
 /** 打开历史列表并点第 index 条：↑↓ 已经不是入口，挑历史只能走按钮。 */
 function pickEntry(index: number) {
   fireEvent.click(historyButton());
-  fireEvent.click(within(listOf()).getAllByRole('option')[index]);
+  fireEvent.click(options()[index]);
 }
 
 /** 派发原生按键事件：defaultPrevented 直接说明这一次按键有没有被脚本拦下来。 */
@@ -86,40 +92,50 @@ afterEach(() => {
 });
 
 describe('起始页项目补充要求历史', () => {
-  it('旧版单值提示迁移成 1 条历史，输入框里还是原来那段话', async () => {
+  it('旧版单值提示迁移成全局池里的 1 条，输入框里还是原来那段话', async () => {
     mount({ 'acme/app': '金额计算必须用 decimal' });
     await waitForIdle();
 
     expect(box()).toHaveValue('金额计算必须用 decimal');
     expect(historyButton()).toHaveTextContent('1');
     fireEvent.click(historyButton());
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(1);
-    expect(within(listOf()).getAllByRole('option')[0]).toHaveTextContent('金额计算必须用 decimal');
+    expect(options()).toHaveLength(1);
+    expect(options()[0]).toHaveTextContent('金额计算必须用 decimal');
+    expect(within(options()[0]).getByText('acme/app')).toBeInTheDocument();
+
+    // 迁移只发生在读取时，落盘要等下一个保存点：这时旧的单值形态被改写成全局池数组
+    fireEvent.blur(box());
+    await waitFor(() => expect(storedPool()).toEqual([{ value: '金额计算必须用 decimal', projectKey: 'acme/app' }]));
   }, 20000);
 
-  it('标题写清按项目记住最近 10 次、从历史按钮挑', async () => {
+  it('标题写清当前项目 + 历史全局共用最近 30 次、从历史按钮挑', async () => {
     mount({});
     await waitForIdle();
-    expect(screen.getByText(/项目补充要求（按 acme\/app 记住最近 10 次，点输入框右上角的历史按钮挑回旧版本/)).toBeInTheDocument();
+    expect(screen.getByText(/项目补充要求（当前项目 acme\/app；历史所有项目共用一个池子，最近 30 次，点输入框右上角的历史按钮挑回旧版本/)).toBeInTheDocument();
     expect(screen.queryByText(/↑↓ 翻历史/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/按 acme\/app 记住最近 10 次/)).not.toBeInTheDocument();
   }, 20000);
 
-  it('改完失焦即保存：新值置顶，老版本落进 localStorage 的历史里', async () => {
+  it('改完失焦即保存：新值置顶，老版本落进 localStorage 的全局池里', async () => {
     mount({ 'acme/app': '第一版要求' });
     await waitForIdle();
 
     fireEvent.change(box(), { target: { value: '第二版要求' } });
     // 打字阶段历史不动（只有迁移带过来的那 1 条），否则每敲一个字都会多出一条
-    await waitFor(() => expect(stored().projectPromptHistory?.['acme/app']).toEqual(['第一版要求']));
+    await waitFor(() => expect(storedValues()).toEqual(['第一版要求']));
     expect(stored().projectPrompts['acme/app']).toBe('第二版要求');
 
     fireEvent.blur(box());
-    await waitFor(() => expect(stored().projectPromptHistory?.['acme/app']).toEqual(['第二版要求', '第一版要求']));
+    await waitFor(() => expect(storedValues()).toEqual(['第二版要求', '第一版要求']));
+    expect(storedPool()).toEqual([
+      { value: '第二版要求', projectKey: 'acme/app' },
+      { value: '第一版要求', projectKey: 'acme/app' },
+    ]);
     expect(stored().projectPrompts['acme/app']).toBe('第二版要求');
   }, 20000);
 
   it('↑↓ / Esc 只归光标：多行内容不被历史覆盖，按键也没有被拦下来', async () => {
-    mount({}, { 'acme/app': ['第二版要求', '第一版要求'] });
+    mount({}, [{ value: '第二版要求', projectKey: 'acme/app' }, { value: '第一版要求', projectKey: 'acme/app' }]);
     await waitForIdle();
 
     fireEvent.change(box(), { target: { value: '第一行要求\n第二行要求' } });
@@ -135,25 +151,29 @@ describe('起始页项目补充要求历史', () => {
   }, 20000);
 
   it('从历史列表挑回旧版本再失焦，把它提到最前，历史不重复增长', async () => {
-    mount({}, { 'acme/app': ['第二版要求', '第一版要求'] });
+    mount({}, [{ value: '第二版要求', projectKey: 'acme/app' }, { value: '第一版要求', projectKey: 'acme/app' }]);
     await waitForIdle();
 
     pickEntry(1);
     expect(box()).toHaveValue('第一版要求');
     fireEvent.blur(box());
 
-    await waitFor(() => expect(stored().projectPromptHistory?.['acme/app']).toEqual(['第一版要求', '第二版要求']));
+    await waitFor(() => expect(storedValues()).toEqual(['第一版要求', '第二版要求']));
     expect(stored().projectPrompts['acme/app']).toBe('第一版要求');
   }, 20000);
 
   it('列表里删掉一条噪声历史后持久化，当前生效值不受影响', async () => {
-    mount({ 'acme/app': '第二版要求' }, { 'acme/app': ['第二版要求', '写错的一条', '第一版要求'] });
+    mount({ 'acme/app': '第二版要求' }, [
+      { value: '第二版要求', projectKey: 'acme/app' },
+      { value: '写错的一条', projectKey: 'acme/app' },
+      { value: '第一版要求', projectKey: 'acme/app' },
+    ]);
     await waitForIdle();
 
     fireEvent.click(historyButton());
     fireEvent.click(within(listOf()).getAllByRole('button', { name: '删除这条补充要求' })[1]);
 
-    await waitFor(() => expect(stored().projectPromptHistory?.['acme/app']).toEqual(['第二版要求', '第一版要求']));
+    await waitFor(() => expect(storedValues()).toEqual(['第二版要求', '第一版要求']));
     expect(box()).toHaveValue('第二版要求');
   }, 20000);
 
@@ -165,14 +185,14 @@ describe('起始页项目补充要求历史', () => {
     fireEvent.blur(box());
 
     await waitFor(() => expect(stored().projectPrompts?.['acme/app']).toBeUndefined());
-    expect(stored().projectPromptHistory['acme/app']).toEqual(['第一版要求']);
+    expect(storedValues()).toEqual(['第一版要求']);
     expect(historyButton()).toHaveTextContent('1');
     pickEntry(0);
     expect(box()).toHaveValue('第一版要求');
   }, 20000);
 
   it('只存过历史、当前值为空的项目也能在起始页挑回来', async () => {
-    mount({}, { 'acme/app': ['以前的要求'] });
+    mount({}, [{ value: '以前的要求', projectKey: 'acme/app' }]);
     await waitForIdle();
 
     expect(box()).toHaveValue('');
@@ -183,18 +203,86 @@ describe('起始页项目补充要求历史', () => {
     await waitFor(() => expect(stored().projectPrompts['acme/app']).toBe('以前的要求'));
   }, 20000);
 
-  it('历史按钮标出条数，展开后当前生效值被标成已选中', async () => {
-    mount({ 'acme/app': '第二版要求' }, { 'acme/app': ['第二版要求', '第一版要求'] });
+  it('历史按钮标出全局池条数，展开后当前生效值被标成已选中', async () => {
+    mount({ 'acme/app': '第二版要求' }, [
+      { value: '第二版要求', projectKey: 'acme/app' },
+      { value: '第一版要求', projectKey: 'acme/app' },
+    ]);
     await waitForIdle();
 
     expect(box()).toHaveValue('第二版要求');
     expect(historyButton()).toHaveTextContent('2');
     fireEvent.click(historyButton());
-    const options = within(listOf()).getAllByRole('option');
-    expect(options).toHaveLength(2);
-    expect(options[0]).toHaveAttribute('aria-selected', 'true');
-    expect(options[1]).toHaveAttribute('aria-selected', 'false');
+    expect(options()).toHaveLength(2);
+    expect(options()[0]).toHaveAttribute('aria-selected', 'true');
+    expect(options()[1]).toHaveAttribute('aria-selected', 'false');
     fireEvent.click(historyButton());
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  }, 20000);
+});
+
+describe('起始页跨项目共用一个历史池', () => {
+  it('别的项目存过的历史也在列表里，右下角标出来源项目', async () => {
+    mount({ 'acme/app': '当前项目的要求', 'acme/other': '别的项目的要求' }, [
+      { value: '别的项目的要求', projectKey: 'acme/other' },
+      { value: '当前项目的要求', projectKey: 'acme/app' },
+    ]);
+    await waitForIdle();
+
+    expect(box()).toHaveValue('当前项目的要求');
+    expect(historyButton()).toHaveTextContent('2');
+    fireEvent.click(historyButton());
+    expect(options()).toHaveLength(2);
+    expect(within(options()[0]).getByText('acme/other')).toBeInTheDocument();
+    expect(within(options()[1]).getByText('acme/app')).toBeInTheDocument();
+  }, 20000);
+
+  it('点别的项目的条目只把内容填进输入框，落盘的当前值仍归当前项目', async () => {
+    mount({ 'acme/other': '别的项目的要求' }, [{ value: '别的项目的要求', projectKey: 'acme/other' }]);
+    await waitForIdle();
+
+    expect(box()).toHaveValue('');
+    pickEntry(0);
+    expect(box()).toHaveValue('别的项目的要求');
+    fireEvent.blur(box());
+
+    await waitFor(() => expect(stored().projectPrompts['acme/app']).toBe('别的项目的要求'));
+    expect(stored().projectPrompts['acme/other']).toBe('别的项目的要求');
+    expect(storedPool()).toEqual([
+      { value: '别的项目的要求', projectKey: 'acme/app' },
+    ]);
+  }, 20000);
+
+  it('旧的按项目分桶历史在起始页合并成一个全局列表，各项目内保持原顺序', async () => {
+    mount({}, { 'acme/a': ['a2', 'a1'], 'acme/b': ['b1'] });
+    await waitForIdle();
+
+    expect(historyButton()).toHaveTextContent('3');
+    fireEvent.click(historyButton());
+    expect(options().map((option) => option.textContent)).toEqual([
+      'a2acme/a', 'a1acme/a', 'b1acme/b',
+    ]);
+
+    fireEvent.blur(box());
+    await waitFor(() => expect(storedPool()).toEqual([
+      { value: 'a2', projectKey: 'acme/a' },
+      { value: 'a1', projectKey: 'acme/a' },
+      { value: 'b1', projectKey: 'acme/b' },
+    ]));
+  }, 20000);
+
+  it('起始页保存只往全局池追加，不会动别的项目的当前值', async () => {
+    mount({ 'acme/app': '第一版', 'acme/other': '别的项目当前值' }, [
+      { value: '别的项目当前值', projectKey: 'acme/other' },
+      { value: '第一版', projectKey: 'acme/app' },
+    ]);
+    await waitForIdle();
+
+    fireEvent.change(box(), { target: { value: '第二版' } });
+    fireEvent.blur(box());
+
+    await waitFor(() => expect(storedValues()).toEqual(['第二版', '别的项目当前值', '第一版']));
+    expect(stored().projectPrompts).toEqual({ 'acme/app': '第二版', 'acme/other': '别的项目当前值' });
+    expect(storedPool()[0]).toEqual({ value: '第二版', projectKey: 'acme/app' });
   }, 20000);
 });

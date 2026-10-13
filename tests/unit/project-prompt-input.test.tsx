@@ -3,12 +3,16 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectPromptInput } from '../../src/components/review/ProjectPromptInput';
 import { pushProjectPromptHistory, removeProjectPromptHistory } from '../../src/core/project-prompts';
+import type { ProjectPromptHistoryEntry } from '../../src/core/types';
 
-const history = ['第三版要求', '第二版要求', '第一版要求'];
+const CURRENT = 'acme/app';
+const OTHER = 'acme/other';
+const entry = (value: string, projectKey: string): ProjectPromptHistoryEntry => ({ value, projectKey });
+const history = [entry('第三版要求', CURRENT), entry('别的项目存过的要求', OTHER), entry('第一版要求', CURRENT)];
 const historyButton = () => screen.getByRole('button', { name: '项目补充要求历史' });
 
 function Harness({ initial = '', entries = history, onCommitSpy }: {
-  initial?: string; entries?: string[]; onCommitSpy?: (value: string) => void;
+  initial?: string; entries?: ProjectPromptHistoryEntry[]; onCommitSpy?: (value: string) => void;
 }) {
   const [value, setValue] = useState(initial);
   const [saved, setSaved] = useState(entries);
@@ -18,8 +22,8 @@ function Harness({ initial = '', entries = history, onCommitSpy }: {
       value={value}
       history={saved}
       onChange={setValue}
-      onCommit={(next) => { onCommitSpy?.(next); setSaved((prev) => pushProjectPromptHistory(prev, next)); }}
-      onRemoveEntry={(entry) => setSaved((prev) => removeProjectPromptHistory(prev, entry))}
+      onCommit={(next) => { onCommitSpy?.(next); setSaved((prev) => pushProjectPromptHistory(prev, next, CURRENT)); }}
+      onRemoveEntry={(next) => setSaved((prev) => removeProjectPromptHistory(prev, next))}
       placeholder="可选：本项目评审的额外约束"
     />
   );
@@ -27,6 +31,7 @@ function Harness({ initial = '', entries = history, onCommitSpy }: {
 
 const box = () => screen.getByRole('textbox', { name: '项目补充要求' }) as HTMLTextAreaElement;
 const listOf = () => screen.getByRole('listbox', { name: '项目补充要求历史列表' });
+const options = () => within(listOf()).getAllByRole('option');
 
 /** 派发原生按键事件：defaultPrevented 直接说明这一次按键有没有被脚本拦下来。 */
 function press(key: string, init: KeyboardEventInit = {}) {
@@ -67,7 +72,7 @@ describe('项目补充要求输入框不劫持键盘', () => {
     fireEvent.click(historyButton());
     expect(press('Escape').defaultPrevented).toBe(false);
     expect(box().value).toBe('写到一半');
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(3);
+    expect(options()).toHaveLength(3);
   });
 
   it('Shift / Ctrl / Meta 组合的 ↑↓ 同样不被拦截', () => {
@@ -84,7 +89,7 @@ describe('项目补充要求输入框不劫持键盘', () => {
     fireEvent.click(historyButton());
     expect(press('ArrowUp').defaultPrevented).toBe(false);
     expect(box().value).toBe('');
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(3);
+    expect(options()).toHaveLength(3);
   });
 
   it('没有历史时不渲染历史按钮，↑↓ 也没有副作用', () => {
@@ -106,16 +111,16 @@ describe('项目补充要求输入框不劫持键盘', () => {
 });
 
 describe('项目补充要求历史按钮', () => {
-  it('按钮标出条数，点开展开列表、再点收起', () => {
+  it('按钮标出全局池条数，点开展开列表、再点收起', () => {
     render(<Harness />);
     expect(historyButton()).toHaveTextContent('3');
     expect(historyButton()).toHaveAttribute('aria-expanded', 'false');
-    expect(historyButton()).toHaveAttribute('title', '最近 3 条保存过的补充要求，点开挑一条填回输入框');
+    expect(historyButton()).toHaveAttribute('title', '最近 3 条保存过的补充要求（所有项目共用一个历史池），点开挑一条填回输入框');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
 
     fireEvent.click(historyButton());
     expect(historyButton()).toHaveAttribute('aria-expanded', 'true');
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(3);
+    expect(options()).toHaveLength(3);
 
     fireEvent.click(historyButton());
     expect(historyButton()).toHaveAttribute('aria-expanded', 'false');
@@ -128,17 +133,22 @@ describe('项目补充要求历史按钮', () => {
     expect(screen.getByText(/点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标/)).toBeInTheDocument();
   });
 
+  it('提示文案说明历史池是全局共用、上限 30 条', () => {
+    render(<Harness />);
+    expect(screen.getByText('已保存 3 条历史（所有项目共用，最多 30 条）· 点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标')).toBeInTheDocument();
+    expect(screen.queryByText(/每项目最多 10 条/)).not.toBeInTheDocument();
+  });
+
   it('没有历史时不占右边距', () => {
     render(<Harness entries={[]} />);
     expect(box().style.paddingRight).toBe('7px');
   });
 
   it('当前生效值在列表里标成已选中，一眼看出正在用哪条', () => {
-    render(<Harness initial="第二版要求" />);
+    render(<Harness initial="别的项目存过的要求" />);
     fireEvent.click(historyButton());
-    const options = within(listOf()).getAllByRole('option');
-    expect(options[1]).toHaveAttribute('aria-selected', 'true');
-    expect(options[0]).toHaveAttribute('aria-selected', 'false');
+    expect(options()[1]).toHaveAttribute('aria-selected', 'true');
+    expect(options()[0]).toHaveAttribute('aria-selected', 'false');
   });
 });
 
@@ -146,17 +156,42 @@ describe('项目补充要求历史列表', () => {
   it('点条目填回输入框并收起，焦点交回输入框', () => {
     render(<Harness />);
     fireEvent.click(historyButton());
-    fireEvent.click(within(listOf()).getAllByRole('option')[1]);
-    expect(box().value).toBe('第二版要求');
+    fireEvent.click(options()[2]);
+    expect(box().value).toBe('第一版要求');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     expect(box()).toHaveFocus();
   });
 
-  it('列表里可以单删一条噪声历史', () => {
+  it('每条右下角标出来源项目，跨项目存过的也一起列出来', () => {
     render(<Harness />);
     fireEvent.click(historyButton());
-    fireEvent.click(within(listOf()).getAllByRole('button', { name: '删除这条补充要求' })[2]);
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(2);
+    expect(within(options()[0]).getByText('acme/app')).toBeInTheDocument();
+    expect(within(options()[1]).getByText('acme/other')).toBeInTheDocument();
+    expect(within(options()[2]).getByText('acme/app')).toBeInTheDocument();
+    expect(options()[1]).toHaveTextContent('别的项目存过的要求');
+  });
+
+  it('点别的项目存过的条目只把 value 填进输入框，不会把当前项目改掉', () => {
+    render(<Harness />);
+    fireEvent.click(historyButton());
+    fireEvent.click(options()[1]);
+    expect(box().value).toBe('别的项目存过的要求');
+    expect(screen.queryByText('acme/other')).not.toBeInTheDocument();
+  });
+
+  it('没有来源项目的旧条目不渲染空标注', () => {
+    render(<Harness entries={[{ value: '很老的版本', projectKey: '' }]} />);
+    fireEvent.click(historyButton());
+    expect(options()[0]).toHaveTextContent('很老的版本');
+    expect(options()[0].textContent).toBe('很老的版本');
+  });
+
+  it('列表里可以单删一条噪声历史（含别的项目存过的）', () => {
+    render(<Harness />);
+    fireEvent.click(historyButton());
+    fireEvent.click(within(listOf()).getAllByRole('button', { name: '删除这条补充要求' })[1]);
+    expect(options()).toHaveLength(2);
+    expect(options().map((option) => option.textContent?.split('acme/')[0])).toEqual(['第三版要求', '第一版要求']);
     expect(box().value).toBe('');
   });
 });
@@ -171,21 +206,33 @@ describe('项目补充要求输入框保存点', () => {
     fireEvent.blur(box());
     expect(onCommit).toHaveBeenCalledWith('第四版要求');
     fireEvent.click(historyButton());
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(4);
-    expect(within(listOf()).getAllByRole('option')[0]).toHaveTextContent('第四版要求');
+    expect(options()).toHaveLength(4);
+    expect(options()[0]).toHaveTextContent('第四版要求');
   });
 
   it('从列表挑一条旧版本再失焦，把它提到历史最前而不是复制一份', () => {
     render(<Harness />);
     fireEvent.click(historyButton());
-    fireEvent.click(within(listOf()).getAllByRole('option')[1]);
-    expect(box().value).toBe('第二版要求');
+    fireEvent.click(options()[2]);
+    expect(box().value).toBe('第一版要求');
     fireEvent.blur(box());
 
     fireEvent.click(historyButton());
-    const options = within(listOf()).getAllByRole('option');
-    expect(options).toHaveLength(3);
-    expect(options[0]).toHaveTextContent('第二版要求');
+    expect(options()).toHaveLength(3);
+    expect(options()[0]).toHaveTextContent('第一版要求');
+  });
+
+  it('挑别的项目的条目再失焦，这条的来源项目变成当前项目', () => {
+    render(<Harness />);
+    fireEvent.click(historyButton());
+    fireEvent.click(options()[1]);
+    fireEvent.blur(box());
+
+    fireEvent.click(historyButton());
+    expect(options()).toHaveLength(3);
+    expect(options()[0]).toHaveTextContent('别的项目存过的要求');
+    expect(within(options()[0]).getByText(CURRENT)).toBeInTheDocument();
+    expect(screen.queryByText(OTHER)).not.toBeInTheDocument();
   });
 
   it('清空后失焦不会往历史里塞空条目', () => {
@@ -193,7 +240,7 @@ describe('项目补充要求输入框保存点', () => {
     fireEvent.change(box(), { target: { value: '   ' } });
     fireEvent.blur(box());
     fireEvent.click(historyButton());
-    expect(within(listOf()).getAllByRole('option')).toHaveLength(3);
+    expect(options()).toHaveLength(3);
   });
 });
 
@@ -203,9 +250,9 @@ describe('项目补充要求输入框焦点', () => {
     render(<Harness initial="第一版要求" onCommitSpy={onCommit} />);
     fireEvent.focus(box());
     fireEvent.click(historyButton());
-    fireEvent.mouseDown(within(listOf()).getAllByRole('option')[0]);
+    fireEvent.mouseDown(options()[0]);
     expect(onCommit).not.toHaveBeenCalled();
-    fireEvent.click(within(listOf()).getAllByRole('option')[0]);
+    fireEvent.click(options()[0]);
     expect(box().value).toBe('第三版要求');
     expect(onCommit).not.toHaveBeenCalled();
   });

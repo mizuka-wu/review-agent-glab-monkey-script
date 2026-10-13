@@ -768,9 +768,9 @@ test.describe('mock mode', () => {
     await expect(panel.getByText(/支付失败必须给出可操作的错误提示/).first()).toBeVisible({ timeout: 10000 });
   });
 
-  test('recalls per-project supplementary prompts from the history button, not the arrow keys', async ({ page }) => {
+  test('recalls supplementary prompts from the shared history button, not the arrow keys', async ({ page }) => {
     await routeGitLab(page);
-    // 旧版是「每项目一个单值」，升级后必须原样变成 1 条历史，不能丢用户已经存好的提示
+    // 旧版是「每项目一个单值」，升级后必须原样变成全局历史池里的 1 条，不能丢用户已经存好的提示
     await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
       reviewMode: 'rules', gitlabToken: '', language: 'zh-CN',
       projectPrompts: { 'acme/app': '第一版：金额计算必须用 decimal' },
@@ -781,16 +781,18 @@ test.describe('mock mode', () => {
     await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
     await expect(page.getByRole('button', { name: '项目补充要求历史' })).toHaveText('1');
 
+    // 历史池现在是全局单列表，每条带上来源项目
     const storedHistory = () => page.evaluate(() => (JSON.parse(
       localStorage.getItem('review-agent-settings-v1') ?? '{}',
-    ) as { projectPromptHistory?: Record<string, string[]> }).projectPromptHistory);
+    ) as { projectPromptHistory?: { value: string; projectKey: string }[] }).projectPromptHistory);
+    const fromApp = [{ value: '第一版：金额计算必须用 decimal', projectKey: 'acme/app' }];
 
     // 打字只改当前值；失焦才是保存点，历史这时候才追加
     const second = '第二版：禁止报告命名风格问题\n金额一律用 decimal';
     await box.fill(second);
-    await expect.poll(storedHistory).toEqual({ 'acme/app': ['第一版：金额计算必须用 decimal'] });
+    await expect.poll(storedHistory).toEqual(fromApp);
     await box.blur();
-    await expect.poll(storedHistory).toEqual({ 'acme/app': [second, '第一版：金额计算必须用 decimal'] });
+    await expect.poll(storedHistory).toEqual([{ value: second, projectKey: 'acme/app' }, ...fromApp]);
 
     // ↑↓ / Esc 完全交还给多行光标：光标照常上下移动，人工输入的内容一个字都不改
     await box.click();
@@ -806,12 +808,14 @@ test.describe('mock mode', () => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Escape');
     await expect(box).toHaveValue(second);
-    await expect(page.getByText('已保存 2 条历史（每项目最多 10 条）· 点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标')).toBeVisible();
+    await expect(page.getByText('已保存 2 条历史（所有项目共用，最多 30 条）· 点输入框右上角的历史按钮挑一条填回，↑↓ 只移动光标')).toBeVisible();
 
     // 历史列表：点条目填回输入框，也能单删一条噪声（不影响当前生效值）
     await page.getByRole('button', { name: '项目补充要求历史' }).click();
     const list = page.getByRole('listbox', { name: '项目补充要求历史列表' });
     await expect(list.getByRole('option')).toHaveCount(2);
+    // 每条右下角标出来源项目
+    await expect(list.getByRole('option').first()).toContainText('acme/app');
     await list.getByRole('option').nth(1).click();
     await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
     await expect(list).toHaveCount(0);
@@ -820,7 +824,7 @@ test.describe('mock mode', () => {
     await expect(list.getByRole('option')).toHaveCount(2);
     await list.getByRole('option').filter({ hasText: '第二版：禁止报告命名风格问题' })
       .getByRole('button', { name: '删除这条补充要求' }).click();
-    await expect.poll(storedHistory).toEqual({ 'acme/app': ['第一版：金额计算必须用 decimal'] });
+    await expect.poll(storedHistory).toEqual(fromApp);
     await expect(box).toHaveValue('第一版：金额计算必须用 decimal');
   });
 
