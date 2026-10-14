@@ -24,11 +24,15 @@ export interface LocateOutcome {
   failure?: LocateFailure;
 }
 
-/** GitLab 各版本 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 .diff-line、19.x grid 的 div.line_holder、blob 视图的 tr#LC10。 */
-const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line], [data-interop-line]';
-const FILE_SELECTOR = '.diff-file, .file-holder, [data-testid="diff-file"], [data-file-path]';
-const CODE_SELECTOR = '.line_content, code, .blob-code';
-const HEADER_SELECTOR = '.file-header, .file-header-content, [data-testid="diff-file-header"]';
+/**
+ * GitLab 各版本 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 .diff-line、19.x grid 的 div.line_holder、
+ * 19.x Rapid Diffs 的 tr.rd-hunk-lines、blob 视图的 tr#LC10。
+ */
+const ROW_SELECTOR = 'tr, .line_holder, .diff-line, .rd-hunk-lines, [data-linenumber], [data-line-number], [data-line], [data-interop-line]';
+/** 19.x 默认渲染的 Rapid Diffs 用自定义元素 <diff-file data-file-data="{...}"> 包每个文件，没有 .diff-file 类名。 */
+const FILE_SELECTOR = '.diff-file, .file-holder, [data-testid="diff-file"], [data-file-path], diff-file[data-file-data], [data-testid="rd-diff-file"]';
+const CODE_SELECTOR = '.line_content, code, .blob-code, .rd-line-content, .rd-line-text';
+const HEADER_SELECTOR = '.file-header, .file-header-content, [data-testid="diff-file-header"], .rd-diff-file-header, [data-testid="rd-diff-file-header"]';
 /**
  * 文件级折叠（大文件默认收起、用户手动收起文件）与「隐藏的 N 行」段内折叠，控件选择器分开：前者一次点完，后者要逐个试。
  * 19.x 的文件收起开关没有 js- 钩子，只剩 aria-label 可以认。
@@ -40,10 +44,10 @@ const FILE_EXPAND_SELECTOR = '.diff-collapsed a, .diff-collapsed button, [data-t
 const LINE_EXPAND_SELECTOR = 'a.js-expand-lines, button.js-expand-lines, a.js-expand-line-range, '
   + 'button.js-expand-line-range, .line_content.unfold a, .line_content.unfold button, td.unfold a, td.unfold button, '
   + 'tr.expand a, tr.expand button, [data-testid="diff-expand-button"], [data-diff-toggle-entity="expansion"] a, '
-  + '.diff-expand-text';
-/** diff 文件列表本身还没渲染到目标文件时的「加载更多」。 */
+  + '.diff-expand-text, button.rd-expand-lines-button, button[data-click="expandLines"]';
+/** diff 文件列表本身还没渲染到目标文件时的「加载更多」；19.x 只剩 aria-label 可以认。 */
 const LOAD_MORE_SELECTOR = 'button.js-load-more, .js-load-more button, [data-testid="load-more-diffs"], '
-  + '.load-more button, button.js-force-expand-all-diffs';
+  + '.load-more button, button.js-force-expand-all-diffs, button[aria-label="Expand all files"], button[aria-label="展开所有文件"]';
 const TAB_LABEL = /^(changes|diffs?|变更|更改|差异|文件改动)$/i;
 
 const PENDING_KEY = 'review-agent-pending-locate-v1';
@@ -89,10 +93,23 @@ function datasetPath(node: Element | null | undefined): string | undefined {
   return value?.trim() || undefined;
 }
 
-/** 文件头路径来源按可信度排：data-file-path → blob 链接 href → 标题 title → 标题文本。 */
+/** Rapid Diffs 把路径塞在 <diff-file data-file-data="{...json...}"> 里，没有 data-path 这类单值属性。 */
+function fileDataPath(node: Element | null | undefined): string | undefined {
+  if (!(node instanceof HTMLElement) || !node.dataset.fileData) return undefined;
+  try {
+    const parsed = JSON.parse(node.dataset.fileData) as { new_path?: string; old_path?: string };
+    return parsed.new_path?.trim() || parsed.old_path?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 文件头路径来源按可信度排：data-file-path / data-file-data → blob 链接 href → 标题 title → 标题文本。 */
 function containerPath(container: HTMLElement): string {
   const direct = datasetPath(container)
-    ?? datasetPath(container.querySelector('[data-file-path], [data-new-path], [data-path], [data-old-path]'));
+    ?? fileDataPath(container)
+    ?? datasetPath(container.querySelector('[data-file-path], [data-new-path], [data-path], [data-old-path]'))
+    ?? fileDataPath(container.querySelector('[data-file-data]'));
   if (direct) return direct;
 
   const scope = container.querySelector<HTMLElement>(HEADER_SELECTOR) ?? container;

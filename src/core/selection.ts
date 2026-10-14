@@ -8,19 +8,37 @@ interface LineAnchor {
   line?: number;
 }
 
-/** GitLab 各版本的 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 tr[data-line]、19.x grid 的 div.line_holder、blob 视图的 tr#LC10。 */
-const ROW_SELECTOR = 'tr, .line_holder, .diff-line, [data-linenumber], [data-line-number], [data-line], [data-interop-line], [id^="LC"]';
-/** 选区可能落在代码格里，也可能落在行号格里。 */
-const CELL_SELECTOR = '.line_content, .diff-line-num, .diff-line-numbers, .line_numbers, .old_line, .new_line, .blob-code, td';
+/**
+ * GitLab 各版本的 diff 行容器：经典 HAML 的 tr.line_holder、Vue diff 的 tr[data-line]、19.x grid 的 div.line_holder、
+ * 19.x Rapid Diffs 的 tr.rd-hunk-lines、blob 视图的 tr#LC10。
+ */
+const ROW_SELECTOR = 'tr, .line_holder, .diff-line, .rd-hunk-lines, [data-linenumber], [data-line-number], [data-line], [data-interop-line], [id^="LC"]';
+/**
+ * 选区可能落在代码格里，也可能落在行号格里。Rapid Diffs 的代码格是 td.rd-line-content，
+ * 里面的 pre.rd-line-text 只是行内高亮容器，不算格子（否则会盖掉 data-change 的侧别信息）。
+ */
+const CELL_SELECTOR = '.line_content, .diff-line-num, .diff-line-numbers, .line_numbers, .old_line, .new_line, .blob-code, .rd-line-content, .rd-line-number, td';
 const BLOB_SELECTOR = '.blob-viewer, .blob-content, table.text-file';
-const FILE_SELECTOR = '.diff-file, .file-holder, .blob-viewer';
+/** 19.x 默认渲染的 Rapid Diffs 用自定义元素 <diff-file> 包每个文件，类名是 rd-diff-file，都不带 .diff-file。 */
+const FILE_SELECTOR = '.diff-file, .file-holder, .blob-viewer, diff-file, .rd-diff-file, [data-file-data]';
 /** 只有落在 diff / blob 代码区里的选区才有位置语义；讨论区、MR 描述、页面文案一律只带原文。 */
 const CODE_AREA_SELECTOR = '.diff-file, .file-holder, .diff-content, .diff-table, .line_holder, .diff-line, '
-  + '.blob-viewer, .blob-content, .file-content, .text-file, [data-testid="diff-file"], [data-testid="diff-content"], [data-file-path]';
+  + '.blob-viewer, .blob-content, .file-content, .text-file, [data-testid="diff-file"], [data-testid="diff-content"], [data-file-path], '
+  + 'diff-file, .rd-diff-file, .rd-hunk-lines, .rd-line-content, [data-file-data]';
 
 function trimmed(value: string | null | undefined): string | undefined {
   const text = value?.trim();
   return text ? text : undefined;
+}
+
+/**
+ * Rapid Diffs 的代码格只写 data-change 不写侧别：removed 行的代码只存在于旧侧，其余按新侧引用。
+ * 经典渲染的格子带 old/new 类名，走 sideOfNode 就够，这一层只在侧别读不出来时兜底。
+ */
+function changeSideOf(cell: Element | null | undefined): Side | undefined {
+  const change = cell instanceof HTMLElement ? cell.dataset.change : undefined;
+  if (change === 'removed') return 'old';
+  return change === 'added' || change === 'context' ? 'new' : undefined;
 }
 
 /**
@@ -30,7 +48,8 @@ function trimmed(value: string | null | undefined): string | undefined {
 function anchorOf(element: Element | null): LineAnchor {
   const cell = element?.closest<HTMLElement>(CELL_SELECTOR) ?? null;
   const row = (cell ?? element)?.closest<HTMLElement>(ROW_SELECTOR) ?? null;
-  const side: Side = sideOfNode(cell) ?? sideOfNode(row) ?? (row?.closest(BLOB_SELECTOR) ? 'unified' : 'new');
+  const side: Side = sideOfNode(cell) ?? changeSideOf(cell) ?? sideOfNode(row)
+    ?? (row?.closest(BLOB_SELECTOR) ? 'unified' : 'new');
   return { side, line: rowLineNumber(row, side) ?? cellLineNumber(cell, side, row) };
 }
 
@@ -46,14 +65,30 @@ function datasetPath(node: HTMLElement | null | undefined): string | undefined {
   return trimmed(node?.dataset.filePath) ?? trimmed(node?.dataset.newPath) ?? trimmed(node?.dataset.path);
 }
 
-/** data-file-path 优先（rename 时它一定是新路径），标题文本只在属性缺失时兜底。 */
+/** Rapid Diffs 把路径塞在 <diff-file data-file-data="{...json...}"> 里，没有 data-path 这类单值属性。 */
+function fileDataPath(node: HTMLElement | null | undefined): string | undefined {
+  const raw = node?.dataset.fileData;
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { new_path?: string; old_path?: string };
+    return trimmed(parsed.new_path) ?? trimmed(parsed.old_path);
+  } catch {
+    return undefined;
+  }
+}
+
+function anyPath(node: HTMLElement | null | undefined): string | undefined {
+  return datasetPath(node) ?? fileDataPath(node);
+}
+
+/** data-file-path / data-file-data 优先（rename 时它们一定是新路径），标题文本只在属性缺失时兜底。 */
 function pathFrom(element: Element | null, fallback: string): string {
-  const attributed = element?.closest<HTMLElement>('[data-file-path], [data-new-path]');
+  const attributed = element?.closest<HTMLElement>('[data-file-path], [data-new-path], [data-file-data]');
   const container = element?.closest<HTMLElement>(FILE_SELECTOR);
-  const nested = container?.querySelector<HTMLElement>('[data-file-path], [data-new-path], [data-path]');
-  return datasetPath(attributed)
-    ?? datasetPath(container)
-    ?? datasetPath(nested)
+  const nested = container?.querySelector<HTMLElement>('[data-file-path], [data-new-path], [data-path], [data-file-data]');
+  return anyPath(attributed)
+    ?? anyPath(container)
+    ?? anyPath(nested)
     ?? titlePath(container)
     ?? fallback;
 }

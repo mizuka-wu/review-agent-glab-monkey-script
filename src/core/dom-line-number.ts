@@ -1,16 +1,21 @@
 /**
  * GitLab 各版本把行号写在 DOM 的不同位置：老版是行号格里的 a[data-line-number]、代码格里的 span#LC11，
- * 新版把属性拼成 data-linenumber，19.x 的 grid diff 还把 data-interop-line 挂在格子外面那层 side wrapper 上。
+ * 新版把属性拼成 data-linenumber，19.x 的 grid diff 把 data-interop-line 挂在格子外面那层 side wrapper 上，
+ * 19.x 默认渲染的 Rapid Diffs 又是另一套：tr.rd-hunk-lines 下两个 td.rd-line-number[data-position=old|new]
+ * 各装一个 a.rd-line-link[data-line-number]，代码在兄弟格 td.rd-line-content 里（格子自己不带任何行号）。
  * 划词取行号（selection）与 Finding 定位（finding-highlight）共用这一套读法，同一行两边必须读出同一个数。
  */
 
 export type LineSide = 'old' | 'new' | 'unified';
 
 /** 行号格：格内文本可能就是行号本身。代码格永远不算，格内文本是代码。 */
-const GUTTER_SELECTOR = '.old_line, .new_line, .diff-line-num, .diff-line-numbers, .line_numbers, [data-side], [data-testid$="line-number"]';
-const CODE_SELECTOR = '.line_content, .blob-code';
-/** 侧别标记：行号格、代码格与 19.x 的 side wrapper 都可能带，用来判断某个行号属于哪一侧。 */
-const SIDE_SELECTOR = '.old_line, .new_line, [data-side], [data-interop-type]';
+const GUTTER_SELECTOR = '.old_line, .new_line, .diff-line-num, .diff-line-numbers, .line_numbers, .rd-line-number, [data-side], [data-testid$="line-number"]';
+const CODE_SELECTOR = '.line_content, .blob-code, .rd-line-content, .rd-line-text';
+/**
+ * 侧别标记：行号格、代码格与 19.x 的 side wrapper 都可能带，用来判断某个行号属于哪一侧。
+ * Rapid Diffs 的 data-position 只认 old / new 两个值，别的组件也用它写 top / bottom 之类的定位。
+ */
+const SIDE_SELECTOR = '.old_line, .new_line, [data-side], [data-interop-type], [data-position="old"], [data-position="new"]';
 const SIDE_ATTR_SELECTOR = '[data-old-line-number], [data-new-line-number], [data-interop-old-line], [data-interop-new-line], [data-interop-type]';
 /** 行号常常不在节点自身而在子节点上：行号格里的 a、老版代码格里的 span#LC11 / span#L11。 */
 const LINE_NODE_SELECTOR = '[data-linenumber], [data-line-number], [data-line], [data-old-line-number], [data-new-line-number], '
@@ -75,12 +80,12 @@ function nodeLineNumber(node: Element | null | undefined, side: LineSide): numbe
   return attrLineNumber(node, side) ?? idLineNumber(node, side);
 }
 
-/** 这个节点属于哪一侧：old/new 类名、data-side、19.x 的 data-interop-type。 */
+/** 这个节点属于哪一侧：old/new 类名、data-side、19.x 的 data-interop-type、Rapid Diffs 的 data-position。 */
 export function sideOfNode(node: Element | null | undefined): 'old' | 'new' | undefined {
   if (!node) return undefined;
   const data = node instanceof HTMLElement ? node.dataset : undefined;
-  if (data?.side === 'old' || data?.interopType === 'old' || node.classList.contains('old_line') || node.classList.contains('old')) return 'old';
-  if (data?.side === 'new' || data?.interopType === 'new' || node.classList.contains('new_line') || node.classList.contains('new')) return 'new';
+  if (data?.side === 'old' || data?.interopType === 'old' || data?.position === 'old' || node.classList.contains('old_line') || node.classList.contains('old')) return 'old';
+  if (data?.side === 'new' || data?.interopType === 'new' || data?.position === 'new' || node.classList.contains('new_line') || node.classList.contains('new')) return 'new';
   return undefined;
 }
 
@@ -156,14 +161,34 @@ function gutterLineNumber(gutter: Element | null | undefined, side: LineSide): n
     ?? plainLineNumber(gutter.textContent);
 }
 
-/** 代码格 / 行号格里的行号；代码格还要往父层找（19.x 把 data-interop-line 挂在格子外面）。 */
+/**
+ * 代码格 / 行号格里的行号；代码格还要往父层找（19.x grid 把 data-interop-line 挂在格子外面，
+ * Rapid Diffs 的行号格是代码格的兄弟节点，只能回到行容器上按侧别取）。
+ */
 export function cellLineNumber(cell: Element | null | undefined, side: LineSide, boundary?: Element | null): number | undefined {
   if (!cell) return undefined;
   if (isGutterCell(cell)) return gutterLineNumber(cell, side);
-  return explicitLineNumber(cell, side)
+  const direct = explicitLineNumber(cell, side)
     ?? nodeLineNumber(cell, side)
     ?? descendantLineNumber(cell, side)
     ?? ancestorLineNumber(cell, side, boundary);
+  if (direct !== undefined) return direct;
+  // Rapid Diffs 的行号格是代码格的兄弟节点，只能回到行容器上取；只认侧别明确的行号格，
+  // 否则 side-by-side 里那种无侧别的 data-line-number（按约定是新侧行号）会串到旧侧。
+  for (let row = cell.parentElement; row; row = row.parentElement) {
+    const gutters = gutterCells(row, side);
+    if (gutters.length > 0) {
+      // 找到行号格的那一层就是本行的行容器：读不出来就地返回，别继续往上串到别的行、别的文件
+      for (const gutter of gutters) {
+        if (side !== 'unified' && sideOfNode(gutter) !== side) continue;
+        const line = gutterLineNumber(gutter, side);
+        if (line !== undefined) return line;
+      }
+      return undefined;
+    }
+    if (row === boundary) return undefined;
+  }
+  return undefined;
 }
 
 /** 行容器的行号：行号格优先，其次行自身属性 / id，最后行内子节点。 */
