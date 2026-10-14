@@ -39,8 +39,9 @@
 
 ### 🎯 Finding 管理
 - **完整生命周期**：草稿 → 编辑 → 定位 → 复制 → 发布 / 忽略
-- **页内高亮**：在 GitLab Diff 页面上标注 Finding 位置，severity 色标
+- **页内高亮**：在 GitLab Diff 页面上标注 Finding 位置，severity 色标；经典 HAML / Vue diff / 19.x grid / 19.x Rapid Diffs（`<diff-file>` + `tr.rd-hunk-lines`，19.x 的默认渲染）四种 DOM 都认
 - **批量发布**：复选框多选 → 预览确认 → 逐条创建 Discussion
+- **降级不静默**：行内位置被 GitLab 拒了才改发全文评论时，toast 与 Finding 卡片都写明原因（如「MR 已更新，diff 位置已过期」「GitLab 拒绝了这个行内位置（…line_code…）」）；发布前就判定挂不上行的，卡片直接给出原因（行号不在 Diff 内 / 文件被 GitLab 折叠 / 路径不在本 MR）
 - **快速操作**：一键 Approve、一键行内评论（全部可发布草稿）、发布 MR 总评论；均为两步确认防误触
 - **筛选排序**：按来源/严重度/分类/状态过滤，按严重度/来源/文件排序
 - **Session/Resume**：刷新页面后恢复上次 Review 会话
@@ -62,12 +63,15 @@
 - **四面板调试器**：日志 / 网络 / 提示词 / 状态，支持关键字过滤、级别过滤、自动滚动
 - **网络面板**：GitLab API、模型调用、MCP、索引请求的方法、状态码、耗时、字节数
 - **提示词面板**：每次模型调用的完整 system、消息内容、工具列表、token 用量与响应摘要
+- **状态面板计数**：`publish-downgrade:<reasonCode>`（行内降级为全文的原因分布）与 `publish-inline-rejected:<status>`（GitLab 拒绝行内位置的状态码分布）按次累加，跨刷新保留，导出调试包一并带上
 - **console 镜像**：页面 `console.warn/error` 自动进入日志；日志跨刷新保留
 - **一键导出**：复制并下载 JSON 调试包（含脱敏设置快照），便于提 issue 排查
 
 ### 🛠 自部署兼容
 - **能力探测**：认证模式、API 版本、搜索、CSRF、DOM 可用性自动检测
 - **DOM 降级**：API 不可用时从页面 DOM 解析 Diff
+- **行号读法共用一套**：划词取行号与 Finding 定位都走 `core/dom-line-number.ts`，按侧别（old/new）分别读行号格；19.x Rapid Diffs 用 `td.rd-line-number[data-position]` 分侧、行号在 `a.rd-line-link[data-line-number]` 上，19.x grid 用 side wrapper 上的 `data-interop-old-line` / `data-interop-new-line`，两侧号码不同的上下文行也不会串
+- **GitLab 的硬限制**：行内评论只能挂在 MR diff 的行上（默认 3 行上下文）。实测把「隐藏的 N 行」全部展开后再发 REST `position` 仍然是 `400 line_code can't be blank`，所以完整文件上下文里只有 diff 行会被标为「可锚定行」，模型锚到别处只能降级为全文评论
 - **诊断面板**：实时显示 GitLab 实例状态和兼容性警告
 - **配置导出**：脱敏导出站点配置到剪贴板
 - **日志脱敏**：自动过滤 Bearer token、API key、PAT 等敏感信息
