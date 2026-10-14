@@ -29,6 +29,7 @@ import {
   clearHighlights, highlightFindingOnPage, injectHighlightStyles, takePendingLocate, type LocateOutcome,
 } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
+import { logInlineFallback } from './core/inline-fallback';
 import {
   buildFixPayload, createFixPlan, describeFixFailure, isFixCandidate, parseFixResponse,
   type FixPlan,
@@ -1484,6 +1485,29 @@ export default function App({ page }: AppProps) {
     };
   };
 
+  /**
+   * 发布一条评论的唯一出口：行内失败降级成全文时，把原因与当时的完整参数打到 console
+   * （每行带 [inline-fallback] 前缀），用户复制整段就能发来排查；主动发全文不出声。
+   */
+  const publishOne = async (ref: MergeRequestRef, finding: Finding, body: string) => {
+    const attempted = buildPosition(finding);
+    const published = await api.publishComment(ref, finding, body, attempted);
+    if (published.mode === 'full') {
+      logInlineFallback({
+        finding,
+        position: publishPositions.get(finding.id),
+        attempted,
+        downgrade: published.downgrade,
+        files,
+        diffRefs: mrContext?.diffRefs,
+        selection: reviewTarget,
+        gitlabVersion: capabilities?.gitlabVersion,
+        body,
+      });
+    }
+    return published;
+  };
+
   /** 逐条发布（行内不可用自动降级全文），返回各形态条数、降级原因并回写状态。 */
   const publishEach = async (ref: MergeRequestRef, targets: Finding[]) => {
     const succeeded = new Set<string>();
@@ -1492,7 +1516,7 @@ export default function App({ page }: AppProps) {
     let full = 0;
     for (const finding of targets) {
       try {
-        const published = await api.publishComment(ref, finding, finding.comment, buildPosition(finding));
+        const published = await publishOne(ref, finding, finding.comment);
         succeeded.add(finding.id);
         if (published.mode === 'inline') inline += 1; else full += 1;
         if (published.downgrade) {
@@ -1515,7 +1539,7 @@ export default function App({ page }: AppProps) {
     if (!publishFinding || !mergeRequestRef || !mrContext || !canPublish) return;
     setPublishing(true);
     try {
-      const published = await api.publishComment(mergeRequestRef, publishFinding, publishBody, buildPosition(publishFinding));
+      const published = await publishOne(mergeRequestRef, publishFinding, publishBody);
       persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'published' as const, comment: publishBody } : finding));
       setPublishFinding(undefined);
       recordDowngrade(publishFinding.id, published.downgrade?.reason);

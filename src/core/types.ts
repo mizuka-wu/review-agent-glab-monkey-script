@@ -332,6 +332,8 @@ export interface PublishedDiscussion {
 export interface PublishDowngrade {
   reason: string;
   status?: number;
+  /** GitLab 返回的原始报错体：400 / 409 / 422 的 body 才是定位降级原因的关键证据。 */
+  serverMessage?: string;
 }
 
 export interface PublishedComment extends PublishedDiscussion {

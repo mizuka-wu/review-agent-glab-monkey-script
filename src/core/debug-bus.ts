@@ -148,6 +148,8 @@ class DebugBus {
   private sequence = 0;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private consoleAttached = false;
+  /** logToConsole 自己会打 console，attachConsole 的包装不能再把同一条收回来。 */
+  private mirroring = false;
 
   constructor() {
     this.restore();
@@ -191,6 +193,23 @@ class DebugBus {
     this.logs.push({ id: this.nextId(), ts: new Date().toISOString(), level, source, message, detail });
     if (this.logs.length > LOG_LIMIT) this.logs.splice(0, this.logs.length - LOG_LIMIT);
     this.emitChange();
+  }
+
+  /**
+   * 需要用户直接从浏览器 console 复制来排查的日志（如行内评论降级现场）：
+   * 面板 / 导出包留完整一份，console 也原样打一份，用户不用先找到调试面板。
+   */
+  logToConsole(level: DebugLevel, source: string, message: string, detail?: string) {
+    this.log(level, source, message, detail);
+    const text = detail ? `${message}\n${detail}` : message;
+    this.mirroring = true;
+    try {
+      if (level === 'error') console.error(text);
+      else if (level === 'warn') console.warn(text);
+      else console.info(text);
+    } finally {
+      this.mirroring = false;
+    }
   }
 
   network(entry: Omit<DebugNetworkEntry, 'id' | 'ts'>) {
@@ -321,11 +340,11 @@ class DebugBus {
     const originalWarn = console.warn.bind(console);
     const originalError = console.error.bind(console);
     console.warn = (...args: unknown[]) => {
-      this.log('warn', 'console', args.map(stringify).join(' ').slice(0, 400));
+      if (!this.mirroring) this.log('warn', 'console', args.map(stringify).join(' ').slice(0, 400));
       originalWarn(...args);
     };
     console.error = (...args: unknown[]) => {
-      this.log('error', 'console', args.map(stringify).join(' ').slice(0, 400));
+      if (!this.mirroring) this.log('error', 'console', args.map(stringify).join(' ').slice(0, 400));
       originalError(...args);
     };
   }

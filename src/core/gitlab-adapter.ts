@@ -502,7 +502,11 @@ export class GitLabAdapter {
         return { ...(await this.createDiscussion(ref, { body, position })), mode: 'inline' };
       } catch (error) {
         if (!isPositionRejection(error)) throw error;
-        downgrade = { reason: positionRejectionReason(error), status: error.status };
+        downgrade = {
+          reason: positionRejectionReason(error),
+          status: error.status,
+          serverMessage: error.message,
+        };
         debugBus.count(`publish-inline-rejected:${error.status}`);
         debugBus.log('warn', 'publish', `行内位置被 GitLab 拒绝（HTTP ${error.status}），改为全文评论 ${finding.path}:${finding.line}`, error.message);
       }

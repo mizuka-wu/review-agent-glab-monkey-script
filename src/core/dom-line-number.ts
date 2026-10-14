@@ -202,3 +202,108 @@ export function rowLineNumber(row: Element | null | undefined, side: LineSide): 
   }
   return nodeLineNumber(row, side) ?? descendantLineNumber(row, side);
 }
+
+/** 页面用的是哪套 diff 渲染：19.x 默认 Rapid Diffs，老版是经典 HAML / Vue diff，两套行号读法完全不同。 */
+export type DiffViewKind = 'rapid' | 'classic' | 'unknown';
+
+const RAPID_SELECTOR = 'tr.rd-hunk-lines, .rd-diff-file, .rd-line-number, diff-file[data-file-data]';
+const CLASSIC_SELECTOR = '.diff-file, .file-holder, .line_holder, .diff-line, table.text-file, [data-testid="diff-file"]';
+/** 行容器优先；老 DOM 里没有行元素时，代码格自己也能读出行号，一并当候选。 */
+const PROBE_ROW_SELECTOR = 'tr, .line_holder, .diff-line, .rd-hunk-lines, .line_content, .blob-code, .rd-line-content';
+/** 行号 id 常常挂在行容器的子节点上（经典 span#LC11、19.x grid 的 div#<sha>_<old>_<new>）。 */
+const NESTED_ID_SELECTOR = '[id^="LC"], [id^="L"], [id*="_"]';
+/** 兜底全扫的行数上限：批量发布时每条降级都要取证一次，不能为了日志把页面卡住。 */
+const PROBE_ROW_LIMIT = 1500;
+/** GitLab 的 line_code 就是行 id 的双号写法 <sha>_<old>_<new>，页面上能读到就一并记下来。 */
+const LINE_CODE_ID = /^[0-9a-f]{7,40}_\d*_\d*$/;
+
+function probeRoot(root?: ParentNode | null): ParentNode | null {
+  if (root) return root;
+  return typeof document === 'undefined' ? null : document;
+}
+
+export function diffViewKind(root?: ParentNode | null): DiffViewKind {
+  const scope = probeRoot(root);
+  if (!scope) return 'unknown';
+  if (scope.querySelector(RAPID_SELECTOR)) return 'rapid';
+  if (scope.querySelector(CLASSIC_SELECTOR)) return 'classic';
+  return 'unknown';
+}
+
+export interface DomLineSource {
+  /** 页面上到底有没有这一行：折叠 / 未展开 / 行号根本不在 diff 里都是 false。 */
+  found: boolean;
+  /** 行容器的 id：经典视图是 LC42，19.x grid 是 <sha>_<old>_<new>。 */
+  rowId?: string;
+  /** 行号的载体，如 id#LC42 / data-linenumber=42 / gutter-text，多个用 | 连接。 */
+  from?: string[];
+  /** 行 id 是双号写法时它就是 GitLab 的 line_code。 */
+  lineCode?: string;
+}
+
+function datasetKey(key: string) {
+  return `data-${key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}`;
+}
+
+function rowIdOf(row: HTMLElement) {
+  if (row.id) return row.id;
+  return row.querySelector<HTMLElement>(NESTED_ID_SELECTOR)?.id || undefined;
+}
+
+/** 这一行的行号具体写在哪些属性 / span id 上：不同 GitLab 版本写法不同，是判断读法有没有覆盖到的直接证据。 */
+function lineCarriers(row: HTMLElement, side: LineSide, line: number) {
+  const carriers: string[] = [];
+  for (const node of [row, ...row.querySelectorAll<HTMLElement>(LINE_NODE_SELECTOR)]) {
+    if (node.id && idLineNumber(node, side) === line) carriers.push(`id#${node.id}`);
+    for (const [key, value] of Object.entries(node.dataset ?? {})) {
+      if (plainLineNumber(value) === line) carriers.push(`${datasetKey(key)}=${value}`);
+    }
+  }
+  for (const gutter of row.querySelectorAll<HTMLElement>(GUTTER_SELECTOR)) {
+    if (isGutterCell(gutter) && plainLineNumber(gutter.textContent) === line) carriers.push('gutter-text');
+  }
+  return [...new Set(carriers)].slice(0, 6);
+}
+
+/** 直接按行号定位候选节点，别把整页几千行都算一遍行号（批量发布时每条降级都要取证一次）。 */
+function lineNumberSelector(line: number) {
+  return `[id="LC${line}"], [id="L${line}"], [id$="_${line}"], [id*="_${line}_"], `
+    + `[data-linenumber="${line}"], [data-line-number="${line}"], [data-line="${line}"], `
+    + `[data-old-line-number="${line}"], [data-new-line-number="${line}"], `
+    + `[data-interop-line="${line}"], [data-interop-old-line="${line}"], [data-interop-new-line="${line}"]`;
+}
+
+function rowOf(node: HTMLElement) {
+  return node.closest<HTMLElement>(PROBE_ROW_SELECTOR) ?? node;
+}
+
+/** 属性 / 行 id 上完全没写行号的老 DOM（行号只在行号格文本里）才需要逐行扫，扫也扫有限行。 */
+function findLineRow(scope: ParentNode, line: number, side: LineSide) {
+  for (const node of scope.querySelectorAll<HTMLElement>(lineNumberSelector(line))) {
+    const row = rowOf(node);
+    if (rowLineNumber(row, side) === line) return row;
+  }
+  for (const row of [...scope.querySelectorAll<HTMLElement>(PROBE_ROW_SELECTOR)].slice(0, PROBE_ROW_LIMIT)) {
+    if (rowLineNumber(row, side) === line) return row;
+  }
+  return undefined;
+}
+
+/**
+ * 页面上这一行的行号是从哪儿读出来的（行 id / data-* 属性 / 行号格文本），以及页面到底有没有这一行。
+ * 只读不改：不展开折叠、不滚动，找不到就如实报 found=false。
+ */
+export function domLineSource(line: number, side: LineSide, root?: ParentNode | null): DomLineSource {
+  const scope = probeRoot(root);
+  if (!scope || !Number.isInteger(line) || line < 1) return { found: false };
+  const row = findLineRow(scope, line, side);
+  if (!row) return { found: false };
+  const from = lineCarriers(row, side, line);
+  const rowId = rowIdOf(row);
+  return {
+    found: true,
+    ...(rowId ? { rowId } : {}),
+    ...(from.length > 0 ? { from } : {}),
+    ...(rowId && LINE_CODE_ID.test(rowId) ? { lineCode: rowId } : {}),
+  };
+}
