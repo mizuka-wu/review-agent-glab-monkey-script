@@ -218,7 +218,7 @@ const COMMON_IDENTIFIERS = new Set([
 ]);
 
 /** 行内位置降级为全文评论的机器可读原因，写进 debugBus 便于统计还剩哪些场景。 */
-export type PublishBlockCode = 'no-diff' | 'path-not-in-diff' | 'line-not-in-diff' | 'full-file-only';
+export type PublishBlockCode = 'no-diff' | 'path-not-in-diff' | 'line-not-in-diff' | 'full-file-only' | 'diff-collapsed';
 
 export interface PublishPosition {
   publishable: boolean;
@@ -443,9 +443,10 @@ function matchFile(finding: Finding, index: FileIndex) {
 const reportedDowngrades = new Set<string>();
 const REPORTED_LIMIT = 400;
 
-/** 降级只在首次出现时记一条，评审流式更新会反复重算同一批 Finding，不能每次都刷日志。 */
+/** 降级只在首次出现时记一条，评审流式更新会反复重算同一批 Finding，不能每次都刷日志；计数则每次都累加。 */
 function blocked(finding: Finding, code: PublishBlockCode, reason: string): PublishPosition {
   const key = `${finding.id}:${code}:${finding.line}`;
+  debugBus.count(`publish-downgrade:${code}`);
   if (!reportedDowngrades.has(key)) {
     if (reportedDowngrades.size >= REPORTED_LIMIT) reportedDowngrades.clear();
     reportedDowngrades.add(key);
@@ -459,6 +460,14 @@ function blocked(finding: Finding, code: PublishBlockCode, reason: string): Publ
     ].join(' · '));
   }
   return { publishable: false, reason, reasonCode: code, finding };
+}
+
+/** 一个 diff 行都没有的原因：按 GitLab 自己给的标记说，别一律推给「文件过大」。 */
+function noDiffLinesReason(file: FileDiff): string {
+  if (file.tooLarge) return 'GitLab 判定这个文件的 diff 过大（too_large），没有返回内容';
+  if (file.collapsed) return '这个文件的 diff 被 GitLab 折叠了，没有返回内容';
+  if (file.renamedFile) return '这个文件只是重命名，没有内容变更';
+  return 'GitLab 没有返回这个文件的 diff 内容';
 }
 
 /** diff 行上真实存在的行号配对：added 行没有 oldLine，removed 行没有 newLine，context 行两者都有。 */
@@ -529,6 +538,19 @@ function verifiedLineMatch(
 }
 
 /**
+ * 行号命中了，但那一行的内容与 Finding 的代码片段对不上：normalizeFindings 在行号落不到 diff 时会把 side
+ * 随手填成 'old'，模型也常把删除行写成新增侧，这时同号码的另一侧才是真正的目标行。
+ * 没有片段可比时不算矛盾——只有行号可用，仍按行号发。
+ */
+function contradictsSnippet(file: FileDiff, match: AnchorMatch, finding: Finding) {
+  const snippet = searchSnippets(finding)[0];
+  if (!snippet) return false;
+  const rows = sliceLines(file, match.side, match.start, match.end);
+  if (rows.length === 0 || rows.length > snippet.length) return false;
+  return !rows.every((row, offset) => loose(row.text) === loose(snippet[offset]));
+}
+
+/**
  * 发布前把 Finding 的行号对到该文件真实的 diff 行号集合上：命中就直接发布；
  * 对不上（diff 折叠、上下文偏移、renamed path、侧别填错）就按 Finding 自身内容重新定位；
  * 内容也匹配不上才判为不可发布，避免把 422 留给 GitLab。
@@ -545,11 +567,18 @@ export function resolvePublishPosition(finding: Finding, files: FileDiff[]): Pub
       : blocked(finding, 'path-not-in-diff', `${finding.path} 不在当前 Diff 中，无法定位行内评论`);
   }
 
+  // 没有 diff 行就没有 line_code：GitLab 折叠 / 判为过大 / 纯重命名都落在这里，原因要说准
+  if (file.lines.length === 0) {
+    return blocked(finding, 'diff-collapsed', `${file.newPath}：${noDiffLinesReason(file)}，无法定位行内评论`);
+  }
+
   const fullFileOnly = finding.anchor?.source === 'full-file';
-  const lineHit = fullFileOnly
-    ? verifiedLineMatch(finding, file, bothSides('new'))
-    : directLineMatch(finding, file) ?? verifiedLineMatch(finding, file, [otherSide(finding.side)]);
-  if (lineHit) return resolved(finding, lineHit);
+  const direct = fullFileOnly ? undefined : directLineMatch(finding, file);
+  if (direct && !contradictsSnippet(file, direct, finding)) return resolved(finding, direct);
+
+  const verified = verifiedLineMatch(finding, file, fullFileOnly ? bothSides('new') : bothSides(finding.side));
+  if (verified) return resolved(finding, verified);
+  if (direct) return resolved(finding, direct);
 
   const match = relocate(finding, file);
   if (match) return resolved(finding, match);

@@ -42,6 +42,25 @@ function lineGroups(lines: DiffAnchorLine[], padding: number) {
 
 type DiffAnchorLine = number;
 
+/**
+ * 这一段里哪些行号真的落在 diff 行上：GitLab 只接受挂在 diff 行上的 position，
+ * 完整文件上下文为了可读性多带了 padding 行，模型锚到那些行只能降级成全文评论，所以明示可锚定区间。
+ */
+export function commentableRanges(anchors: number[], start: number, end: number): string {
+  const inside = [...new Set(anchors)].filter((line) => line >= start && line <= end).sort((left, right) => left - right);
+  const ranges: string[] = [];
+  let from = inside[0];
+  let to = inside[0];
+  for (const line of inside.slice(1)) {
+    if (line === to + 1) { to = line; continue; }
+    ranges.push(from === to ? `L${from}` : `L${from}-${to}`);
+    from = line;
+    to = line;
+  }
+  if (inside.length > 0) ranges.push(from === to ? `L${from}` : `L${from}-${to}`);
+  return ranges.join(', ');
+}
+
 export function fullFileContext(file: FileDiff, maxCharacters = 12_000, padding = 8) {
   if (!file.newFileContent) return '';
   const lines = splitFileLines(file.newFileContent);
@@ -56,7 +75,11 @@ export function fullFileContext(file: FileDiff, maxCharacters = 12_000, padding 
     const start = Math.max(1, group.start);
     const end = Math.min(lines.length, group.end);
     if (start > end) continue;
-    const chunk = `#### ${file.newPath} L${start}-${end}\n${lines.slice(start - 1, end)
+    const commentable = commentableRanges(anchors, start, end);
+    const hint = commentable
+      ? `（可锚定行：${commentable}；其余行只是上下文，行内评论挂不上去，不要对它们产出 finding）`
+      : '（本段没有可锚定行：只作上下文，不要对它产出 finding）';
+    const chunk = `#### ${file.newPath} L${start}-${end}${hint}\n${lines.slice(start - 1, end)
       .map((text, offset) => `${start + offset}: ${text}`)
       .join('\n')}`;
     if (used + chunk.length > maxCharacters) {

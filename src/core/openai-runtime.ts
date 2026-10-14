@@ -171,7 +171,7 @@ function chatSystemPrompt(language: 'zh-CN' | 'en-US') {
 
 export function reviewSystemPrompt(language: 'zh-CN' | 'en-US', strictness: string) {
   const lang = language === 'en-US' ? ' Write findings in English.' : ' 所有字段使用简体中文。';
-  return `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。existingCode 必须是目标文件中的连续原文；跨文件证据使用 evidence.path。主 Finding 应优先锚定 Diff 行，完整文件只能作为上下文或证据，不能单独作为可发布位置。${strictness}${lang}`;
+  return `你是代码评审引擎。输出严格 JSON：{"findings":[{"path","line","endLine","side","category","severity","confidence","title","content","evidence":[{"path","lines","quote"}],"existingCode","suggestionCode","comment"}]}。category 只能是 bug/security/performance/maintainability/test；severity 只能是 critical/high/medium/low；confidence 只能是 high/medium/low。existingCode 必须是目标文件中的连续原文；跨文件证据使用 evidence.path。主 Finding 应优先锚定 Diff 行，完整文件只能作为上下文或证据，不能单独作为可发布位置；完整文件段标题里标了「可锚定行」的区间才是能挂行内评论的行，line 必须落在其中，否则只能降级成全文评论。${strictness}${lang}`;
 }
 
 export class OpenAIRuntime {
