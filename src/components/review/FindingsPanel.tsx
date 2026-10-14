@@ -45,6 +45,8 @@ export interface FindingsPanelProps {
   publishPositionIssue: (finding: Finding) => string | undefined;
   /** 这条会发成行内评论（带 position）还是 MR 级全文评论。 */
   publishMode: (finding: Finding) => PublishMode;
+  /** 已发布但行内被 GitLab 拒了、实际发成全文评论的原因。 */
+  publishDowngrade: (finding: Finding) => string | undefined;
   /** 能否参与「一键发布 / 批量发布」：待处理草稿且评论内容非空。 */
   publishable: (finding: Finding) => boolean;
   /** 这条 Finding 是否给出「应用修复」入口：设置开启且是可修复候选。 */
@@ -82,7 +84,7 @@ export interface FindingsPanelProps {
 export function FindingsPanel(props: FindingsPanelProps) {
   const {
     findings, running, stages, warnings, error, modelReady, rulesOnlyMode, enabledRuleCount,
-    canPublish, publishDisabledReason, publishPositionIssue, publishMode, publishable,
+    canPublish, publishDisabledReason, publishPositionIssue, publishMode, publishDowngrade, publishable,
     canApprove, quickBusy, expandedId, selectedIds,
   } = props;
 
@@ -343,6 +345,7 @@ export function FindingsPanel(props: FindingsPanelProps) {
                     publishDisabledReason={publishDisabledReason}
                     publishMode={publishMode(finding)}
                     publishIssue={publishPositionIssue(finding)}
+                    publishDowngrade={publishDowngrade(finding)}
                     onApplyFix={props.fixable(finding) ? () => props.onApplyFix(finding) : undefined}
                     fixDisabledReason={props.fixDisabledReason}
                     onToggle={() => props.onToggleExpand(finding.id)}

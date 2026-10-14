@@ -5,7 +5,7 @@ import { DebugPanel, type DebugLogEntry } from './components/DebugPanel';
 import { normalizeFileDiff } from './core/diff';
 import { FindingsPanel, severityLabel, statusLabel } from './components/review/FindingsPanel';
 import {
-  buildSummaryComment, extractPartialFindings, parseModelFindings, publishedCountLabel,
+  buildSummaryComment, extractPartialFindings, parseModelFindings, publishDowngradeNote, publishedCountLabel,
   publishModeSummary, serializeFindingsExport,
 } from './core/findings';
 import { buildDelegationContext } from './core/delegation';
@@ -281,6 +281,14 @@ export default function App({ page }: AppProps) {
   const publishMode = useCallback((finding: Finding): PublishMode =>
     publishPositions.get(finding.id)?.publishable ? 'inline' : 'full',
   [publishPositions]);
+
+  /** 行内位置被 GitLab 拒了、实际发成全文评论的原因；发布时写入，卡片与 toast 都要说出来。 */
+  const [publishDowngrades, setPublishDowngrades] = useState<Record<string, string>>({});
+  const publishDowngrade = useCallback((finding: Finding) => publishDowngrades[finding.id], [publishDowngrades]);
+  const recordDowngrade = useCallback((id: string, reason: string | undefined) => {
+    if (!reason) return;
+    setPublishDowngrades((current) => ({ ...current, [id]: reason }));
+  }, []);
 
   const publishable = useCallback((finding: Finding) =>
     finding.status === 'draft' && Boolean(finding.comment.trim()), []);
@@ -951,6 +959,7 @@ export default function App({ page }: AppProps) {
     lastPartialCountRef.current = 0;
     lastPartialParseRef.current = 0;
     setSelectedFindings(new Set());
+    setPublishDowngrades({});
     addLog('info', 'review', `开始 Review（${scope === 'selection' ? '选区' : '整个 MR'} · ${settings.reviewMode}）`, `${scopedFiles.length} 个文件`);
 
     const session = mergeRequestRef && mrContext
@@ -1142,6 +1151,7 @@ export default function App({ page }: AppProps) {
     setFindings([]);
     setExpandedFinding('');
     setSelectedFindings(new Set());
+    setPublishDowngrades({});
     setModelStream('');
     setModelThinking('');
     setShowThinking(false);
@@ -1371,10 +1381,10 @@ export default function App({ page }: AppProps) {
     if (targets.length === 0) return;
     setQuickBusy(true);
     setToast(`正在发布 ${targets.length} 条评论…`, 'loading');
-    const { inline, full, published, failed } = await publishEach(mergeRequestRef, targets);
+    const { inline, full, published, failed, downgraded } = await publishEach(mergeRequestRef, targets);
     setQuickBusy(false);
     setToast(
-      `已发布 ${publishedCountLabel(published, inline, full)}${failed > 0 ? `，失败 ${failed} 条` : ''}`,
+      `已发布 ${publishedCountLabel(published, inline, full)}${failed > 0 ? `，失败 ${failed} 条` : ''}${publishDowngradeNote(downgraded)}`,
       failed > 0 && published === 0 ? 'error' : 'default',
     );
   };
@@ -1474,9 +1484,10 @@ export default function App({ page }: AppProps) {
     };
   };
 
-  /** 逐条发布（行内不可用自动降级全文），返回各形态条数并回写状态。 */
+  /** 逐条发布（行内不可用自动降级全文），返回各形态条数、降级原因并回写状态。 */
   const publishEach = async (ref: MergeRequestRef, targets: Finding[]) => {
     const succeeded = new Set<string>();
+    const downgraded: { path: string; line: number; reason: string }[] = [];
     let inline = 0;
     let full = 0;
     for (const finding of targets) {
@@ -1484,6 +1495,10 @@ export default function App({ page }: AppProps) {
         const published = await api.publishComment(ref, finding, finding.comment, buildPosition(finding));
         succeeded.add(finding.id);
         if (published.mode === 'inline') inline += 1; else full += 1;
+        if (published.downgrade) {
+          recordDowngrade(finding.id, published.downgrade.reason);
+          downgraded.push({ path: finding.path, line: finding.line, reason: published.downgrade.reason });
+        }
       } catch (error) {
         addLog('error', 'publish', `发布失败 ${finding.path}:${finding.line}`, error instanceof Error ? error.message : String(error));
       }
@@ -1493,7 +1508,7 @@ export default function App({ page }: AppProps) {
       if (!attempted.has(finding.id)) return finding;
       return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
     }));
-    return { inline, full, published: succeeded.size, failed: targets.length - succeeded.size };
+    return { inline, full, published: succeeded.size, failed: targets.length - succeeded.size, downgraded };
   };
 
   const confirmPublish = async () => {
@@ -1503,8 +1518,13 @@ export default function App({ page }: AppProps) {
       const published = await api.publishComment(mergeRequestRef, publishFinding, publishBody, buildPosition(publishFinding));
       persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'published' as const, comment: publishBody } : finding));
       setPublishFinding(undefined);
-      setToast(published.mode === 'inline' ? '行级 Discussion 已发布' : '行内不可用，已改为全文评论');
-      addLog('info', 'publish', `已发布${published.mode === 'inline' ? '行内' : '全文'}评论 ${publishFinding.path}:${publishFinding.line}`);
+      recordDowngrade(publishFinding.id, published.downgrade?.reason);
+      setToast(published.mode === 'inline'
+        ? '行级 Discussion 已发布'
+        : published.downgrade
+          ? `行内失败：${published.downgrade.reason}，已降级全文评论`
+          : '该条没有可用的 diff 行号，已发布为全文评论');
+      addLog('info', 'publish', `已发布${published.mode === 'inline' ? '行内' : '全文'}评论 ${publishFinding.path}:${publishFinding.line}`, published.downgrade?.reason);
     } catch (error) {
       const code = error instanceof GitLabApiError ? `${error.code}: ` : '';
       const message = error instanceof Error ? error.message : String(error);
@@ -1535,15 +1555,19 @@ export default function App({ page }: AppProps) {
   const batchConfirmPublish = async () => {
     if (publishableSelected.length === 0 || !mergeRequestRef || !mrContext || !canPublish) return;
     setBatchPublishing(true);
-    const { inline, full, published, failed } = await publishEach(mergeRequestRef, publishableSelected);
+    const { inline, full, published, failed, downgraded } = await publishEach(mergeRequestRef, publishableSelected);
     setSelectedFindings(new Set());
     setBatchConfirm(false);
     setBatchPublishing(false);
     setToast(
-      `批量发布完成：${published} 成功${full > 0 ? `（${publishModeSummary(inline, full)}）` : ''}${failed > 0 ? `，${failed} 失败` : ''}`,
+      `批量发布完成：${published} 成功${full > 0 ? `（${publishModeSummary(inline, full)}）` : ''}${failed > 0 ? `，${failed} 失败` : ''}`
+      + publishDowngradeNote(downgraded),
       failed > 0 && published === 0 ? 'error' : 'default',
     );
-    addLog('info', 'publish', `批量发布 ${published} 成功（行内 ${inline} · 全文 ${full}）/ ${failed} 失败`);
+    addLog('info', 'publish', `批量发布 ${published} 成功（行内 ${inline} · 全文 ${full}）/ ${failed} 失败`,
+      downgraded.length > 0
+        ? downgraded.map((item) => `${item.path}:${item.line} → ${item.reason}`).join('\n')
+        : undefined);
   };
 
   // --- Apply fix：模型生成补丁 → 用户确认 → 提交回 MR 源分支（与发布链路互不干涉）---
@@ -2016,6 +2040,7 @@ export default function App({ page }: AppProps) {
                   publishPositionIssue={publishPositionIssue}
                   publishMode={publishMode}
                   publishable={publishable}
+                  publishDowngrade={publishDowngrade}
                   fixable={fixable}
                   fixDisabledReason={fixDisabledReason}
                   onApplyFix={(finding) => void openApplyFix(finding)}

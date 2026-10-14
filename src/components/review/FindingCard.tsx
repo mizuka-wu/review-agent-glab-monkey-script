@@ -28,6 +28,8 @@ interface FindingCardProps {
   publishMode: PublishMode;
   /** 行号无法落到当前 Diff 的原因；此时降级为全文评论，直接显示在卡片上。 */
   publishIssue?: string;
+  /** 已发布但行内被 GitLab 拒了、实际发成全文评论的原因；不再静默降级。 */
+  publishDowngrade?: string;
   /** 「应用修复」入口：设置关闭或这条不是可修复候选时不传，按钮整个不渲染。 */
   onApplyFix?: () => void;
   /** 入口可见但当前点了必失败的原因（缺模型配置、不是 MR 页面等）。 */
@@ -67,7 +69,7 @@ function ActionButton({ icon, children, onClick, disabled, title, primary, dange
 }
 
 export function FindingCard({
-  finding, expanded, selected, publishDisabled, publishDisabledReason, publishMode, publishIssue,
+  finding, expanded, selected, publishDisabled, publishDisabledReason, publishMode, publishIssue, publishDowngrade,
   onApplyFix, fixDisabledReason,
   onToggle, onSelect, onLocate, onCopy, onPublish, onIgnore, onMarkFixed, onEdit,
 }: FindingCardProps) {
@@ -239,6 +241,11 @@ export function FindingCard({
               {!inline && (
                 <div style={{ marginTop: 8 }}>
                   <Badge text={`将发布为全文评论${publishIssue ? `：${publishIssue}` : '（无 diff 位置）'}`} color="warning" />
+                </div>
+              )}
+              {publishDowngrade && (
+                <div style={{ marginTop: 8 }}>
+                  <Badge text={`行内失败：${publishDowngrade}，已降级全文评论`} color="warning" />
                 </div>
               )}
               {finding.anchor?.corrected && (

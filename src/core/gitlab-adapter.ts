@@ -15,6 +15,7 @@ import type {
   MrCommit,
   PageContext,
   PositionLineRef,
+  PublishDowngrade,
   RecentMergeRequest,
   PublishedComment,
   PublishedDiscussion,
@@ -210,6 +211,31 @@ const POSITION_REJECTED = new Set([400, 409, 422]);
 
 function isPositionRejection(error: unknown): error is GitLabApiError {
   return error instanceof GitLabApiError && POSITION_REJECTED.has(error.status);
+}
+
+/**
+ * GitLab 只回一句 `line_code can't be blank` / `position must be a valid json schema`，用户看不出所以然，
+ * 按状态码翻成人话，再把原文截短附在后面便于排查。
+ */
+export function positionRejectionReason(error: GitLabApiError): string {
+  const head = error.status === 409
+    ? 'MR 已更新，这条 Finding 的 diff 位置已过期'
+    : error.status === 422
+      ? '行号不在当前 Diff 范围内'
+      : 'GitLab 拒绝了这个行内位置';
+  // 原始报错是 `GitLab API 400：{"message":"400 Bad request - Note {...}"}`：剥掉包装，只留 GitLab 自己那句话
+  const raw = error.message.replace(/^GitLab API \d+：/, '').trim();
+  let detail = raw;
+  try {
+    const parsed = JSON.parse(raw) as { message?: unknown };
+    if (parsed.message !== undefined) {
+      detail = typeof parsed.message === 'string' ? parsed.message : JSON.stringify(parsed.message);
+    }
+  } catch {
+    // 不是 JSON（网络层兜底文案等）就原样用
+  }
+  detail = detail.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return detail ? `${head}（${detail}）` : head;
 }
 
 export class GitLabAdapter {
@@ -462,6 +488,7 @@ export class GitLabAdapter {
   /**
    * 发布一条评论：有 diff 行号就创建行内 Discussion；没有行号、或行内被 GitLab 拒
    * （400/409/422 等 position 错误）就降级为 MR 级全文评论重发一次，发布不会因为行号失败。
+   * 降级不静默：原因写进 debugBus 计数与返回值，UI 直接告诉用户为什么没挂到行上。
    */
   async publishComment(
     ref: MergeRequestRef,
@@ -469,16 +496,19 @@ export class GitLabAdapter {
     body: string,
     position?: DiscussionPosition,
   ): Promise<PublishedComment> {
+    let downgrade: PublishDowngrade | undefined;
     if (position) {
       try {
         return { ...(await this.createDiscussion(ref, { body, position })), mode: 'inline' };
       } catch (error) {
         if (!isPositionRejection(error)) throw error;
+        downgrade = { reason: positionRejectionReason(error), status: error.status };
+        debugBus.count(`publish-inline-rejected:${error.status}`);
         debugBus.log('warn', 'publish', `行内位置被 GitLab 拒绝（HTTP ${error.status}），改为全文评论 ${finding.path}:${finding.line}`, error.message);
       }
     }
     const discussion = await this.createDiscussion(ref, { body: buildFullTextComment(finding, body) });
-    return { ...discussion, mode: 'full' };
+    return { ...discussion, mode: 'full', ...(downgrade ? { downgrade } : {}) };
   }
 
   /** 一键 Approve 当前 MR。 */

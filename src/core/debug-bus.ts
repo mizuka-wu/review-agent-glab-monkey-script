@@ -141,6 +141,7 @@ class DebugBus {
   private networkEntries: DebugNetworkEntry[] = [];
   private promptEntries: DebugPromptEntry[] = [];
   private exchangeEntries: DebugExchangeEntry[] = [];
+  private counters = new Map<string, number>();
   private revision = 0;
   private readonly snapshots = new Set<DebugSnapshotProvider>();
   private readonly listeners = new Set<() => void>();
@@ -249,6 +250,26 @@ class DebugBus {
     this.emitChange();
   }
 
+  /**
+   * 计数桶：「某个原因发生了多少次」这类聚合，逐条日志翻不动，状态面板一眼能看出主要失败形态。
+   * key 自己带命名空间（如 publish-downgrade:line-not-in-diff）。
+   */
+  count(key: string, delta = 1): number {
+    const next = (this.counters.get(key) ?? 0) + delta;
+    this.counters.set(key, next);
+    this.emitChange();
+    return next;
+  }
+
+  getCounters(): Record<string, number> {
+    return Object.fromEntries([...this.counters.entries()].sort(([left], [right]) => left.localeCompare(right)));
+  }
+
+  resetCounters(): void {
+    this.counters.clear();
+    this.emitChange();
+  }
+
   registerSnapshot(provider: DebugSnapshotProvider): () => void {
     this.snapshots.add(provider);
     return () => this.snapshots.delete(provider);
@@ -263,6 +284,8 @@ class DebugBus {
         merged.snapshotError = error instanceof Error ? error.message : String(error);
       }
     }
+    const counters = this.getCounters();
+    if (Object.keys(counters).length > 0) merged.counters = counters;
     return merged;
   }
 
@@ -287,6 +310,7 @@ class DebugBus {
     if (scope === 'all' || scope === 'network') this.networkEntries = [];
     if (scope === 'all' || scope === 'prompts') this.promptEntries = [];
     if (scope === 'all' || scope === 'exchanges') this.exchangeEntries = [];
+    if (scope === 'all') this.counters.clear();
     this.emitChange();
   }
 
@@ -312,6 +336,7 @@ class DebugBus {
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
       url: typeof location !== 'undefined' ? location.href : '',
       snapshot: this.snapshot(),
+      counters: this.getCounters(),
       logs: this.logs,
       network: this.networkEntries,
       prompts: this.promptEntries,
@@ -329,6 +354,7 @@ class DebugBus {
         storage.setItem(PERSIST_KEY, JSON.stringify({
           logs: this.logs.slice(-200),
           network: this.networkEntries.slice(-80),
+          counters: this.getCounters(),
         }));
       } catch {
         // 存储满时放弃持久化
@@ -342,9 +368,10 @@ class DebugBus {
     try {
       const raw = storage.getItem(PERSIST_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { logs?: DebugLogEntry[]; network?: DebugNetworkEntry[] };
+      const parsed = JSON.parse(raw) as { logs?: DebugLogEntry[]; network?: DebugNetworkEntry[]; counters?: Record<string, number> };
       this.logs = Array.isArray(parsed.logs) ? parsed.logs : [];
       this.networkEntries = Array.isArray(parsed.network) ? parsed.network : [];
+      this.counters = new Map(Object.entries(parsed.counters ?? {}).filter(([, value]) => Number.isFinite(value)));
     } catch {
       // 损坏的调试缓存直接丢弃
     }

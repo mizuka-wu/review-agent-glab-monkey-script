@@ -253,6 +253,15 @@ export function publishedCountLabel(count: number, inline: number, full: number)
   return `${count} 条评论（${publishModeSummary(inline, full)}）`;
 }
 
+/**
+ * 行内被 GitLab 拒了、实际发成全文评论的汇总后缀：发布结果里必须点名条数与原因，
+ * 否则用户只看到「已发布」，分不清是数据本身没有行号还是脚本发错了位置。
+ */
+export function publishDowngradeNote(downgraded: { reason: string }[]): string {
+  if (downgraded.length === 0) return '';
+  return `；${downgraded.length} 条行内失败已降级全文：${downgraded[0].reason}`;
+}
+
 /** 全文评论不带 position，正文开头补上 path:line，读者才知道说的是哪一处。 */
 export function buildFullTextComment(finding: Finding, body: string): string {
   return `> \`${findingLocation(finding)}\` · 全文评论（无可用行内位置）\n\n${body}`;
