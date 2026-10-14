@@ -60,6 +60,25 @@ describe('debugBus', () => {
     expect(debugBus.snapshot().counters).toBeUndefined();
   });
 
+  it('logToConsole：console 打整段现场，面板留完整一条，attachConsole 不再重复收一遍', () => {
+    debugBus.clear();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    debugBus.attachConsole();
+
+    debugBus.logToConsole('warn', 'publish', '[inline-fallback] headline', 'reason: x\nposition[y]=z');
+
+    expect(warn).toHaveBeenCalledWith('[inline-fallback] headline\nreason: x\nposition[y]=z');
+    expect(debugBus.getLogs()).toHaveLength(1);
+    expect(debugBus.getLogs()[0]).toMatchObject({
+      level: 'warn', source: 'publish', message: '[inline-fallback] headline', detail: 'reason: x\nposition[y]=z',
+    });
+
+    console.warn('页面自己的告警');
+    expect(debugBus.getLogs().some((entry) => entry.source === 'console')).toBe(true);
+    expect(debugBus.getLogs()).toHaveLength(2);
+    warn.mockRestore();
+  });
+
   it('exports a bundle and clears scopes independently', () => {
     debugBus.clear();
     debugBus.log('warn', 'test', 'keep me');

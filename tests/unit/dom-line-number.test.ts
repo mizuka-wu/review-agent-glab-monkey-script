@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  ancestorLineNumber, attrLineNumber, cellLineNumber, idLineNumber, plainLineNumber, rowLineNumber, sideOfNode,
+  ancestorLineNumber, attrLineNumber, cellLineNumber, diffViewKind, domLineSource, idLineNumber, plainLineNumber,
+  rowLineNumber, sideOfNode,
 } from '../../src/core/dom-line-number';
 import { highlightFindingOnPage } from '../../src/core/finding-highlight';
 import { captureCodeSelection, selectionLabel } from '../../src/core/selection';
@@ -385,5 +386,63 @@ describe('划词与定位共用同一套行号读法', () => {
     });
 
     expect(outcome.highlighted).toEqual([gridRow('33_48')]);
+  });
+});
+
+describe('降级日志取证：视图类型与行号来源', () => {
+  it('Rapid Diffs / 经典 diff / 空页面各报各的视图类型', () => {
+    mount(rapidDiff);
+    expect(diffViewKind()).toBe('rapid');
+    mount(gridDiff);
+    expect(diffViewKind()).toBe('classic');
+    mount(lcSpanDiff);
+    expect(diffViewKind()).toBe('classic');
+    mount('<div class="mr-description">没有 diff</div>');
+    expect(diffViewKind()).toBe('unknown');
+  });
+
+  it('19.x grid：行 id 就是 line_code，行号来源逐个属性列出来', () => {
+    mount(gridDiff);
+    const source = domLineSource(16, 'new');
+    expect(source.found).toBe(true);
+    expect(source.rowId).toBe('52007ba0_16_16');
+    expect(source.lineCode).toBe('52007ba0_16_16');
+    expect(source.from).toContain('id#52007ba0_16_16');
+    expect(source.from).toContain('data-interop-new-line=16');
+    expect(source.from).toContain('data-linenumber=16');
+  });
+
+  it('老版 GitLab：行号只在代码格的 span id 上，也照样能取到来源', () => {
+    mount(lcSpanDiff);
+    expect(domLineSource(11, 'new')).toMatchObject({ found: true, from: ['id#LC11'] });
+  });
+
+  it('Rapid Diffs：删除行按旧侧读数，行 id 不是 line_code 就不硬说', () => {
+    mount(rapidDiff);
+    const source = domLineSource(19, 'old');
+    expect(source.found).toBe(true);
+    expect(source.rowId).toBe('line_5d6d6495c_20');
+    expect(source.lineCode).toBeUndefined();
+    expect(source.from).toContain('data-line-number=19');
+  });
+
+  it('行号只写在行号格文本里的老 DOM：逐行兜底扫，来源报 gutter-text', () => {
+    mount(`
+      <div class="diff-file" data-file-path="src/legacy.rb"><table class="diff-table"><tbody>
+        <tr class="line_holder">
+          <td class="old_line line_numbers">20</td>
+          <td class="line_content old">-  const fee = 0.1;</td>
+        </tr>
+      </tbody></table></div>`);
+    expect(domLineSource(20, 'old')).toEqual({ found: true, from: ['gutter-text'] });
+    expect(domLineSource(20, 'new')).toEqual({ found: false });
+  });
+
+  it('页面上没有这一行（折叠 / 未渲染）就如实报找不到，不编造来源', () => {
+    mount(gridDiff);
+    expect(domLineSource(9999, 'new')).toEqual({ found: false });
+    expect(domLineSource(0, 'new')).toEqual({ found: false });
+    mount('');
+    expect(domLineSource(16, 'new')).toEqual({ found: false });
   });
 });
