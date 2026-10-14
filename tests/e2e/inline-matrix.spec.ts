@@ -215,6 +215,9 @@ interface MeasuredRow {
   truthNew: number | null;
   readOld: number | null;
   readNew: number | null;
+  /** 代码格自己的读数：Rapid Diffs 里行号格是代码格的兄弟节点，这一层最容易串侧别。 */
+  cellOld: number | null;
+  cellNew: number | null;
   long: boolean;
   text: string;
 }
@@ -261,6 +264,8 @@ const measureRows = `
       path: truth.path, change, truthOld: truth.old, truthNew: truth.new,
       readOld: n(window.__ra.rowLineNumber(row, 'old')),
       readNew: n(window.__ra.rowLineNumber(row, 'new')),
+      cellOld: n(window.__ra.cellLineNumber(content, 'old', row)),
+      cellNew: n(window.__ra.cellLineNumber(content, 'new', row)),
       long: (content?.textContent || '').length > 400,
       text: (content?.textContent || '').trim().slice(0, 40),
     });
@@ -316,6 +321,11 @@ test.describe('行内评论矩阵（真实 GitLab）', () => {
       const wrong = rows.filter((row) => row.readOld !== row.truthOld || row.readNew !== row.truthNew);
       expect(wrong.map((row) => `${view} ${row.path} ${row.change} truth=${row.truthOld}/${row.truthNew} read=${row.readOld}/${row.readNew} "${row.text}"`),
         `${view} 视图有行号读错的行`).toEqual([]);
+
+      // 代码格也要读得出来（划词落在代码上时先读行容器、再读格子），且增/删行不存在的另一侧必须是空
+      const wrongCell = rows.filter((row) => row.cellOld !== row.truthOld || row.cellNew !== row.truthNew);
+      expect(wrongCell.map((row) => `${view} ${row.path} ${row.change} truth=${row.truthOld}/${row.truthNew} cell=${row.cellOld}/${row.cellNew} "${row.text}"`),
+        `${view} 视图有代码格行号读错的行`).toEqual([]);
 
       // 三种 diff 行形态都要真的量到，否则「全对」没有意义
       for (const change of ['added', 'removed', 'context']) {
