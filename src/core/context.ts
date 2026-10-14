@@ -105,13 +105,27 @@ export function mrCommitsContext(
   ].join('\n');
 }
 
+/**
+ * 只按路径（加一个 generated 标记）就能判定的省略原因。
+ * 完整文件读取那一步手上只有路径，复用这一套；不要往里塞依赖 diff 内容的判定。
+ */
+export function pathOmissionReason(
+  path: string,
+  generated = false,
+): NonNullable<ReviewContextFile['omittedReason']> | undefined {
+  if (generated || generatedPattern.test(path)) return 'generated';
+  if (lockfilePattern.test(path)) return 'lockfile';
+  if (secretPattern.test(path)) return 'secret';
+  if (!path || path === '/dev/null') return 'unsupported';
+  return undefined;
+}
+
 export function fileOmissionReason(file: FileDiff): NonNullable<ReviewContextFile['omittedReason']> | undefined {
   if (file.binary) return 'binary';
-  if (file.generated || generatedPattern.test(file.newPath)) return 'generated';
-  if (lockfilePattern.test(file.newPath)) return 'lockfile';
-  if (secretPattern.test(file.newPath)) return 'secret';
-  if (!file.newPath || file.newPath === '/dev/null') return 'unsupported';
-  return undefined;
+  // GitLab 折叠 / 判为过大的文件不给 diff 内容（纯重命名同样是空 diff）：一行都挂不上行内评论，
+  // 喂给模型只会换来注定降级的 finding
+  if (file.collapsed || file.tooLarge || !file.diff.trim()) return 'collapsed';
+  return pathOmissionReason(file.newPath, file.generated);
 }
 
 /** 选区当作单文件 diff 参与评审；行号未知时不带行号，不编造行号。 */

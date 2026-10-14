@@ -1,6 +1,6 @@
 import { anchorFindings } from './anchor';
 import {
-  buildReviewContext, fileOmissionReason, includedFiles, mrCommitsContext, mrDescriptionContext,
+  buildReviewContext, includedFiles, mrCommitsContext, mrDescriptionContext, pathOmissionReason,
 } from './context';
 import { fullFileContext, loadFullFiles, mergeFullFiles, type FullFileLoader } from './full-file';
 import { parseModelFindings } from './findings';
@@ -49,16 +49,9 @@ function dedupe(findings: Finding[]) {
   });
 }
 
+/** 完整文件只有路径可判：lockfile / secret / generated / /dev/null 不读，其余都读。 */
 function fullFileEligible(path: string) {
-  return !fileOmissionReason({
-    oldPath: path,
-    newPath: path,
-    diff: '',
-    newFile: false,
-    deletedFile: false,
-    renamedFile: false,
-    lines: [],
-  });
+  return !pathOmissionReason(path);
 }
 
 function mergeContextFiles(context: ReviewContext, snapshots: FullFileSnapshot[]): ReviewContext['files'] {

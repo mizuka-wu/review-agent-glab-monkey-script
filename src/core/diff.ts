@@ -3,13 +3,25 @@ import { fullFileContext } from './full-file';
 
 const HUNK_HEADER = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/;
 
+/**
+ * diff 末尾的换行会切出一个空串，它不是 diff 行：当成 context 会凭空多出一行
+ * （行号 = 最后一个 hunk 行的下一行），拿它发 position 一定被 GitLab 以
+ * `line_code can't be blank` 400 拒掉。中间的空串仍按 context 处理——部分 GitLab
+ * 版本会把空上下文行的前导空格吃掉。
+ */
+function diffRows(diff: string): string[] {
+  const rows = diff.split(/\r?\n/);
+  if (rows.at(-1) === '') rows.pop();
+  return rows;
+}
+
 export function parseUnifiedDiff(diff: string): DiffLine[] {
   const lines: DiffLine[] = [];
   let oldLine = 0;
   let newLine = 0;
   let hunkId = '';
 
-  for (const rawLine of diff.split(/\r?\n/)) {
+  for (const rawLine of diffRows(diff)) {
     const header = HUNK_HEADER.exec(rawLine);
     if (header) {
       oldLine = Number(header[1]);
@@ -43,7 +55,9 @@ export function normalizeFileDiff(input: {
   new_file?: boolean;
   deleted_file?: boolean;
   renamed_file?: boolean;
-  generated_file?: boolean;
+  generated_file?: boolean | null;
+  collapsed?: boolean | null;
+  too_large?: boolean | null;
 }): FileDiff {
   return {
     oldPath: input.old_path,
@@ -52,6 +66,9 @@ export function normalizeFileDiff(input: {
     newFile: Boolean(input.new_file),
     deletedFile: Boolean(input.deleted_file),
     renamedFile: Boolean(input.renamed_file),
+    generated: Boolean(input.generated_file),
+    collapsed: Boolean(input.collapsed),
+    tooLarge: Boolean(input.too_large),
     lines: parseUnifiedDiff(input.diff ?? ''),
   };
 }

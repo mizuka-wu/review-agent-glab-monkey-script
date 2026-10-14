@@ -77,6 +77,10 @@ export interface FileDiff {
   newFileContent?: string;
   binary?: boolean;
   generated?: boolean;
+  /** GitLab 自己标的「diff 被折叠」（用户要在页面上点开才渲染），此时接口不给 diff 内容。 */
+  collapsed?: boolean;
+  /** GitLab 自己标的「diff 过大」：超出上限，接口不给 diff 内容，任何行都挂不上行内评论。 */
+  tooLarge?: boolean;
   newFile: boolean;
   deletedFile: boolean;
   renamedFile: boolean;
@@ -324,13 +328,22 @@ export interface PublishedDiscussion {
   deduplicated?: boolean;
 }
 
+/** 行内位置被 GitLab 拒绝后降级为全文评论的原因；用户要能看出是数据问题还是脚本问题。 */
+export interface PublishDowngrade {
+  reason: string;
+  status?: number;
+}
+
 export interface PublishedComment extends PublishedDiscussion {
   mode: PublishMode;
+  /** 只有「本来要发行内、被 GitLab 拒了才改全文」时才有值；一开始就判定不可行内的走 publishable=false。 */
+  downgrade?: PublishDowngrade;
 }
 
 export interface ReviewContextFile extends FileDiff {
   included: boolean;
-  omittedReason?: 'binary' | 'generated' | 'lockfile' | 'secret' | 'unsupported' | 'budget';
+  /** collapsed = GitLab 没返回该文件的 diff（超出 diff 上限被折叠），任何行都挂不上行内评论。 */
+  omittedReason?: 'binary' | 'generated' | 'lockfile' | 'secret' | 'unsupported' | 'budget' | 'collapsed';
 }
 
 export interface ReviewContext {
