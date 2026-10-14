@@ -59,6 +59,48 @@ const gridDiff = `
   </div></div>
 </div>`;
 
+/**
+ * GitLab 19.x 默认渲染的 Rapid Diffs（真实 DOM 抄样）：文件容器是自定义元素 <diff-file data-file-data="{...json...}">，
+ * 行是 tr.rd-hunk-lines，两个行号格 td.rd-line-number 用 data-position 分侧、行号写在里面的 a.rd-line-link 上，
+ * 代码格 td.rd-line-content 是行号格的兄弟节点，自己不带任何行号；增删行的另一侧格子是空的。
+ */
+const rapidDiff = `
+<diff-file class="rd-diff-file-component" data-testid="rd-diff-file" id="5d6d6495c"
+  data-file-data="{&quot;viewer&quot;:&quot;text_inline&quot;,&quot;old_path&quot;:&quot;matrix/modified.ts&quot;,&quot;new_path&quot;:&quot;matrix/modified.ts&quot;}">
+  <article class="rd-diff-file" data-virtual="text_inline"><table><tbody>
+    <tr class="rd-hunk-header rd-hunk-header-inline" data-hunk-header="">
+      <td class="rd-hunk-header-buttons" colspan="2"><button type="button" class="rd-expand-lines-button" data-click="expandLines" data-expand-direction="up" aria-label="Show lines before"></button></td>
+      <td class="rd-hunk-header-content">@@ -17,7 +17,7 @@ export const base16 = 16;</td>
+    </tr>
+    <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_17">
+      <td class="rd-line-number" data-position="old"><a class="rd-line-link" data-line-number="17" aria-label="17" href="#line_5d6d6495c_17"></a></td>
+      <td class="rd-line-number" data-position="new"><a class="rd-line-link" data-line-number="18" aria-label="18" href="#line_5d6d6495c_17"></a></td>
+      <td class="rd-line-content" data-gfm-source="true"><pre class="rd-line-text">export const base17 = 17;</pre></td>
+    </tr>
+    <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_A19">
+      <td class="rd-line-number rd-line-number-empty" data-change="added" data-position="old"></td>
+      <td class="rd-line-number" data-change="added" data-position="new"><a class="rd-line-link" data-line-number="19" aria-label="19" href="#line_5d6d6495c_A19"></a></td>
+      <td class="rd-line-content" data-change="added" data-gfm-source="true"><pre class="rd-line-text">export const inserted = 19;</pre></td>
+    </tr>
+    <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_20">
+      <td class="rd-line-number" data-change="removed" data-position="old"><a class="rd-line-link" data-line-number="19" aria-label="19" href="#line_5d6d6495c_20"></a></td>
+      <td class="rd-line-number rd-line-number-empty" data-change="removed" data-position="new"></td>
+      <td class="rd-line-content" data-change="removed" data-gfm-source="true"><pre class="rd-line-text">export const legacy = 19;</pre></td>
+    </tr>
+  </tbody></table></article>
+</diff-file>`;
+
+/** 只有一格无侧别行号的简化 DOM：那一格按 GitLab 约定属于新侧，不能当成旧侧行号。 */
+const unmarkedGutterDiff = `
+<div class="diff-file" data-file-path="src/checkout.ts">
+  <table class="diff-table"><tbody>
+    <tr class="line_holder" data-line-number="21">
+      <td class="diff-td line_numbers">21</td>
+      <td class="line_content">const fee = 0.2;</td>
+    </tr>
+  </tbody></table>
+</div>`;
+
 /** side-by-side：行容器上的 data-line-number 是新侧行号，不能套到旧侧。 */
 const parallelDiff = `
 <div class="diff-file" data-file-path="src/checkout.ts">
@@ -190,9 +232,66 @@ describe('side-by-side 的侧别隔离', () => {
     const row = document.querySelector<HTMLElement>('tr')!;
 
     expect(ancestorLineNumber(cell, 'old', row)).toBeUndefined();
-    expect(cellLineNumber(cell, 'old', row)).toBeUndefined();
     // 行容器上那个无侧别属性按 GitLab 的约定是新侧行号，只在行级读取时生效
     expect(rowLineNumber(row, 'new')).toBe(21);
+  });
+
+  it('无侧别的行号格不会被当成旧侧行号', () => {
+    mount(unmarkedGutterDiff);
+    const cell = document.querySelector<HTMLElement>('.line_content')!;
+    const row = document.querySelector<HTMLElement>('tr')!;
+
+    expect(cellLineNumber(cell, 'old', row)).toBeUndefined();
+    expect(rowLineNumber(row, 'new')).toBe(21);
+  });
+
+  it('代码格自己不带行号时回到带侧别标记的兄弟行号格', () => {
+    mount(parallelDiff);
+    const cell = document.querySelector<HTMLElement>('.line_content.old')!;
+    const row = document.querySelector<HTMLElement>('tr')!;
+
+    expect(cellLineNumber(cell, 'old', row)).toBe(20);
+    expect(cellLineNumber(document.querySelector<HTMLElement>('.line_content.new')!, 'new', row)).toBe(21);
+  });
+});
+
+describe('19.x Rapid Diffs（默认渲染）', () => {
+  it('两个行号格按 data-position 分侧，上下文行两侧号码不同也各读各的', () => {
+    mount(rapidDiff);
+    const row = document.querySelector<HTMLElement>('#line_5d6d6495c_17')!;
+
+    expect(rowLineNumber(row, 'old')).toBe(17);
+    expect(rowLineNumber(row, 'new')).toBe(18);
+    expect(sideOfNode(row.querySelector('.rd-line-number[data-position="old"]'))).toBe('old');
+    expect(sideOfNode(row.querySelector('.rd-line-number[data-position="new"]'))).toBe('new');
+  });
+
+  it('增删行只有存在的那一侧有行号，另一侧读不出来而不是拿对侧的号顶上', () => {
+    mount(rapidDiff);
+    const added = document.querySelector<HTMLElement>('#line_5d6d6495c_A19')!;
+    const removed = document.querySelector<HTMLElement>('#line_5d6d6495c_20')!;
+
+    expect(rowLineNumber(added, 'new')).toBe(19);
+    expect(rowLineNumber(added, 'old')).toBeUndefined();
+    expect(rowLineNumber(removed, 'old')).toBe(19);
+    expect(rowLineNumber(removed, 'new')).toBeUndefined();
+  });
+
+  it('代码格是行号格的兄弟节点，行号按侧别回到行容器上取', () => {
+    mount(rapidDiff);
+    const row = document.querySelector<HTMLElement>('#line_5d6d6495c_17')!;
+    const cell = row.querySelector<HTMLElement>('.rd-line-content')!;
+
+    expect(cellLineNumber(cell, 'new', row)).toBe(18);
+    expect(cellLineNumber(cell, 'old', row)).toBe(17);
+  });
+
+  it('hunk 头不是 diff 行，读不出行号', () => {
+    mount(rapidDiff);
+    const header = document.querySelector<HTMLElement>('.rd-hunk-header')!;
+
+    expect(rowLineNumber(header, 'new')).toBeUndefined();
+    expect(rowLineNumber(header, 'old')).toBeUndefined();
   });
 });
 

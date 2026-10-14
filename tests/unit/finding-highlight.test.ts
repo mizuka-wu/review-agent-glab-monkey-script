@@ -35,6 +35,41 @@ const realDiff = `
   </div>
 </div>`;
 
+/**
+ * GitLab 19.x 默认渲染的 Rapid Diffs（真实 DOM 抄样）：文件容器是自定义元素 <diff-file>，路径写在 data-file-data 的 JSON 里，
+ * 行是 tr.rd-hunk-lines，行号在两个 td.rd-line-number[data-position] 里的 a.rd-line-link 上。
+ */
+const rapidDiff = `
+<diff-file class="rd-diff-file-component" data-testid="rd-diff-file" id="5d6d6495c"
+  data-file-data='{"viewer":"text_inline","old_path":"matrix/modified.ts","new_path":"matrix/modified.ts"}'>
+  <article class="rd-diff-file" data-virtual="text_inline">
+    <header class="rd-diff-file-header" data-testid="rd-diff-file-header">
+      <a class="rd-diff-file-link" href="/test/test/-/blob/head-sha/matrix/modified.ts">matrix/modified.ts</a>
+    </header>
+    <table><tbody>
+      <tr class="rd-hunk-header rd-hunk-header-inline" data-hunk-header="">
+        <td class="rd-hunk-header-buttons" colspan="2"><button type="button" class="rd-expand-lines-button" data-click="expandLines" aria-label="Show lines before"></button></td>
+        <td class="rd-hunk-header-content">@@ -17,7 +17,8 @@</td>
+      </tr>
+      <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_17">
+        <td class="rd-line-number" data-position="old"><a class="rd-line-link" data-line-number="17" aria-label="17" href="#"></a></td>
+        <td class="rd-line-number" data-position="new"><a class="rd-line-link" data-line-number="18" aria-label="18" href="#"></a></td>
+        <td class="rd-line-content" data-gfm-source="true"><pre class="rd-line-text">export const base17 = 17;</pre></td>
+      </tr>
+      <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_20">
+        <td class="rd-line-number" data-change="removed" data-position="old"><a class="rd-line-link" data-line-number="19" aria-label="19" href="#"></a></td>
+        <td class="rd-line-number rd-line-number-empty" data-change="removed" data-position="new"></td>
+        <td class="rd-line-content" data-change="removed"><pre class="rd-line-text">export const base19 = 19;</pre></td>
+      </tr>
+      <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_A19">
+        <td class="rd-line-number rd-line-number-empty" data-change="added" data-position="old"></td>
+        <td class="rd-line-number" data-change="added" data-position="new"><a class="rd-line-link" data-line-number="20" aria-label="20" href="#"></a></td>
+        <td class="rd-line-content" data-change="added"><pre class="rd-line-text">export const base19 = 1900;</pre></td>
+      </tr>
+    </tbody></table>
+  </article>
+</diff-file>`;
+
 const overviewPage = `
 <ul class="nav nav-tabs">
   <li class="nav-item"><a class="nav-link" href="/acme/app/-/merge_requests/7">Overview</a></li>
@@ -247,5 +282,48 @@ describe('pending locate handover', () => {
       ...stored, savedAt: Date.now() - 120_000,
     }));
     expect(takePendingLocate()).toBeUndefined();
+  });
+});
+
+describe('highlightFindingOnPage · 19.x Rapid Diffs（默认渲染）', () => {
+  const rapidTarget = (input: Partial<LocateTarget> = {}): LocateTarget => target({
+    path: 'matrix/modified.ts', line: 20, endLine: 20, side: 'new',
+    existingCode: 'export const base19 = 1900;', ...input,
+  });
+
+  it('文件容器是 <diff-file data-file-data>，路径从 JSON 里读出来', async () => {
+    injectHighlightStyles();
+    document.body.innerHTML = rapidDiff;
+
+    const outcome = await highlightFindingOnPage(rapidTarget());
+
+    expect(outcome.failure).toBeUndefined();
+    expect(outcome.highlighted.map((row) => row.id)).toEqual(['line_5d6d6495c_A19']);
+  });
+
+  it('新增行按新侧行号定位，删除行按旧侧行号定位', async () => {
+    document.body.innerHTML = rapidDiff;
+    const removed = await highlightFindingOnPage(
+      rapidTarget({ line: 19, endLine: 19, side: 'old', existingCode: 'export const base19 = 19;' }));
+
+    expect(removed.highlighted.map((row) => row.id)).toEqual(['line_5d6d6495c_20']);
+  });
+
+  it('上下文行两侧号码不同也不会串到旧侧那一行', async () => {
+    document.body.innerHTML = rapidDiff;
+    const outcome = await highlightFindingOnPage(
+      rapidTarget({ line: 18, endLine: 18, side: 'new', existingCode: 'export const base17 = 17;' }));
+
+    expect(outcome.highlighted.map((row) => row.id)).toEqual(['line_5d6d6495c_17']);
+  });
+
+  it('整段范围连删除行一起高亮', async () => {
+    document.body.innerHTML = rapidDiff;
+    const outcome = await highlightFindingOnPage(
+      rapidTarget({ line: 18, endLine: 20, existingCode: 'export const base17 = 17;' }));
+
+    expect(outcome.highlighted.map((row) => row.id)).toEqual([
+      'line_5d6d6495c_17', 'line_5d6d6495c_20', 'line_5d6d6495c_A19',
+    ]);
   });
 });

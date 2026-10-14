@@ -40,6 +40,26 @@ describe('debugBus', () => {
     off2();
   });
 
+  it('按 key 累加计数，进快照与导出，只有 clear() 全清才归零', () => {
+    debugBus.clear();
+    debugBus.count('publish-downgrade:line-not-in-diff');
+    debugBus.count('publish-downgrade:line-not-in-diff');
+    debugBus.count('publish-inline-rejected:400');
+
+    expect(debugBus.getCounters()).toEqual({
+      'publish-downgrade:line-not-in-diff': 2,
+      'publish-inline-rejected:400': 1,
+    });
+    expect(debugBus.snapshot().counters).toMatchObject({ 'publish-downgrade:line-not-in-diff': 2 });
+    expect(JSON.parse(debugBus.exportBundle()).counters).toMatchObject({ 'publish-inline-rejected:400': 1 });
+
+    debugBus.clear('logs');
+    expect(debugBus.getCounters()).toHaveProperty('publish-downgrade:line-not-in-diff', 2);
+    debugBus.clear();
+    expect(debugBus.getCounters()).toEqual({});
+    expect(debugBus.snapshot().counters).toBeUndefined();
+  });
+
   it('exports a bundle and clears scopes independently', () => {
     debugBus.clear();
     debugBus.log('warn', 'test', 'keep me');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { anchorFindings, resolvePublishPosition } from '../../src/core/anchor';
-import { buildReviewContext, includedFiles } from '../../src/core/context';
+import { buildReviewContext, fileOmissionReason, includedFiles, pathOmissionReason } from '../../src/core/context';
 import { normalizeFileDiff } from '../../src/core/diff';
 import type { Finding } from '../../src/core/types';
 
@@ -161,5 +161,47 @@ describe('resolvePublishPosition', () => {
     const position = resolvePublishPosition(finding({ line: 2, endLine: 2 }), []);
     expect(position.publishable).toBe(false);
     expect(position.reason).toContain('Diff 尚未加载');
+  });
+});
+
+describe('GitLab 折叠掉的文件（空 diff）', () => {
+  it('空 diff 判为 collapsed，不进模型上下文但仍在省略清单里可见', () => {
+    const context = buildReviewContext({
+      files: [file, normalizeFileDiff({ old_path: 'apps/report/index.html', new_path: 'apps/report/index.html', diff: '' })],
+    });
+
+    expect(includedFiles(context).map((item) => item.newPath)).toEqual(['src/a.ts']);
+    expect(context.omittedFiles).toContainEqual({ path: 'apps/report/index.html', reason: 'collapsed' });
+  });
+
+  it('fileOmissionReason 的判定顺序不变：binary 优先，空 diff 才轮到 collapsed', () => {
+    expect(fileOmissionReason({ ...file, diff: '' })).toBe('collapsed');
+    expect(fileOmissionReason({ ...file, diff: '', binary: true })).toBe('binary');
+    expect(fileOmissionReason(file)).toBeUndefined();
+  });
+
+  it('GitLab 自己标了 collapsed / too_large 就直接采信，不靠空 diff 猜', () => {
+    expect(fileOmissionReason({ ...file, collapsed: true })).toBe('collapsed');
+    expect(fileOmissionReason({ ...file, tooLarge: true })).toBe('collapsed');
+    expect(fileOmissionReason({ ...file, binary: true, tooLarge: true })).toBe('binary');
+  });
+
+  it('GitLab 标为 generated 的文件不再进上下文（原来这个标记被丢掉了）', () => {
+    expect(fileOmissionReason({ ...file, generated: true })).toBe('generated');
+    const context = buildReviewContext({
+      files: [file, normalizeFileDiff({ old_path: 'dist/app.js', new_path: 'dist/app.js', diff: '+x', generated_file: true })],
+    });
+
+    expect(includedFiles(context).map((item) => item.newPath)).toEqual(['src/a.ts']);
+    expect(context.omittedFiles).toContainEqual({ path: 'dist/app.js', reason: 'generated' });
+  });
+
+  it('完整文件读取只按路径判定，不受 collapsed 影响', () => {
+    expect(pathOmissionReason('src/a.ts')).toBeUndefined();
+    expect(pathOmissionReason('pnpm-lock.yaml')).toBe('lockfile');
+    expect(pathOmissionReason('.env')).toBe('secret');
+    expect(pathOmissionReason('dist/a.js')).toBe('generated');
+    expect(pathOmissionReason('src/a.ts', true)).toBe('generated');
+    expect(pathOmissionReason('/dev/null')).toBe('unsupported');
   });
 });

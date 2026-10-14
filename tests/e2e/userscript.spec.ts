@@ -486,12 +486,18 @@ test.describe('mock mode', () => {
     await finding.getByRole('button', { name: '行内评论' }).click();
     await page.getByRole('button', { name: '确认行内评论' }).click();
 
-    await expect(page.getByText('行内不可用，已改为全文评论')).toBeVisible({ timeout: 15000 });
+    // 降级不静默：toast 与卡片都要写出 GitLab 拒绝行内位置的原因
+    await expect(page.getByRole('status'))
+      .toHaveText(/行内失败：GitLab 拒绝了这个行内位置（position is invalid），已降级全文评论/, { timeout: 15000 });
     expect(posts).toHaveLength(2);
     expect(posts[0]).toContain('position%5Bnew_line%5D=2');
     expect(posts[1]).not.toContain('position');
     expect(decodeURIComponent(posts[1])).toContain('src/payment.ts:2');
     await expect(finding.getByRole('button', { name: '已发布', exact: true })).toBeVisible();
+    // 卡片默认是收起的：展开后降级原因要一直留在卡上，toast 消失了也看得出这条是降级发出去的
+    const header = finding.locator('button[aria-expanded]').first();
+    if (await header.getAttribute('aria-expanded') === 'false') await header.click();
+    await expect(finding.getByText(/行内失败：.*已降级全文评论/)).toBeVisible();
   });
 
   test('runs rule-only review without an API key and shows the setup hint', async ({ page }) => {

@@ -30,6 +30,7 @@ function panelProps(overrides: Partial<FindingsPanelProps> = {}): FindingsPanelP
     canPublish: true,
     publishPositionIssue: () => undefined,
     publishMode: () => 'inline',
+    publishDowngrade: () => undefined,
     publishable: (finding) => finding.status === 'draft' && Boolean(finding.comment.trim()),
     fixable: () => false,
     onApplyFix: noop,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildCommitPayload, buildDiscussionPayload, GitLabAdapter, GitLabApiError } from '../../src/core/gitlab-adapter';
+import { buildCommitPayload, buildDiscussionPayload, GitLabAdapter, GitLabApiError, positionRejectionReason } from '../../src/core/gitlab-adapter';
+import { debugBus } from '../../src/core/debug-bus';
 import type { DiscussionPosition, Finding, MergeRequestRef, PageContext } from '../../src/core/types';
 
 describe('GitLab discussion payload', () => {
@@ -287,6 +288,48 @@ describe('publishComment inline → full-text fallback', () => {
     const { adapter, posts } = publisher([403]);
     await expect(adapter.publishComment(ref, finding, 'Comment', position)).rejects.toMatchObject({ status: 403 });
     expect(posts).toHaveLength(1);
+  });
+
+  it('降级不静默：把 GitLab 的拒绝原因带回给调用方并计数', async () => {
+    debugBus.clear();
+    const { adapter } = publisher([400, 200]);
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position);
+
+    expect(published.mode).toBe('full');
+    expect(published.downgrade?.status).toBe(400);
+    expect(published.downgrade?.reason).toContain('GitLab 拒绝了这个行内位置');
+    expect(published.downgrade?.reason).toContain('position is invalid');
+    expect(debugBus.getCounters()).toMatchObject({ 'publish-inline-rejected:400': 1 });
+    debugBus.clear();
+  });
+
+  it('行内成功时不带降级原因，一开始就没有位置的全文发布也不算降级', async () => {
+    const inline = await publisher([200]).adapter.publishComment(ref, finding, 'Comment', position);
+    expect(inline.downgrade).toBeUndefined();
+
+    const full = await publisher([200]).adapter.publishComment(ref, finding, 'Comment');
+    expect(full.mode).toBe('full');
+    expect(full.downgrade).toBeUndefined();
+  });
+
+  it('把 GitLab 的状态码翻成人话，原文截短附在后面', () => {
+    expect(positionRejectionReason(new GitLabApiError(409, 'MR 已更新，当前 Finding 的 diff_refs 已过期', 'stale_diff_refs')))
+      .toContain('MR 已更新');
+    expect(positionRejectionReason(new GitLabApiError(422, 'line out of diff')))
+      .toBe('行号不在当前 Diff 范围内（line out of diff）');
+    expect(positionRejectionReason(new GitLabApiError(400, "Note {:line_code=>[\"can't be blank\"]}")))
+      .toContain('GitLab 拒绝了这个行内位置');
+    expect(positionRejectionReason(new GitLabApiError(400, 'x'.repeat(400))).length).toBeLessThan(160);
+  });
+
+  it('剥掉 GitLab API 前缀与 JSON 外壳，只留服务端那句原话', () => {
+    const reason = positionRejectionReason(new GitLabApiError(
+      400,
+      'GitLab API 400：{"message":"400 Bad request - Note {:line_code=>[\\"can\'t be blank\\"]}"}',
+    ));
+
+    expect(reason).toBe('GitLab 拒绝了这个行内位置（400 Bad request - Note {:line_code=>["can\'t be blank"]}）');
   });
 });
 

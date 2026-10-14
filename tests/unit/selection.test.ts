@@ -243,6 +243,42 @@ const discussionNote = `
 </div>`;
 
 // jsdom 不实现 Range.getBoundingClientRect，工具条定位只需要一个矩形占位。
+/**
+ * GitLab 19.x 默认渲染的 Rapid Diffs（真实 DOM 抄样）：文件容器是自定义元素 <diff-file>，路径写在 data-file-data 的 JSON 里；
+ * 行是 tr.rd-hunk-lines，两个 td.rd-line-number 用 data-position 分侧、行号写在里面的 a.rd-line-link 上；
+ * 代码格 td.rd-line-content 是行号格的兄弟节点，自己只带 data-change 不带侧别。
+ */
+const rapidDiff = `
+<diff-file class="rd-diff-file-component" data-testid="rd-diff-file" id="5d6d6495c"
+  data-file-data='{"viewer":"text_inline","old_path":"matrix/modified.ts","new_path":"matrix/modified.ts"}'>
+  <article class="rd-diff-file" data-virtual="text_inline">
+    <div class="rd-diff-file-header-sticky"><header class="rd-diff-file-header" data-testid="rd-diff-file-header">
+      <a class="rd-diff-file-link" href="/test/test/-/blob/head-sha/matrix/modified.ts">matrix/modified.ts</a>
+    </header></div>
+    <table><tbody>
+      <tr class="rd-hunk-header rd-hunk-header-inline" data-hunk-header="">
+        <td class="rd-hunk-header-buttons" colspan="2"><button type="button" class="rd-expand-lines-button" data-click="expandLines" aria-label="Show lines before"></button></td>
+        <td class="rd-hunk-header-content">@@ -17,7 +17,8 @@ export const base16 = 16;</td>
+      </tr>
+      <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_17">
+        <td class="rd-line-number" data-position="old"><a class="rd-line-link" data-line-number="17" aria-label="17" href="#line_5d6d6495c_17"></a></td>
+        <td class="rd-line-number" data-position="new"><a class="rd-line-link" data-line-number="18" aria-label="18" href="#line_5d6d6495c_17"></a></td>
+        <td class="rd-line-content" data-gfm-source="true"><pre class="rd-line-text">export const base17 = 17;</pre></td>
+      </tr>
+      <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_20">
+        <td class="rd-line-number" data-change="removed" data-position="old"><a class="rd-line-link" data-line-number="19" aria-label="19" href="#line_5d6d6495c_20"></a></td>
+        <td class="rd-line-number rd-line-number-empty" data-change="removed" data-position="new"></td>
+        <td class="rd-line-content" data-change="removed" data-gfm-source="true"><pre class="rd-line-text">export const base19 = 19;</pre></td>
+      </tr>
+      <tr class="rd-hunk-lines rd-hunk-lines-inline" data-testid="hunk-lines-inline" id="line_5d6d6495c_A19">
+        <td class="rd-line-number rd-line-number-empty" data-change="added" data-position="old"></td>
+        <td class="rd-line-number" data-change="added" data-position="new"><a class="rd-line-link" data-line-number="20" aria-label="20" href="#line_5d6d6495c_A19"></a></td>
+        <td class="rd-line-content" data-change="added" data-gfm-source="true"><pre class="rd-line-text">export const base19 = 1900;</pre></td>
+      </tr>
+    </tbody></table>
+  </article>
+</diff-file>`;
+
 beforeAll(() => {
   Range.prototype.getBoundingClientRect = () => ({
     top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}),
@@ -802,5 +838,70 @@ describe('watchSelection · 工具条随选区消失而关闭', () => {
 
     expect(onGone).not.toHaveBeenCalled();
     unwatch();
+  });
+});
+
+describe('captureCodeSelection · 19.x Rapid Diffs（默认渲染）', () => {
+  it('路径来自 diff-file[data-file-data] 的 JSON，不是 data-path', () => {
+    mount(rapidDiff);
+    selectContents('#line_5d6d6495c_A19 .rd-line-content');
+
+    const captured = captureCodeSelection(document)!;
+    expect(isCodeSelection(captured)).toBe(true);
+    expect(captured.filePath).toBe('matrix/modified.ts');
+  });
+
+  it('新增行按 data-change 判成新侧，行号取新侧那一格', () => {
+    mount(rapidDiff);
+    selectContents('#line_5d6d6495c_A19 .rd-line-content');
+
+    expect(captureCodeSelection(document)).toMatchObject({ side: 'new', startLine: 20, endLine: 20 });
+  });
+
+  it('删除行按 data-change 判成旧侧，不套用新侧行号', () => {
+    mount(rapidDiff);
+    selectContents('#line_5d6d6495c_20 .rd-line-content');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.side).toBe('old');
+    expect(captured.startLine).toBe(19);
+    expect(selectionLabel(captured)).toContain('旧侧');
+  });
+
+  it('上下文行两侧号码不同，取新侧行号', () => {
+    mount(rapidDiff);
+    selectContents('#line_5d6d6495c_17 .rd-line-content');
+
+    expect(captureCodeSelection(document)).toMatchObject({ side: 'new', startLine: 18, endLine: 18 });
+  });
+
+  it('跨行拖选按覆盖的行数收敛出 endLine', () => {
+    mount(rapidDiff);
+    const range = document.createRange();
+    range.setStart(firstText(document.querySelector('#line_5d6d6495c_20 .rd-line-content')!), 2);
+    range.setEnd(lastText(document.querySelector('#line_5d6d6495c_A19 .rd-line-content')!), 4);
+    applyRange(range);
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.side).toBe('old');
+    expect(captured.startLine).toBe(19);
+    expect(captured.endLine).toBe(20);
+  });
+
+  it('文件头在 diff 容器里但没有行号：标签直说行号未知，不编一个', () => {
+    mount(rapidDiff);
+    selectContents('.rd-diff-file-header');
+
+    const captured = captureCodeSelection(document)!;
+    expect(captured.filePath).toBe('matrix/modified.ts');
+    expect(captured.startLine).toBeUndefined();
+    expect(selectionLabel(captured)).toContain('行号未知');
+  });
+
+  it('diff 之外的页面文本选区仍然不带位置语义', () => {
+    mount(`<div class="description">MR 描述正文</div>${rapidDiff}`);
+    selectContents('.description');
+
+    expect(isCodeSelection(captureCodeSelection(document)!)).toBe(false);
   });
 });

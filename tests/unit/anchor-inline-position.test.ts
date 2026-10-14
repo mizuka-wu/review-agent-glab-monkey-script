@@ -288,3 +288,86 @@ describe('inline position: multi-line snippets', () => {
     expect(position.finding).toMatchObject({ path: 'src/g.ts', line: 4, endLine: 5 });
   });
 });
+
+describe('inline position: 真实 GitLab 矩阵里查出来的两类降级', () => {
+  const collapsed = normalizeFileDiff({
+    old_path: 'apps/demo/report/index.html', new_path: 'apps/demo/report/index.html', diff: '',
+  });
+  const shifted = normalizeFileDiff({
+    old_path: 'src/m.ts', new_path: 'src/m.ts',
+    diff: '@@ -17,7 +17,8 @@\n export const base17 = 17;\n export const base18 = 18;\n-export const base19 = 19;\n+export const base19 = 1900;\n+export const inserted = 20;\n export const base20 = 20;\n export const base21 = 21;',
+  });
+
+  it('GitLab 折叠了 diff 的文件直接说明原因，不再报「找不到第 N 行」', () => {
+    const position = resolvePublishPosition(finding({
+      id: 'collapsed', path: 'apps/demo/report/index.html', line: 12, endLine: 12, existingCode: '<html></html>',
+    }), [collapsed]);
+
+    expect(position.publishable).toBe(false);
+    expect(position.reasonCode).toBe('diff-collapsed');
+    expect(position.reason).toContain('没有返回');
+  });
+
+  it('没有 diff 行的原因按 GitLab 的标记说准：过大 / 折叠 / 纯重命名各说各的', () => {
+    const at = (input: Partial<Parameters<typeof normalizeFileDiff>[0]> & { old_path: string; new_path: string }) =>
+      resolvePublishPosition(finding({
+        id: `nl-${Math.random()}`, path: input.new_path, line: 3, endLine: 3, existingCode: 'whatever',
+      }), [normalizeFileDiff({ diff: '', ...input })]);
+
+    expect(at({ old_path: 'a/report.html', new_path: 'a/report.html', too_large: true }).reason).toContain('过大');
+    expect(at({ old_path: 'a/b.ts', new_path: 'a/b.ts', collapsed: true }).reason).toContain('折叠');
+    expect(at({ old_path: 'a/old.ts', new_path: 'a/new.ts', renamed_file: true }).reason).toContain('只是重命名');
+    for (const reason of [
+      at({ old_path: 'a/report.html', new_path: 'a/report.html', too_large: true }).reason,
+      at({ old_path: 'a/b.ts', new_path: 'a/b.ts', collapsed: true }).reason,
+    ]) {
+      expect(reason).toContain('无法定位行内评论');
+    }
+  });
+
+  it('行号命中但内容与片段矛盾时改采信另一侧的精确匹配（side 填错不再挂错行）', () => {
+    // 新增行 inserted 只在新侧第 20 行；模型把 side 写成 old，而旧侧第 20 行是另一句代码
+    const position = resolvePublishPosition(finding({
+      id: 'wrong-side', path: 'src/m.ts', line: 20, endLine: 20, side: 'old',
+      existingCode: 'export const inserted = 20;',
+    }), [shifted]);
+
+    expect(position.publishable).toBe(true);
+    expect(position.finding).toMatchObject({ line: 20, side: 'new' });
+    expect(position.lines?.start).toEqual({ newLine: 20 });
+  });
+
+  it('没有片段可比时仍按行号发，不因为怀疑侧别就丢位置', () => {
+    const position = resolvePublishPosition(finding({
+      id: 'no-snippet', path: 'src/m.ts', line: 21, endLine: 21, side: 'old', existingCode: '',
+    }), [shifted]);
+
+    expect(position.publishable).toBe(true);
+    expect(position.finding).toMatchObject({ line: 21, side: 'old' });
+    expect(position.lines?.start).toEqual({ oldLine: 21, newLine: 22 });
+  });
+
+  it('行号与片段本来就一致时按行号直发，不做多余的重新定位', () => {
+    const position = resolvePublishPosition(finding({
+      id: 'consistent', path: 'src/m.ts', line: 22, endLine: 22, side: 'new',
+      existingCode: 'export const base21 = 21;',
+    }), [shifted]);
+
+    expect(position.publishable).toBe(true);
+    expect(position.corrected).toBeUndefined();
+    expect(position.finding).toMatchObject({ line: 22, side: 'new' });
+  });
+
+  it('每次降级都按 reasonCode 计数，调试面板能看到分布', () => {
+    debugBus.clear();
+    resolvePublishPosition(finding({ id: 'c1', path: 'apps/demo/report/index.html', line: 3, endLine: 3 }), [collapsed]);
+    resolvePublishPosition(finding({ id: 'c2', path: 'apps/demo/report/index.html', line: 4, endLine: 4 }), [collapsed]);
+    resolvePublishPosition(finding({ id: 'c3', path: 'src/missing.ts', line: 1, endLine: 1, existingCode: 'nope();' }), [shifted]);
+
+    expect(debugBus.getCounters()).toMatchObject({
+      'publish-downgrade:diff-collapsed': 2,
+      'publish-downgrade:path-not-in-diff': 1,
+    });
+    debugBus.clear();
+  });
+});
