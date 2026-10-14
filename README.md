@@ -42,6 +42,7 @@
 - **页内高亮**：在 GitLab Diff 页面上标注 Finding 位置，severity 色标；经典 HAML / Vue diff / 19.x grid / 19.x Rapid Diffs（`<diff-file>` + `tr.rd-hunk-lines`，19.x 的默认渲染）四种 DOM 都认
 - **批量发布**：复选框多选 → 预览确认 → 逐条创建 Discussion
 - **降级不静默**：行内位置被 GitLab 拒了才改发全文评论时，toast 与 Finding 卡片都写明原因（如「MR 已更新，diff 位置已过期」「GitLab 拒绝了这个行内位置（…line_code…）」）；发布前就判定挂不上行的，卡片直接给出原因（行号不在 Diff 内 / 文件被 GitLab 折叠 / 路径不在本 MR）
+- **降级留全现场（console 直接复制）**：任何一条评论因行内失败降级成全文时，浏览器 console 打一段每行都带 `[inline-fallback]` 前缀的结构化日志（同一条完整现场也进调试面板与导出包），内容是排查这次降级所需的全部参数：`cause`（发布前拦下 / 被 GitLab 拒）与 `reasonCode` + 人话原因、当时真实发出的 `position` 全量参数（`base_sha`/`head_sha`/`start_sha`、`new_path`/`old_path`、顶层 `old_line`/`new_line`、`line_range` 的起止行号配对）、锚定输入与结果（行号 / 侧别 / diff 行类型 added·removed·context / 取自真实 diff 行的行号配对 / 是否被内容重定位）、该文件的 diff 概况（GitLab 给了哪些行号区间、是否 collapsed / too_large / 纯重命名）、页面 DOM 取证（视图类型 rapid / classic、这一行在页面上找不找得到、行号来自哪个 span id 或 data 属性、能读到的 line_code）、服务端响应（HTTP 状态 + GitLab 返回的原话，400 / 409 / 422 的 body 是关键证据）、环境与选区。用户主动发全文（MR 总评论、扫描模式这类没有行内位置语义的发布）不打这条日志；PAT / 令牌一律脱敏，评论正文与代码片段只记规模不记内容
 - **快速操作**：一键 Approve、一键行内评论（全部可发布草稿）、发布 MR 总评论；均为两步确认防误触
 - **筛选排序**：按来源/严重度/分类/状态过滤，按严重度/来源/文件排序
 - **Session/Resume**：刷新页面后恢复上次 Review 会话
@@ -64,7 +65,7 @@
 - **网络面板**：GitLab API、模型调用、MCP、索引请求的方法、状态码、耗时、字节数
 - **提示词面板**：每次模型调用的完整 system、消息内容、工具列表、token 用量与响应摘要
 - **状态面板计数**：`publish-downgrade:<reasonCode>`（行内降级为全文的原因分布）与 `publish-inline-rejected:<status>`（GitLab 拒绝行内位置的状态码分布）按次累加，跨刷新保留，导出调试包一并带上
-- **console 镜像**：页面 `console.warn/error` 自动进入日志；日志跨刷新保留
+- **console 镜像**：页面 `console.warn/error` 自动进入日志；日志跨刷新保留；`[inline-fallback]` 这类需要用户复制去排查的结构化日志反向镜像到 console，两边内容一致且不重复记录
 - **一键导出**：复制并下载 JSON 调试包（含脱敏设置快照），便于提 issue 排查
 
 ### 🛠 自部署兼容
