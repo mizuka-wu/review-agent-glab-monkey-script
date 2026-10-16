@@ -41,6 +41,7 @@
 - **完整生命周期**：草稿 → 编辑 → 定位 → 复制 → 发布 / 忽略
 - **页内高亮**：在 GitLab Diff 页面上标注 Finding 位置，severity 色标；经典 HAML / Vue diff / 19.x grid / 19.x Rapid Diffs（`<diff-file>` + `tr.rd-hunk-lines`，19.x 的默认渲染）四种 DOM 都认
 - **批量发布**：复选框多选 → 预览确认 → 逐条创建 Discussion
+- **409 自动重锚（不再直接降级全文）**：评审到发布之间 MR 被 push 了新 commit 时，行内位置会以 409（`diff_refs` 过期）被拒——这是最高频的降级原因。现在撞 409 会先重新拉 MR 的 `diff_refs` 与 Diff、在新 Diff 上按内容重跑锚定（只认内容不认旧行号），再用新 position 重发一次；行内保住就静默成功（调试计数 `publish-inline-reanchored`）。批量发布里第一条 409 刷新出的 refs 被后续评论直接复用，整批只重拉一次；重锚上限一次，重锚不出来或重发仍被拒才降级全文，原因写成「MR 已更新，已尝试重锚：…」，`[inline-fallback]` 日志同时给出两次 position 参数
 - **降级不静默**：行内位置被 GitLab 拒了才改发全文评论时，toast 与 Finding 卡片都写明原因（如「MR 已更新，diff 位置已过期」「GitLab 拒绝了这个行内位置（…line_code…）」）；发布前就判定挂不上行的，卡片直接给出原因（行号不在 Diff 内 / 文件被 GitLab 折叠 / 路径不在本 MR）
 - **降级留全现场（console 直接复制）**：任何一条评论因行内失败降级成全文时，浏览器 console 打一段每行都带 `[inline-fallback]` 前缀的结构化日志（同一条完整现场也进调试面板与导出包），内容是排查这次降级所需的全部参数：`cause`（发布前拦下 / 被 GitLab 拒）与 `reasonCode` + 人话原因、当时真实发出的 `position` 全量参数（`base_sha`/`head_sha`/`start_sha`、`new_path`/`old_path`、顶层 `old_line`/`new_line`、`line_range` 的起止行号配对）、锚定输入与结果（行号 / 侧别 / diff 行类型 added·removed·context / 取自真实 diff 行的行号配对 / 是否被内容重定位）、该文件的 diff 概况（GitLab 给了哪些行号区间、是否 collapsed / too_large / 纯重命名）、页面 DOM 取证（视图类型 rapid / classic、这一行在页面上找不找得到、行号来自哪个 span id 或 data 属性、能读到的 line_code）、服务端响应（HTTP 状态 + GitLab 返回的原话，400 / 409 / 422 的 body 是关键证据）、环境与选区。用户主动发全文（MR 总评论、扫描模式这类没有行内位置语义的发布）不打这条日志；PAT / 令牌一律脱敏，评论正文与代码片段只记规模不记内容
 - **快速操作**：一键 Approve、一键行内评论（全部可发布草稿）、发布 MR 总评论；均为两步确认防误触

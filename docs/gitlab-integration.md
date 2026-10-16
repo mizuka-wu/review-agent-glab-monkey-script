@@ -182,7 +182,18 @@ position[new_line]=42
 - `permission_denied`：当前身份不能创建 discussion。
 - `rate_limited`：GitLab 返回限流。
 
-任何失败都不应修改行号重试，除非重新构建并让用户再次确认。
+任何失败都不应修改行号重试，除非重新构建并让用户再次确认。`stale_diff_refs`（409）是唯一的例外：它不是行号算错，而是手里的 `diff_refs` 过期，可以自动重锚，见 4.4。
+
+### 4.4 409 自动重锚
+
+评审到发布之间 MR 被 push 了新 commit 时，`position` 里的 `base_sha` / `head_sha` 与 MR 当前 `diff_refs` 不匹配，GitLab 以 409 拒绝（脚本自己的发布前预检也给出同样的 409）。这是行内评论降级为全文最高频的原因，而它其实可救：
+
+1. 重新拉 `GET merge_requests/:iid`（当前 `diff_refs`）与 `GET merge_requests/:iid/diffs`（行号已经变了的 Diff）。
+2. 在新 Diff 上重跑锚定，且**不采信旧行号**（`resolvePublishPosition(finding, files, { trustLine: false })`）：只按内容重定位（片段精确 → 片段模糊 → 标识符），内容对不上就判为不可发布，绝不按旧行号或邻近行硬发。
+3. 用新的 `diff_refs` + 新行号重发一次行内 Discussion；成功就静默保住行内评论（调试计数 `publish-inline-reanchored`），不打扰用户。
+4. 重锚上限一次：重锚出不来位置、或重发仍被拒，才降级为全文评论，原因写成「MR 已更新，已尝试重锚：<原因>」，`[inline-fallback]` 日志同时给出两次 `position` 参数。
+
+批量发布共享同一次刷新：整批只重拉一次 `diff_refs` 与 Diff，第一条 409 之后剩下的评论直接用新 refs 重锚，不必每条各自撞一次 409。面板里的 Finding 仍基于旧 head，位置只在发布那一刻按新 Diff 重算，state 不替换（换了会让旧 Finding 的行号对到新 Diff 的别的行上）。
 
 ## 5. 认证模式
 
