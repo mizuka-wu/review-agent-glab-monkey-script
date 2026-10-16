@@ -15,6 +15,8 @@ import type {
   MrCommit,
   PageContext,
   PositionLineRef,
+  PositionReanchor,
+  PositionReanchorResult,
   PublishDowngrade,
   RecentMergeRequest,
   PublishedComment,
@@ -236,6 +238,26 @@ export function positionRejectionReason(error: GitLabApiError): string {
   }
   detail = detail.replace(/\s+/g, ' ').trim().slice(0, 120);
   return detail ? `${head}（${detail}）` : head;
+}
+
+/**
+ * 行内被拒后的降级信息：409 重锚过就把重锚结果写进原因（用户要看得出是 MR 更新了、脚本也试过救），
+ * 并带回重锚后重发用的那份 position，降级日志才能同时给出两次参数。
+ */
+function rejectionDowngrade(error: GitLabApiError, attempt?: PositionReanchorResult): PublishDowngrade {
+  const rejected = positionRejectionReason(error);
+  if (!attempt) return { reason: rejected, status: error.status, serverMessage: error.message };
+  const reanchorReason = attempt.position
+    ? `重发仍被 GitLab 拒绝（${rejected}）`
+    : attempt.reason ?? rejected;
+  return {
+    reason: `MR 已更新，已尝试重锚：${reanchorReason}`,
+    status: error.status,
+    serverMessage: error.message,
+    reanchored: true,
+    reanchorReason,
+    ...(attempt.position ? { reanchorPosition: attempt.position } : {}),
+  };
 }
 
 export class GitLabAdapter {
@@ -488,6 +510,8 @@ export class GitLabAdapter {
   /**
    * 发布一条评论：有 diff 行号就创建行内 Discussion；没有行号、或行内被 GitLab 拒
    * （400/409/422 等 position 错误）就降级为 MR 级全文评论重发一次，发布不会因为行号失败。
+   * 409 不再直接降级：它只说明手里的 diff_refs 过期（评审到发布之间 MR 被 push 了新 commit），
+   * 给了 reanchor 钩子就先重新拉 diff_refs、在新 diff 上重跑 anchor 再发一次；两轮封顶，重发仍被拒才降级。
    * 降级不静默：原因写进 debugBus 计数与返回值，UI 直接告诉用户为什么没挂到行上。
    */
   async publishComment(
@@ -495,20 +519,49 @@ export class GitLabAdapter {
     finding: Finding,
     body: string,
     position?: DiscussionPosition,
+    reanchor?: PositionReanchor,
   ): Promise<PublishedComment> {
     let downgrade: PublishDowngrade | undefined;
+    let current = position;
+    let reanchored = false;
+    let attempt: PositionReanchorResult | undefined;
     if (position) {
-      try {
-        return { ...(await this.createDiscussion(ref, { body, position })), mode: 'inline' };
-      } catch (error) {
-        if (!isPositionRejection(error)) throw error;
-        downgrade = {
-          reason: positionRejectionReason(error),
-          status: error.status,
-          serverMessage: error.message,
-        };
-        debugBus.count(`publish-inline-rejected:${error.status}`);
-        debugBus.log('warn', 'publish', `行内位置被 GitLab 拒绝（HTTP ${error.status}），改为全文评论 ${finding.path}:${finding.line}`, error.message);
+      for (let round = 0; round < 2 && current; round += 1) {
+        try {
+          const published = await this.createDiscussion(ref, { body, position: current });
+          if (reanchored) {
+            debugBus.count('publish-inline-reanchored');
+            debugBus.log('info', 'publish', `MR 已更新，行内位置 409 后重锚成功，行内评论保住 ${finding.path}:${finding.line}`, [
+              `head=${current.diffRefs.headSha.slice(0, 8)}`,
+              `line=${current.startLine}${current.endLine > current.startLine ? `-${current.endLine}` : ''}`,
+              `side=${current.side}`,
+            ].join(' · '));
+          }
+          return { ...published, mode: 'inline', ...(reanchored ? { reanchored: true } : {}) };
+        } catch (error) {
+          if (!isPositionRejection(error)) throw error;
+          // 只有 409 才是 diff_refs 过期，才值得重锚；400 / 422 是位置本身不合法，重锚也救不回来
+          if (error.status === 409 && reanchor && !reanchored) {
+            reanchored = true;
+            attempt = await reanchor(current, error);
+            if (attempt.position) {
+              current = attempt.position;
+              continue;
+            }
+            current = undefined;
+          }
+          downgrade = rejectionDowngrade(error, reanchored ? attempt : undefined);
+          debugBus.count(`publish-inline-rejected:${error.status}`);
+          if (reanchored) debugBus.count('publish-inline-reanchor-failed');
+          debugBus.log(
+            'warn', 'publish',
+            reanchored
+              ? `行内位置 409，重锚后仍失败（HTTP ${error.status}），改为全文评论 ${finding.path}:${finding.line}`
+              : `行内位置被 GitLab 拒绝（HTTP ${error.status}），改为全文评论 ${finding.path}:${finding.line}`,
+            [error.message, reanchored ? `重锚：${downgrade.reanchorReason ?? '无新位置'}` : ''].filter(Boolean).join('\n'),
+          );
+          break;
+        }
       }
     }
     const discussion = await this.createDiscussion(ref, { body: buildFullTextComment(finding, body) });

@@ -30,6 +30,7 @@ import {
 } from './core/finding-highlight';
 import { applyFindingEdit, type FindingEdit } from './core/finding-edit';
 import { logInlineFallback } from './core/inline-fallback';
+import { createReanchorSession, toDiscussionPosition, type ReanchorSession } from './core/reanchor';
 import {
   buildFixPayload, createFixPlan, describeFixFailure, isFixCandidate, parseFixResponse,
   type FixPlan,
@@ -1471,52 +1472,77 @@ export default function App({ page }: AppProps) {
   /** 位置校验通过的 Finding 才带 position；其余交给 publishComment 发 MR 级全文评论。 */
   const buildPosition = (input: Finding): DiscussionPosition | undefined => {
     const position = publishPositions.get(input.id);
-    if (!position?.publishable) return undefined;
-    const finding = position.finding;
-    return {
-      path: finding.path,
-      oldPath: finding.oldPath ?? finding.path,
-      newPath: finding.newPath ?? finding.path,
-      startLine: finding.line,
-      endLine: finding.endLine,
-      side: finding.side,
-      ...position.lines,
-      diffRefs: mrContext!.diffRefs,
-    };
+    return position ? toDiscussionPosition(position, mrContext!.diffRefs) : undefined;
+  };
+
+  /**
+   * 一次发布动作一个重锚会话：撞 409（position 的 diff_refs 与 MR 当前不匹配）时重新拉 diff_refs + diff、
+   * 在新 diff 上重跑 anchor 再发一次；批量里第一条 409 刷新出来的 refs 会被后续评论直接复用，
+   * 不必每条各自撞一次 409。会话只在本次发布内有效，重锚上限一次。
+   */
+  const createReanchor = (ref: MergeRequestRef): ReanchorSession => createReanchorSession({
+    fetchMergeRequest: () => api.getMergeRequest(ref),
+    fetchFiles: () => api.listDiffs(ref),
+  });
+
+  /**
+   * 本次发布撞过 409（MR 已被 push 新提交）就在日志里说一句：面板里的 Finding 仍基于旧 head，
+   * 位置只在发布那一刻按新 diff 重算过，state 不换（换了会让旧 Finding 的行号对到新 diff 的别的行上）。
+   */
+  const noteReanchor = (session: ReanchorSession) => {
+    const snapshot = session.snapshot();
+    if (!snapshot) return;
+    addLog('info', 'gitlab', 'MR 已更新：本次发布按新的 diff_refs 重锚后发出',
+      `head ${snapshot.context.diffRefs.headSha.slice(0, 8)} · ${snapshot.files.length} 个文件 · 面板里的 Finding 仍基于旧 head，建议刷新页面后重新评审`);
   };
 
   /**
    * 发布一条评论的唯一出口：行内失败降级成全文时，把原因与当时的完整参数打到 console
    * （每行带 [inline-fallback] 前缀），用户复制整段就能发来排查；主动发全文不出声。
    */
-  const publishOne = async (ref: MergeRequestRef, finding: Finding, body: string) => {
-    const attempted = buildPosition(finding);
-    const published = await api.publishComment(ref, finding, body, attempted);
+  const publishOne = async (ref: MergeRequestRef, finding: Finding, body: string, session: ReanchorSession) => {
+    // 本次发布已经因 409 刷新过 diff_refs：这条直接用新 refs + 新 diff 重算位置，不再撞一次 409
+    const fresh = session.positionFor(finding);
+    const attempted = fresh ? fresh.position : buildPosition(finding);
+    const published = await api.publishComment(ref, finding, body, attempted, (from) => session.reanchor(finding, from));
+    const snapshot = session.snapshot();
     if (published.mode === 'full') {
       logInlineFallback({
         finding,
-        position: publishPositions.get(finding.id),
+        position: fresh?.publish ?? publishPositions.get(finding.id),
         attempted,
         downgrade: published.downgrade,
-        files,
-        diffRefs: mrContext?.diffRefs,
+        files: snapshot?.files ?? files,
+        diffRefs: snapshot?.context.diffRefs ?? mrContext?.diffRefs,
         selection: reviewTarget,
         gitlabVersion: capabilities?.gitlabVersion,
         body,
       });
+    } else if (published.reanchored) {
+      // 重锚成功不打扰用户：不进 toast、不改卡片，只在日志与调试计数里留一条
+      addLog('info', 'publish', `MR 已更新，行内位置 409 后已重锚，行内评论保住 ${finding.path}:${finding.line}`);
     }
-    return published;
+    // 刷新后这一条在新 diff 里挂不上行：根本没发行内请求，adapter 不给 downgrade，UI 的原因在这里补上
+    const blockedAfterReanchor = fresh && !fresh.position && !published.downgrade && published.mode === 'full'
+      ? {
+        reason: `MR 已更新，已尝试重锚：${fresh.publish.reason ?? '新的 Diff 中找不到这一行'}`,
+        reanchored: true,
+        ...(fresh.publish.reason ? { reanchorReason: fresh.publish.reason } : {}),
+      }
+      : undefined;
+    return blockedAfterReanchor ? { ...published, downgrade: blockedAfterReanchor } : published;
   };
 
   /** 逐条发布（行内不可用自动降级全文），返回各形态条数、降级原因并回写状态。 */
   const publishEach = async (ref: MergeRequestRef, targets: Finding[]) => {
+    const session = createReanchor(ref);
     const succeeded = new Set<string>();
     const downgraded: { path: string; line: number; reason: string }[] = [];
     let inline = 0;
     let full = 0;
     for (const finding of targets) {
       try {
-        const published = await publishOne(ref, finding, finding.comment);
+        const published = await publishOne(ref, finding, finding.comment, session);
         succeeded.add(finding.id);
         if (published.mode === 'inline') inline += 1; else full += 1;
         if (published.downgrade) {
@@ -1532,14 +1558,16 @@ export default function App({ page }: AppProps) {
       if (!attempted.has(finding.id)) return finding;
       return { ...finding, status: succeeded.has(finding.id) ? 'published' as const : 'failed' as const };
     }));
+    noteReanchor(session);
     return { inline, full, published: succeeded.size, failed: targets.length - succeeded.size, downgraded };
   };
 
   const confirmPublish = async () => {
     if (!publishFinding || !mergeRequestRef || !mrContext || !canPublish) return;
     setPublishing(true);
+    const session = createReanchor(mergeRequestRef);
     try {
-      const published = await publishOne(mergeRequestRef, publishFinding, publishBody);
+      const published = await publishOne(mergeRequestRef, publishFinding, publishBody, session);
       persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'published' as const, comment: publishBody } : finding));
       setPublishFinding(undefined);
       recordDowngrade(publishFinding.id, published.downgrade?.reason);
@@ -1556,6 +1584,7 @@ export default function App({ page }: AppProps) {
       addLog('error', 'publish', '发布失败', `${code}${message}`);
       persistFindings(findings.map((finding) => finding.id === publishFinding.id ? { ...finding, status: 'failed' as const } : finding));
     } finally {
+      noteReanchor(session);
       setPublishing(false);
     }
   };

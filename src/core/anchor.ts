@@ -364,8 +364,12 @@ function nearestMatch(file: FileDiff, side: 'old' | 'new', hint: number) {
   return best && distance <= PROXIMITY_WINDOW ? toMatch(file, [best], side) : undefined;
 }
 
-/** 同一文件内按「代码片段精确 → 代码片段模糊 → 标识符 → 邻近上下文」逐级降级重定位。 */
-function relocate(finding: Finding, file: FileDiff) {
+/**
+ * 同一文件内按「代码片段精确 → 代码片段模糊 → 标识符 → 邻近上下文」逐级降级重定位。
+ * trustLine=false（409 重锚）时不走「邻近上下文」：那一档只按行号就近猜，MR 被 push 过以后猜中的概率太低，
+ * 宁可判为不可发布交给全文降级，也不把评论挂到无关的行上。
+ */
+function relocate(finding: Finding, file: FileDiff, trustLine = true) {
   const sides = bothSides(finding.side);
   const snippets = searchSnippets(finding);
   const exact = snippetMatch(finding, file);
@@ -387,7 +391,7 @@ function relocate(finding: Finding, file: FileDiff) {
       const match = tokenMatch(file, tokens, side, finding.line);
       if (match) return match;
     }
-    if (snippets.length === 0 && tokens.size === 0) {
+    if (trustLine && snippets.length === 0 && tokens.size === 0) {
       const match = nearestMatch(file, side, finding.line);
       if (match) return match;
     }
@@ -550,12 +554,25 @@ function contradictsSnippet(file: FileDiff, match: AnchorMatch, finding: Finding
   return !rows.every((row, offset) => loose(row.text) === loose(snippet[offset]));
 }
 
+export interface PublishPositionOptions {
+  /**
+   * 行号还可信吗（默认可信）。409 重锚时 MR 已经被 push 过，旧行号大概率指向另一段代码：
+   * 按行号硬发会把评论挂到无关的行上，所以只认内容（片段精确 / 模糊 / 标识符），
+   * 内容对不上就判为不可发布，走既有的全文降级，不新造链路。
+   */
+  trustLine?: boolean;
+}
+
 /**
  * 发布前把 Finding 的行号对到该文件真实的 diff 行号集合上：命中就直接发布；
  * 对不上（diff 折叠、上下文偏移、renamed path、侧别填错）就按 Finding 自身内容重新定位；
  * 内容也匹配不上才判为不可发布，避免把 422 留给 GitLab。
  */
-export function resolvePublishPosition(finding: Finding, files: FileDiff[]): PublishPosition {
+export function resolvePublishPosition(
+  finding: Finding,
+  files: FileDiff[],
+  options: PublishPositionOptions = {},
+): PublishPosition {
   if (files.length === 0) return blocked(finding, 'no-diff', '当前 Diff 尚未加载，无法校验评论位置');
 
   const index = fileIndex(files);
@@ -573,14 +590,15 @@ export function resolvePublishPosition(finding: Finding, files: FileDiff[]): Pub
   }
 
   const fullFileOnly = finding.anchor?.source === 'full-file';
-  const direct = fullFileOnly ? undefined : directLineMatch(finding, file);
+  const trustLine = options.trustLine !== false;
+  const direct = fullFileOnly || !trustLine ? undefined : directLineMatch(finding, file);
   if (direct && !contradictsSnippet(file, direct, finding)) return resolved(finding, direct);
 
   const verified = verifiedLineMatch(finding, file, fullFileOnly ? bothSides('new') : bothSides(finding.side));
   if (verified) return resolved(finding, verified);
   if (direct) return resolved(finding, direct);
 
-  const match = relocate(finding, file);
+  const match = relocate(finding, file, trustLine);
   if (match) return resolved(finding, match);
 
   return blocked(finding, fullFileOnly ? 'full-file-only' : 'line-not-in-diff', fullFileOnly

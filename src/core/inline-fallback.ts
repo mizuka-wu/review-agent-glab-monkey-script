@@ -164,6 +164,20 @@ function domLine(anchored: Finding) {
   return parts.join(' · ');
 }
 
+/**
+ * 409 重锚的现场：重锚跑过就必须把两次 position 都打出来——只看第一次分不清是 diff_refs 过期还是行号真没了，
+ * 只看第二次又不知道原来发的是什么。重锚成功不会走到这里（保住行内就不算降级，只留计数与 info 日志）。
+ */
+function reanchorLine(downgrade?: PublishDowngrade, attempted?: DiscussionPosition) {
+  if (!downgrade?.reanchored) return undefined;
+  return [
+    `${INLINE_FALLBACK_PREFIX} reanchor: 409 重锚后仍失败`,
+    `reason=${clean(downgrade.reanchorReason ?? downgrade.reason)}`,
+    `first-position=${positionParams(attempted) ?? '无（发布前已判定行内不可用）'}`,
+    `retry-position=${positionParams(downgrade.reanchorPosition) ?? '未重锚出位置，第二次没发出'}`,
+  ].join(' · ');
+}
+
 function serverLine(cause: InlineFallbackCauseInfo) {
   if (cause.cause !== 'inline-rejected') return undefined;
   const message = cause.serverMessage ?? cause.reason;
@@ -182,6 +196,7 @@ export function formatInlineFallback(facts: InlineFallbackFacts, cause: InlineFa
       `cause=${cause.cause}`,
       `reasonCode=${cause.reasonCode}`,
       cause.status !== undefined ? `status=${cause.status}` : '',
+      facts.downgrade?.reanchored ? 'reanchored=true' : '',
       `path=${anchored.path}`,
       `line=${lineRange(anchored)}`,
       `side=${anchored.side}`,
@@ -208,10 +223,11 @@ export function formatInlineFallback(facts: InlineFallbackFacts, cause: InlineFa
       lineRef('lines.end=', facts.position?.lines?.end),
     ].filter(Boolean).join(' · '),
     `${INLINE_FALLBACK_PREFIX} position: ${positionParams(facts.attempted) ?? '未发出（发布前已判定行内不可用）'}`,
+    reanchorLine(facts.downgrade, facts.attempted),
     `${INLINE_FALLBACK_PREFIX} ${diffRefsLine(facts.diffRefs)}`,
     `${INLINE_FALLBACK_PREFIX} ${diffSummaryLine(facts, anchored)}`,
     `${INLINE_FALLBACK_PREFIX} dom: ${domLine(anchored)}`,
-  ];
+  ].filter((line): line is string => line !== undefined);
 
   if (facts.selection) {
     lines.push(`${INLINE_FALLBACK_PREFIX} selection: ${clean(selectionLabel(facts.selection))} · side=${facts.selection.side ?? '-'}`

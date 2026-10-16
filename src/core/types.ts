@@ -334,13 +334,39 @@ export interface PublishDowngrade {
   status?: number;
   /** GitLab 返回的原始报错体：400 / 409 / 422 的 body 才是定位降级原因的关键证据。 */
   serverMessage?: string;
+  /** 409 后按新 diff_refs 重锚过（跑完仍未救回来）：reason 已带上重锚结果，这里给日志与 UI 一个判据。 */
+  reanchored?: boolean;
+  /** 重锚没救回来的原因（新 diff 里找不到该行 / 重发仍被拒），[inline-fallback] 日志要单独打一行。 */
+  reanchorReason?: string;
+  /** 重锚后重发用的 position：降级日志要同时给出两次参数，才分得清是 refs 过期还是行号真没了。 */
+  reanchorPosition?: DiscussionPosition;
 }
 
 export interface PublishedComment extends PublishedDiscussion {
   mode: PublishMode;
   /** 只有「本来要发行内、被 GitLab 拒了才改全文」时才有值；一开始就判定不可行内的走 publishable=false。 */
   downgrade?: PublishDowngrade;
+  /** 409 后重锚成功、行内评论保住了：静默成功，只进日志与调试计数，不打扰用户。 */
+  reanchored?: boolean;
 }
+
+/** 409 重锚的结果：给出新 position 就重发，给不出就带着原因降级为全文评论。 */
+export interface PositionReanchorResult {
+  /** 按新 diff_refs 重锚出的行内 position；行已被 push 改掉、anchor 也救不回来时为 undefined。 */
+  position?: DiscussionPosition;
+  /** 重锚不出来的原因：最终降级文案与 [inline-fallback] 日志都要带上它。 */
+  reason?: string;
+}
+
+/**
+ * 行内位置 409（position 的 base_sha / head_sha 与 MR 当前 diff_refs 不匹配）后重锚一次的能力，
+ * 由发布链路注入：它才知道怎么重新拉 MR 与 diff、怎么在新 diff 上重跑 anchor。
+ * 最多被调用一次，实现方不要在里面重试，否则就是死循环。
+ */
+export type PositionReanchor = (
+  position: DiscussionPosition,
+  error: { status: number; message: string },
+) => Promise<PositionReanchorResult>;
 
 export interface ReviewContextFile extends FileDiff {
   included: boolean;
