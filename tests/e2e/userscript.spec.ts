@@ -159,6 +159,20 @@ const diff = {
   renamed_file: false,
 };
 
+/** 评审之后有人往 MR 里 push 了一个 commit：上面多插一行，同一处代码从新侧第 2 行落到第 3 行。 */
+const pushedDiff = {
+  ...diff,
+  diff: [
+    '@@ -1,2 +1,5 @@ export function pay() {',
+    ' export function pay() {',
+    '+  const traceId = nextTraceId();',
+    '+  const apiKey = "sk-live-123";',
+    '+  console.log(apiKey);',
+    '+  return handle(error as any);',
+    ' }',
+  ].join('\n'),
+};
+
 // --- Mock：应用修复链路 ---
 
 /** mock diff 对应的完整文件内容：修复流程会按源分支读它，补丁必须能落在上面。 */
@@ -258,7 +272,12 @@ async function routeCompanion(page: Page, requests: string[] = [], options?: { s
 
 // --- Mock 路由 ---
 
-async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[]; fixResponse?: string; commitStatus?: number; commits?: MockCommit[]; mrCommits?: unknown[] }) {
+/** conflictOnce：模拟「发布那一刻 MR 被 push 了新 commit」——第一次带 position 的发布 409，之后 MR 接口返回新 head 与新 diff。 */
+interface ConflictOnce { headSha: string; diff: unknown }
+
+async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[]; fixResponse?: string; commitStatus?: number; commits?: MockCommit[]; mrCommits?: unknown[]; conflictOnce?: ConflictOnce }) {
+  const mrState = { head: mergeRequest.diff_refs.head_sha, diffs: options?.diffs ?? [diff] };
+  let conflicted = false;
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
     requests.push(new URL(route.request().url()).pathname);
@@ -351,7 +370,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/diffs')) {
-      await route.fulfill({ json: options?.diffs ?? [diff] });
+      await route.fulfill({ json: mrState.diffs });
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/commits')) {
@@ -359,7 +378,9 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       return;
     }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248')) {
-      await route.fulfill({ json: mergeRequest });
+      await route.fulfill({
+        json: { ...mergeRequest, sha: mrState.head, diff_refs: { ...mergeRequest.diff_refs, head_sha: mrState.head } },
+      });
       return;
     }
     if (url.pathname.endsWith('/repository/tree')) {
@@ -397,7 +418,16 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       return;
     }
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'POST') {
-      if (options?.rejectPosition && (route.request().postData() ?? '').includes('position%5B')) {
+      const posted = route.request().postData() ?? '';
+      // position 的 head_sha 与服务端当前 head 不一致 → GitLab 409；conflictOnce 就在这一刻把 MR 往前推一个 commit
+      if (options?.conflictOnce && !conflicted && new URLSearchParams(posted).get('position[head_sha]') === mrState.head) {
+        conflicted = true;
+        mrState.head = options.conflictOnce.headSha;
+        mrState.diffs = [options.conflictOnce.diff];
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'position is invalid' }) });
+        return;
+      }
+      if (options?.rejectPosition && posted.includes('position%5B')) {
         await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'position is invalid' }) });
         return;
       }
@@ -498,6 +528,39 @@ test.describe('mock mode', () => {
     const header = finding.locator('button[aria-expanded]').first();
     if (await header.getAttribute('aria-expanded') === 'false') await header.click();
     await expect(finding.getByText(/行内失败：.*已降级全文评论/)).toBeVisible();
+  });
+
+  test('re-anchors the inline position after a 409 instead of downgrading to a full-text comment', async ({ page }) => {
+    const posts: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/discussions') && request.method() === 'POST') posts.push(request.postData() ?? '');
+    });
+    await routeGitLab(page, [], { conflictOnce: { headSha: 'head-sha-2', diff: pushedDiff } });
+    await mountUserscript(page, 'https://gitlab.test/acme/app/-/merge_requests/248/diffs', {
+      provider: 'openai', modelBaseUrl: 'https://model.test/v1', model: 'test-model', apiKey: 'test-key',
+      gitlabToken: '', effort: 'balanced', language: 'zh-CN',
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click();
+    await page.getByRole('button', { name: '开始 Review' }).click();
+    await expect(page.getByText('硬编码 API Key 应移至安全配置')).toBeVisible({ timeout: 15000 });
+
+    const finding = page.locator('article').filter({ hasText: '硬编码 API Key 应移至安全配置' });
+    await finding.getByRole('button', { name: '行内评论' }).click();
+    await page.getByRole('button', { name: '确认行内评论' }).click();
+
+    // 409 不再直接降级：重新拉 diff_refs + diff，按内容重锚后重发，行内评论保住，用户看不到降级提示
+    await expect(page.getByText('行级 Discussion 已发布')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/行内失败/)).toHaveCount(0);
+    expect(posts).toHaveLength(2);
+    const first = new URLSearchParams(posts[0]);
+    const retry = new URLSearchParams(posts[1]);
+    expect(first.get('position[head_sha]')).toBe('head-sha');
+    expect(first.get('position[new_line]')).toBe('2');
+    expect(retry.get('position[head_sha]')).toBe('head-sha-2');
+    expect(retry.get('position[new_line]')).toBe('3');
+    expect(retry.get('position[new_path]')).toBe('src/payment.ts');
+    // 降级为全文的那条链路一次都没走
+    expect(posts.every((post) => post.includes('position%5B'))).toBe(true);
   });
 
   test('runs rule-only review without an API key and shows the setup hint', async ({ page }) => {
@@ -2261,6 +2324,119 @@ test.describe('real GitLab mode', () => {
     await expect(page.locator('article[data-finding-status="fixed"]').first()).toBeVisible({ timeout: 30000 });
     // 沙箱还原干净
     expect(restored.status).toBe(201);
+    expect(reverted.data).toBe(fixSeed);
+  });
+
+  // --- 行内位置 409：MR 被 push 过之后重拉 diff_refs 重锚，不再直接降级全文 ---
+
+  const REANCHOR_MARKER = '// e2e-reanchor: shift the sandbox file down by one line';
+
+  async function sandboxMrHead(iid: number) {
+    const { data } = await gitlabApi(`/projects/${fixProject}/merge_requests/${iid}`);
+    const mr = data as { diff_refs?: { head_sha?: string }; sha?: string };
+    return mr.diff_refs?.head_sha ?? mr.sha ?? '';
+  }
+
+  /**
+   * push 之后 GitLab 的 diff_refs 与 MR diff 都是异步重算的：轮询到 head 真的换了、新内容也进了 diff 再发布，
+   * 否则脚本读到的还是旧 head，压根造不出 409。返回新的 head_sha，等不到返回空串。
+   */
+  async function waitSandboxShift(iid: number, headBefore: string, needle: string) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const head = await sandboxMrHead(iid);
+      const { data } = await gitlabApi(`/projects/${fixProject}/merge_requests/${iid}/diffs?per_page=20`);
+      const diffs = Array.isArray(data) ? data as { new_path: string; diff: string }[] : [];
+      const shifted = diffs.some((entry) => entry.new_path === fixPath && (entry.diff ?? '').includes(needle));
+      if (head !== headBefore && shifted) return head;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return '';
+  }
+
+  function deleteSandboxNote(iid: number, discussionId: string, noteId: number) {
+    return gitlabApi(
+      `/projects/${fixProject}/merge_requests/${iid}/discussions/${discussionId}/notes/${noteId}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  test('re-anchors a real inline position after the MR moved on instead of downgrading', async ({ page }) => {
+    test.setTimeout(420_000);
+    const sandbox = await ensureFixSandboxMr();
+    test.skip(sandbox === undefined, `${companionProjectPath} 上没能准备好沙箱 MR（需要 GITLAB_PAT）`);
+    await loginToGitLab(page, realGitlabUrl);
+    await mountUserscript(page, `${sandbox!.url}/diffs`, {
+      provider: 'openai', modelBaseUrl, model: modelName, apiKey: modelApiKey,
+      gitlabToken: gitlabPat, effort: 'balanced', language: 'zh-CN', reviewMode: 'rules',
+      repoIndex: { enabled: false },
+    });
+    await page.getByRole('button', { name: '打开 Review Agent' }).click({ timeout: 20000 });
+    await page.getByRole('button', { name: '开始 Review' }).click({ timeout: 20000 });
+
+    // 沙箱文件在 MR 里是新增文件：硬编码密钥那一行是 diff 的第 2 行
+    const card = page.locator('aside[aria-label="Review Agent"] article')
+      .filter({ hasText: fixRuleTitle })
+      .filter({ hasText: /行内 L2\b/ })
+      .first();
+    await expect(card).toBeVisible({ timeout: 120000 });
+    await expect(page.getByRole('button', { name: 'Review 中', exact: true })).toBeHidden({ timeout: 120000 });
+
+    await card.scrollIntoViewIfNeeded();
+    await card.getByRole('button', { name: '行内评论' }).click();
+    await expect(page.getByRole('dialog', { name: '发布行内评论' })).toBeVisible({ timeout: 30000 });
+    await page.getByLabel('评论内容').fill(`E2E 409 重锚 ${Date.now()}`);
+
+    // 评审跑完、点确认之前往源分支 push 一个 commit：head_sha 一变，手里这份 position 必然 409
+    const headBefore = await sandboxMrHead(sandbox!.iid);
+    const shifted = [REANCHOR_MARKER, ...fixSeed.split('\n')].join('\n');
+    const pushed = await commitFixFile('update', shifted, 'test: shift the sandbox file for the 409 reanchor e2e');
+    const headAfter = await waitSandboxShift(sandbox!.iid, headBefore, 'e2e-reanchor');
+    if (pushed.status >= 300 || !headAfter) {
+      await commitFixFile('update', fixSeed, 'chore: revert the 409 reanchor e2e shift');
+      test.skip(true, '沙箱分支没能 push 出新 head，造不出 409 场景');
+    }
+
+    const posts: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/discussions') && request.method() === 'POST') posts.push(request.postData() ?? '');
+    });
+    const posted = page.waitForResponse(
+      (response) => response.url().endsWith('/discussions') && response.request().method() === 'POST',
+      { timeout: 120_000 },
+    );
+    await page.getByRole('button', { name: '确认行内评论' }).click();
+    const response = await posted;
+    const status = response.status();
+    const raw = await response.text();
+    const discussion = status < 300
+      ? JSON.parse(raw) as { id: string; notes?: { id: number; position?: Record<string, unknown> }[] }
+      : undefined;
+    const noteId = discussion?.notes?.[0]?.id;
+    // 清理放在断言之前：断言失败也不把评论与测试提交留在沙箱里
+    const noteCleanup = noteId ? await deleteSandboxNote(sandbox!.iid, discussion!.id, noteId) : undefined;
+    const restored = await commitFixFile('update', fixSeed, 'chore: revert the 409 reanchor e2e shift');
+    const reverted = await readFixFile();
+
+    // 行内保住了：409 之后重新拉 diff_refs、在新 diff 上按内容重锚重发，没有降级成全文评论
+    expect(status, raw).toBe(201);
+    expect(noteId, 'GitLab 没有返回行内 note').toBeTruthy();
+    // 过期那份 position 在发布前预检就被拦下，只有重锚后这一次真的打到 GitLab
+    expect(posts).toHaveLength(1);
+    const sent = new URLSearchParams(posts[0]);
+    expect(sent.get('position[head_sha]')).toBe(headAfter);
+    expect(sent.get('position[head_sha]')).not.toBe(headBefore);
+    expect(sent.get('position[new_path]')).toBe(fixPath);
+    // 旧行号 2 在新 diff 里已经是函数签名，重锚必须按内容把评论挪到第 3 行
+    expect(sent.get('position[new_line]')).toBe('3');
+    expect(discussion!.notes![0].position)
+      .toMatchObject({ position_type: 'text', new_path: fixPath, new_line: 3, head_sha: headAfter });
+
+    await expect(page.getByText('行级 Discussion 已发布')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText(/行内失败|已降级全文评论/)).toHaveCount(0);
+    await expect(card.getByRole('button', { name: '已发布', exact: true })).toBeVisible({ timeout: 30000 });
+
+    expect(noteCleanup?.status, 'e2e 行内评论没有清理干净').toBe(204);
+    expect(restored.status, '沙箱文件没有还原').toBe(201);
     expect(reverted.data).toBe(fixSeed);
   });
 });

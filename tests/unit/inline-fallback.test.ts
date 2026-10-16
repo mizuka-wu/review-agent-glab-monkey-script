@@ -196,6 +196,55 @@ describe('日志内容：原因 + 当时的完整参数，用户复制 console �
   });
 });
 
+describe('409 重锚的现场：重锚过就把两次 position 都打出来', () => {
+  const retryPosition: DiscussionPosition = {
+    ...attempted, startLine: 10, endLine: 11, start: { newLine: 10 }, end: { newLine: 11 },
+    diffRefs: { ...diffRefs, headSha: 'head-sha-new' },
+  };
+
+  it('重锚后仍降级：标出 reanchored、原因与两次参数', () => {
+    const facts = {
+      ...rejected,
+      downgrade: {
+        reason: 'MR 已更新，已尝试重锚：重发仍被 GitLab 拒绝（行内位置过期）', status: 409,
+        serverMessage: 'GitLab API 409：{"message":"position is invalid"}',
+        reanchored: true, reanchorReason: '重发仍被 GitLab 拒绝（行内位置过期）', reanchorPosition: retryPosition,
+      },
+    };
+    const log = text(formatInlineFallback(facts, inlineFallbackCause(facts)!));
+    expect(log).toContain('status=409 · reanchored=true · path=src/payment.ts');
+    expect(log).toContain('reanchor: 409 重锚后仍失败');
+    expect(log).toContain('reason: MR 已更新，已尝试重锚：重发仍被 GitLab 拒绝');
+    expect(log).toContain('reason=重发仍被 GitLab 拒绝（行内位置过期）');
+    expect(log).toContain('first-position=position[position_type]=text · position[base_sha]=base-sha · position[head_sha]=head-sha-abcdef');
+    expect(log).toContain('retry-position=position[position_type]=text · position[base_sha]=base-sha · position[head_sha]=head-sha-new');
+    expect(log).toContain('position[new_line]=11');
+    expect(log.split('\n').every((line) => line.startsWith(`${INLINE_FALLBACK_PREFIX} `))).toBe(true);
+  });
+
+  it('重锚出不来位置（行已被 push 改掉）时说明第二次没发出', () => {
+    const facts = {
+      ...rejected,
+      downgrade: {
+        reason: 'MR 已更新，已尝试重锚：新的 Diff 中找不到这一行', status: 409,
+        reanchored: true, reanchorReason: '新的 Diff 中找不到这一行',
+      },
+    };
+    const log = text(formatInlineFallback(facts, inlineFallbackCause(facts)!));
+    expect(log).toContain('reanchor: 409 重锚后仍失败');
+    expect(log).toContain('reason: MR 已更新，已尝试重锚：新的 Diff 中找不到这一行');
+    expect(log).toContain('reason=新的 Diff 中找不到这一行');
+    expect(log).toContain('retry-position=未重锚出位置，第二次没发出');
+    expect(log).toContain(`first-position=position[position_type]=text`);
+  });
+
+  it('没重锚过的降级不打这一行', () => {
+    const log = text(formatInlineFallback(rejected, inlineFallbackCause(rejected)!));
+    expect(log).not.toContain('reanchor:');
+    expect(log).not.toContain('reanchored=true');
+  });
+});
+
 describe('发布出口：降级才出声，console 与调试面板各留一份', () => {
   it('降级时 console.warn 打整段现场，调试面板同步留一条完整日志', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

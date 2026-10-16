@@ -371,3 +371,53 @@ describe('inline position: 真实 GitLab 矩阵里查出来的两类降级', () 
     debugBus.clear();
   });
 });
+
+describe('inline position: trustLine（409 重锚时旧行号不可信）', () => {
+  /** MR 被 push 之后：上面多插了一行，apiKey 从新侧第 9 行落到第 10 行。 */
+  const pushed = normalizeFileDiff({
+    old_path: 'src/payment.ts', new_path: 'src/payment.ts',
+    diff: '@@ -8,2 +8,5 @@\n function pay() {\n+  const traceId = nextTraceId();\n+  const apiKey = "sk-live-1";\n+  return charge(apiKey);\n }',
+  });
+
+  /** push 把这段代码整个改掉了：只剩另一个函数，行号 9 早已不在 diff 里。 */
+  const rewritten = normalizeFileDiff({
+    old_path: 'src/payment.ts', new_path: 'src/payment.ts',
+    diff: '@@ -40,2 +40,3 @@\n function refund() {\n+  return gateway.refund();\n }',
+  });
+
+  const stale = (input: Partial<Finding> = {}) => finding({
+    line: 9, endLine: 9, existingCode: 'const apiKey = "sk-live-1";', ...input,
+  });
+
+  it('默认信行号：第 9 行还在 diff 里就按行号发（哪怕内容已经对不上）', () => {
+    const position = resolvePublishPosition(stale(), [pushed]);
+    expect(position.publishable).toBe(true);
+    expect(position.finding.line).toBe(9);
+    expect(position.corrected).toBeUndefined();
+  });
+
+  it('trustLine=false：旧行号指向别的代码时只认内容，重新定位到真正的行', () => {
+    const position = resolvePublishPosition(stale(), [pushed], { trustLine: false });
+    expect(position.publishable).toBe(true);
+    expect(position.finding).toMatchObject({ line: 10, endLine: 10, side: 'new' });
+    expect(position.corrected).toBe(true);
+    expect(position.lines).toEqual({ start: { newLine: 10 }, end: { newLine: 10 } });
+  });
+
+  it('trustLine=false：内容也找不到就判为不可发布，不按邻近行硬发', () => {
+    // 没有任何可搜索内容时，默认会按邻近上下文猜一行；重锚时宁可降级为全文评论也不猜
+    const noSnippet = finding({ line: 9, endLine: 9, existingCode: '', title: '硬编码密钥', content: '密钥不能写死在源码里' });
+    expect(resolvePublishPosition(noSnippet, [rewritten]).publishable).toBe(true);
+    expect(resolvePublishPosition(noSnippet, [rewritten]).finding.line).toBe(40);
+
+    const blocked = resolvePublishPosition(noSnippet, [rewritten], { trustLine: false });
+    expect(blocked.publishable).toBe(false);
+    expect(blocked.reasonCode).toBe('line-not-in-diff');
+  });
+
+  it('trustLine=false：内容在原行号上就对得上时照旧发布，不算修正', () => {
+    const position = resolvePublishPosition(stale({ line: 10 }), [pushed], { trustLine: false });
+    expect(position.publishable).toBe(true);
+    expect(position.finding.line).toBe(10);
+  });
+});

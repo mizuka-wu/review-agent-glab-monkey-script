@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCommitPayload, buildDiscussionPayload, GitLabAdapter, GitLabApiError, positionRejectionReason } from '../../src/core/gitlab-adapter';
 import { debugBus } from '../../src/core/debug-bus';
 import type { DiscussionPosition, Finding, MergeRequestRef, PageContext } from '../../src/core/types';
@@ -330,6 +330,195 @@ describe('publishComment inline → full-text fallback', () => {
     ));
 
     expect(reason).toBe('GitLab 拒绝了这个行内位置（400 Bad request - Note {:line_code=>["can\'t be blank"]}）');
+  });
+});
+
+describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
+  const page: PageContext = { origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 };
+  const ref: MergeRequestRef = { origin: 'https://gitlab.test', projectPath: 'group/project', mergeRequestIid: 7 };
+  const finding: Finding = {
+    id: 'f1', fingerprint: 'fp', path: 'src/a.ts', line: 12, endLine: 12, side: 'new',
+    category: 'bug', severity: 'medium', confidence: 'medium', title: 'Title', content: 'Content',
+    evidence: [], existingCode: '', suggestionCode: '', comment: 'Comment', source: 'model', status: 'draft',
+  };
+  const position = (headSha: string, startLine = 12): DiscussionPosition => ({
+    path: 'src/a.ts', startLine, endLine: startLine, side: 'new',
+    diffRefs: { baseSha: 'base', headSha, startSha: 'start' },
+  });
+  const field = (post: string, key: string) => new URLSearchParams(post).get(`position[${key}]`);
+
+  /**
+   * 服务端 head 已经是 head-2：带旧 head_sha 的 position 在发布前预检就被判 409（不会真的发出去），
+   * conflicts 则模拟「refs 当时对得上、GitLab 仍然 409」，两种 409 源头都要能触发重锚。
+   */
+  function conflictPublisher(options: { head?: string; conflicts?: number } = {}) {
+    const posts: string[] = [];
+    const head = options.head ?? 'head-2';
+    let conflicts = options.conflicts ?? 0;
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      if (init?.method === 'POST') {
+        const body = String(init.body);
+        posts.push(body);
+        const sentHead = new URLSearchParams(body).get('position[head_sha]');
+        const rejected = sentHead !== null && (conflicts > 0 || sentHead !== head);
+        if (rejected && conflicts > 0) conflicts -= 1;
+        return rejected
+          ? new Response('{"message":"position is invalid"}', { status: 409 })
+          : new Response(JSON.stringify({ id: `d${posts.length}`, notes: [{ id: posts.length }] }), { status: 200 });
+      }
+      if (url.pathname.endsWith('/merge_requests/7')) {
+        return new Response(JSON.stringify({ diff_refs: { base_sha: 'base', head_sha: head, start_sha: 'start' } }), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    return { adapter: new GitLabAdapter(page, '', fetcher), posts };
+  }
+
+  beforeEach(() => debugBus.clear('all'));
+  afterEach(() => debugBus.clear('all'));
+
+  it('服务端 409 后按新 diff_refs 重锚重发，行内评论保住、不降级', async () => {
+    const { adapter, posts } = conflictPublisher({ conflicts: 1 });
+    const reanchor = vi.fn(async () => ({ position: position('head-2', 13) }));
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-2'), reanchor);
+
+    expect(published).toMatchObject({ mode: 'inline', reanchored: true });
+    expect(published.downgrade).toBeUndefined();
+    expect(reanchor).toHaveBeenCalledTimes(1);
+    expect(posts).toHaveLength(2);
+    expect(field(posts[0], 'new_line')).toBe('12');
+    expect(field(posts[1], 'new_line')).toBe('13');
+    expect(debugBus.getCounters()['publish-inline-reanchored']).toBe(1);
+    expect(debugBus.getCounters()['publish-inline-reanchor-failed']).toBeUndefined();
+  });
+
+  it('发布前预检出的 stale diff_refs 也走重锚：过期那一次根本没发出去', async () => {
+    const { adapter, posts } = conflictPublisher();
+    const reanchor = vi.fn(async () => ({ position: position('head-2') }));
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-1'), reanchor);
+
+    expect(published).toMatchObject({ mode: 'inline', reanchored: true });
+    expect(posts).toHaveLength(1);
+    expect(field(posts[0], 'head_sha')).toBe('head-2');
+  });
+
+  it('重锚钩子拿到的是那份过期 position 与 409 本身', async () => {
+    const { adapter } = conflictPublisher();
+    const reanchor = vi.fn(async () => ({ position: position('head-2') }));
+
+    await adapter.publishComment(ref, finding, 'Comment', position('head-1'), reanchor);
+
+    const [sent, error] = reanchor.mock.calls[0];
+    expect(sent.diffRefs.headSha).toBe('head-1');
+    expect(error.status).toBe(409);
+  });
+
+  it('重锚后重发仍 409：才降级全文，原因写清「MR 已更新，已尝试重锚」并带回两次 position', async () => {
+    const { adapter, posts } = conflictPublisher({ conflicts: 9 });
+    const reanchor = vi.fn(async () => ({ position: position('head-2', 13) }));
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-2'), reanchor);
+
+    expect(published.mode).toBe('full');
+    expect(published.reanchored).toBeUndefined();
+    expect(published.downgrade).toMatchObject({ status: 409, reanchored: true });
+    expect(published.downgrade?.reason).toContain('MR 已更新，已尝试重锚：重发仍被 GitLab 拒绝');
+    expect(published.downgrade?.reanchorReason).toContain('重发仍被 GitLab 拒绝');
+    expect(published.downgrade?.reanchorPosition?.startLine).toBe(13);
+    expect(posts).toHaveLength(3);
+    expect(field(posts[0], 'new_line')).toBe('12');
+    expect(field(posts[1], 'new_line')).toBe('13');
+    expect(posts[2]).not.toContain('position');
+    expect(debugBus.getCounters()).toMatchObject({
+      'publish-inline-rejected:409': 1,
+      'publish-inline-reanchor-failed': 1,
+    });
+    expect(debugBus.getCounters()['publish-inline-reanchored']).toBeUndefined();
+  });
+
+  it('重锚出不来位置（行已被 push 改掉）：降级全文，原因带上 anchor 给的理由', async () => {
+    const { adapter, posts } = conflictPublisher({ conflicts: 1 });
+    const reanchor = vi.fn(async () => ({ reason: '新的 Diff 中找不到这一行' }));
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-2'), reanchor);
+
+    expect(published.mode).toBe('full');
+    expect(published.downgrade?.reason).toBe('MR 已更新，已尝试重锚：新的 Diff 中找不到这一行');
+    expect(published.downgrade?.reanchored).toBe(true);
+    expect(published.downgrade?.reanchorPosition).toBeUndefined();
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).not.toContain('position');
+  });
+
+  it('400 / 422 不是 diff_refs 过期，不触发重锚', async () => {
+    for (const status of [400, 422]) {
+      const posts: string[] = [];
+      const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+        const url = new URL(input);
+        if (init?.method === 'POST') {
+          posts.push(String(init.body));
+          return new URLSearchParams(String(init.body)).get('position[head_sha]')
+            ? new Response('{"message":"nope"}', { status })
+            : new Response(JSON.stringify({ id: 'd1', notes: [{ id: 1 }] }), { status: 200 });
+        }
+        if (url.pathname.endsWith('/merge_requests/7')) {
+          return new Response(JSON.stringify({ diff_refs: { base_sha: 'base', head_sha: 'head-1', start_sha: 'start' } }), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200 });
+      });
+      const adapter = new GitLabAdapter(page, '', fetcher);
+      const reanchor = vi.fn(async () => ({ position: position('head-1') }));
+
+      const published = await adapter.publishComment(ref, finding, 'Comment', position('head-1'), reanchor);
+
+      expect(published.mode).toBe('full');
+      expect(reanchor).not.toHaveBeenCalled();
+      expect(published.downgrade?.reanchored).toBeUndefined();
+      expect(published.downgrade?.reason).not.toContain('重锚');
+      expect(posts).toHaveLength(2);
+    }
+  });
+
+  it('重锚上限一次：服务端一直 409 也只重锚一次、只重发一次', async () => {
+    const { adapter, posts } = conflictPublisher({ conflicts: 99 });
+    let calls = 0;
+    const reanchor = vi.fn(async () => ({ position: position('head-2', 13 + (calls += 1)) }));
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-2'), reanchor);
+
+    expect(reanchor).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(1);
+    expect(published.mode).toBe('full');
+    // 行内两次（原位置 + 重锚后各一次）+ 全文一次，到此为止不再循环
+    expect(posts).toHaveLength(3);
+    expect(field(posts[1], 'new_line')).toBe('14');
+    expect(posts[2]).not.toContain('position');
+  });
+
+  it('没给重锚钩子时行为不变：409 直接降级全文', async () => {
+    const { adapter, posts } = conflictPublisher({ conflicts: 1 });
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-2'));
+
+    expect(published.mode).toBe('full');
+    expect(published.downgrade?.reason).not.toContain('重锚');
+    expect(published.downgrade?.reanchored).toBeUndefined();
+    expect(posts).toHaveLength(2);
+    expect(debugBus.getCounters()['publish-inline-reanchored']).toBeUndefined();
+  });
+
+  it('行内一次就成功时不碰重锚钩子', async () => {
+    const { adapter } = conflictPublisher({ head: 'head-1' });
+    const reanchor = vi.fn(async () => ({ position: position('head-2') }));
+
+    const published = await adapter.publishComment(ref, finding, 'Comment', position('head-1'), reanchor);
+
+    expect(published).toMatchObject({ mode: 'inline' });
+    expect(published.reanchored).toBeUndefined();
+    expect(reanchor).not.toHaveBeenCalled();
   });
 });
 
