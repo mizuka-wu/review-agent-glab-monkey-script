@@ -519,7 +519,7 @@ function directLineMatch(finding: Finding, file: FileDiff): AnchorMatch | undefi
 
 /**
  * 侧别不可信时的行号采信条件：full-file 锚的行号是 head 版本绝对行号（语义上等于 diff 的 new 侧），
- * normalizeFindings 在行号落不到 diff 时也会随手把 side 填成 'old'。
+ * 行号落不到 diff 时 normalizeFindings 也只是原样保留模型建议的 side（不替它猜）。
  * 这两种情况光行号相同不足以证明是同一处，必须那一行的内容也对得上，否则宁可降级也不发错行。
  */
 function verifiedLineMatch(
@@ -542,9 +542,9 @@ function verifiedLineMatch(
 }
 
 /**
- * 行号命中了，但那一行的内容与 Finding 的代码片段对不上：normalizeFindings 在行号落不到 diff 时会把 side
- * 随手填成 'old'，模型也常把删除行写成新增侧，这时同号码的另一侧才是真正的目标行。
- * 没有片段可比时不算矛盾——只有行号可用，仍按行号发。
+ * 行号命中了，但那一行的内容与 Finding 的代码片段对不上：side 可能只是模型自己的猜测
+ * （行号落不到 diff 时 normalizeFindings 原样保留它），模型也常把删除行写成新增侧，
+ * 这时同号码的另一侧才是真正的目标行。没有片段可比时不算矛盾——只有行号可用，仍按行号发。
  */
 function contradictsSnippet(file: FileDiff, match: AnchorMatch, finding: Finding) {
   const snippet = searchSnippets(finding)[0];

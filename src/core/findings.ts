@@ -113,7 +113,9 @@ export function normalizeFindings(raw: unknown, files: FileDiff[]): Finding[] {
     const endLine = Number.isInteger(endLineValue) && endLineValue >= line ? endLineValue : line;
     const suggestedSide = item.side === 'old' ? 'old' : 'new';
     const anchoredLine = line ? findDiffLine(files, path, suggestedSide, line) : undefined;
-    const side = anchoredLine ? suggestedSide : findDiffLine(files, path, 'new', line) ? 'new' : 'old';
+    // 两头都不命中时保持模型自己给的侧别：兜底填 'old' 是凭空伪造事实，
+    // anchor 层「侧别不可信」的降级链（bothSides / verifiedLineMatch）本来就会两侧都试，不需要这里替它猜。
+    const side = anchoredLine ? suggestedSide : findDiffLine(files, path, 'new', line) ? 'new' : suggestedSide;
     const fingerprint = fingerprintFinding({ path, existingCode, category, title, line });
 
     if (seen.has(fingerprint)) continue;
