@@ -121,13 +121,69 @@ export function findDiffLine(
   );
 }
 
+/** 行号标记与内容之间的分隔：空行只有标记，不留悬空的尾随空格。 */
+function numberedBody(rawLine: string) {
+  const text = rawLine.slice(1);
+  return text ? ` ${text}` : '';
+}
+
+/**
+ * 给 unified diff 的每一行加上显式行号前缀：`+L23 内容`（new 侧）/ `-L17 内容`（old 侧）/ ` L5 内容`（上下文行，标 new 侧）。
+ * 模型拿到的原始 diff 里根本没有行号，只能从 @@ 头一行行往下数：多 hunk、长上下文、相似代码时数错是常态，
+ * 行号一错就锚不上 diff 行，只能降级成全文评论——这是「很容易没办法行内评论」的主因。
+ * hunk 头原样保留；hunk 之外的行（diff --git / index / --- / +++ / \ No newline）不参与编号，也原样透出。
+ */
+export function numberedDiff(diff: string): string {
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+
+  return diffRows(diff).map((rawLine) => {
+    const header = HUNK_HEADER.exec(rawLine);
+    if (header) {
+      oldLine = Number(header[1]);
+      newLine = Number(header[3]);
+      inHunk = true;
+      return rawLine;
+    }
+    if (!inHunk) return rawLine;
+
+    if (rawLine.startsWith('+')) {
+      const numbered = `+L${newLine}${numberedBody(rawLine)}`;
+      newLine += 1;
+      return numbered;
+    }
+    if (rawLine.startsWith('-')) {
+      const numbered = `-L${oldLine}${numberedBody(rawLine)}`;
+      oldLine += 1;
+      return numbered;
+    }
+    if (rawLine.startsWith(' ') || rawLine === '') {
+      const numbered = ` L${newLine}${numberedBody(rawLine)}`;
+      oldLine += 1;
+      newLine += 1;
+      return numbered;
+    }
+    return rawLine;
+  }).join('\n');
+}
+
+/** 格式说明写在 diff 前面：模型读到第一行代码之前先知道行首的数字是什么、该怎么引用。 */
+export const NUMBERED_DIFF_LEGEND =
+  '（下面每个文件的 diff 每行行首都带显式行号：`+L23` = 新增行在 new 侧的第 23 行，`-L17` = 删除行在 old 侧的第 17 行，` L5` = 上下文行在 new 侧的第 5 行。line / endLine 直接抄行首的数字，不要从 @@ 头自己推算；existingCode 抄行内容本身，不要带 L 行号前缀。）';
+
+/** 一个文件进模型上下文的字符开销：按真正发出去的带行号 diff 算，行号前缀如实计入预算。 */
+export function diffPromptSize(file: FileDiff): number {
+  return numberedDiff(file.diff).length + file.newPath.length;
+}
+
 export function diffContext(files: FileDiff[], maxCharacters = 60_000) {
   const chunks: string[] = [];
-  let used = 0;
+  let used = NUMBERED_DIFF_LEGEND.length + 2;
 
   for (const file of files) {
     const context = fullFileContext(file);
-    const chunk = `### ${file.newPath}\n${file.diff}${context ? `\n\n${context}` : ''}`;
+    const chunk = `### ${file.newPath}\n${numberedDiff(file.diff)}${context ? `\n\n${context}` : ''}`;
     if (used + chunk.length > maxCharacters) {
       chunks.push(`### ${file.newPath}\n[diff omitted: context budget exceeded]`);
       break;
@@ -136,7 +192,7 @@ export function diffContext(files: FileDiff[], maxCharacters = 60_000) {
     used += chunk.length;
   }
 
-  return chunks.join('\n\n');
+  return chunks.length > 0 ? `${NUMBERED_DIFF_LEGEND}\n\n${chunks.join('\n\n')}` : '';
 }
 
 // --- Hunk extraction ---

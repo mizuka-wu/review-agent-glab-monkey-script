@@ -30,6 +30,8 @@ function loose(value: string) {
 
 /** 完整文件上下文渲染成「42: code」，模型经常把行号一起抄进 existingCode。 */
 const LINE_NUMBER_PREFIX = /^\d{1,6}\s*[:|\u2502>]\s*/;
+/** 带行号的 diff 渲染成「+L23 code」/「-L17 code」/「 L5 code」，模型同样会连行号一起抄。 */
+const NUMBERED_DIFF_PREFIX = /^[-+ ]?\s*L\d{1,6}(?::|\||\u2502|>)?(?:\s+|$)/;
 /** 模型直接复制 diff 文本时会带上 +/- 前缀；--- +++ 文件头不算。 */
 const DIFF_MARKER_PREFIX = /^(?![-+]{3})[-+]\s?/;
 
@@ -46,15 +48,17 @@ function trimEdges(lines: string[]) {
 }
 
 /**
- * 一个代码片段的全部可搜索写法，按可信度排序：原文 → 去行号 → 去 diff 前缀 → 去掉空行。
+ * 一个代码片段的全部可搜索写法，按可信度排序：原文 → 去 diff 行号前缀 → 去完整文件行号 → 去 diff 前缀 → 去掉空行。
  * 首尾空行是模型多带的换行，直接剪掉；中间空行是「行号连续」的依据，只能作为最后一种兜底写法整体去掉。
  */
 function snippetVariants(value: string): string[][] {
   const base = trimEdges(normalizeCode(value));
   if (base.length === 0) return [];
   const variants = [base];
-  const denumbered = stripPrefix(base, LINE_NUMBER_PREFIX);
-  if (denumbered.some((line, index) => line !== base[index])) variants.push(denumbered);
+  const unnumbered = stripPrefix(base, NUMBERED_DIFF_PREFIX);
+  if (unnumbered.some((line, index) => line !== base[index])) variants.push(unnumbered);
+  const denumbered = stripPrefix(unnumbered, LINE_NUMBER_PREFIX);
+  if (denumbered.some((line, index) => line !== unnumbered[index])) variants.push(denumbered);
   const unmarked = stripPrefix(denumbered, DIFF_MARKER_PREFIX);
   if (unmarked.some((line, index) => line !== denumbered[index])) variants.push(unmarked);
   const dense = unmarked.filter((line) => line.length > 0);

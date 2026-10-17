@@ -1,3 +1,4 @@
+import { diffPromptSize } from './diff';
 import type { FileDiff } from './types';
 
 export interface BundleOptions {
@@ -5,8 +6,9 @@ export interface BundleOptions {
   maxChars?: number;
 }
 
+/** 分组预算与 buildReviewContext 同一口径：都按带行号的 diff 实际字符数算。 */
 export function fileCharSize(file: FileDiff): number {
-  return file.diff.length + file.newPath.length;
+  return diffPromptSize(file);
 }
 
 /**

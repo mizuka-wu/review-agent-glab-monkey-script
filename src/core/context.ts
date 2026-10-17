@@ -1,3 +1,4 @@
+import { diffPromptSize } from './diff';
 import type {
   CodeSelection,
   FileDiff,
@@ -171,7 +172,8 @@ export function buildReviewContext(input: {
 
   for (const file of sourceFiles) {
     const reason = fileOmissionReason(file);
-    const size = file.diff.length + file.newPath.length;
+    // 按渲染后真正发出去的字符算：行号前缀也占预算，否则 diffContext 会在渲染时二次裁掉文件
+    const size = diffPromptSize(file);
     if (reason) {
       files.push({ ...file, included: false, omittedReason: reason });
       omittedFiles.push({ path: file.newPath, reason });
