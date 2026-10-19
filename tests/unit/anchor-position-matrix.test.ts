@@ -76,14 +76,30 @@ const twin: FileDiff = normalizeFileDiff({
   diff: '@@ -1,1 +1,2 @@\n head\n+  logger.info("hit");',
 });
 
+/**
+ * 真实发出的 JSON body 展平成 position[a][b] 视图：键名与 GitLab position.json 逐字一致，
+ * 断言口径不随编码方式变（0.4.24 起 discussions 端点发 JSON，不再是 form 平铺字段）。
+ */
+function flatten(value: unknown, prefix: string): [string, string][] {
+  if (value === null || typeof value !== 'object') return [[prefix, String(value)]];
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .flatMap(([key, item]) => flatten(item, `${prefix}[${key}]`));
+}
+
 /** 锚定结果 → 真实发出去的 payload；不可发布时 position 必须是 undefined（连请求都不该发）。 */
 function payloadOf(input: Partial<Finding>, files: FileDiff[]) {
   const publish = resolvePublishPosition(finding(input), files);
   const position = toDiscussionPosition(publish, REFS);
+  const payload = position ? buildDiscussionPayload({ body: 'b', position }) : undefined;
   return {
     publish,
     position,
-    params: position ? Object.fromEntries(buildDiscussionPayload({ body: 'b', position })) : undefined,
+    payload,
+    sent: payload ? JSON.parse(payload) as { body: string; position?: Record<string, unknown> } : undefined,
+    params: payload
+      ? Object.fromEntries(flatten((JSON.parse(payload) as { position?: unknown }).position, 'position'))
+      : undefined,
   };
 }
 
@@ -144,6 +160,32 @@ describe('position 逐形态：三类 diff 行各自的行号配对', () => {
   });
 });
 
+describe('发出去的整条 body：JSON，不是 form 平铺字段', () => {
+  it('body 可被 JSON.parse，position 是嵌套对象、行号是整数', () => {
+    const { payload, sent } = payloadOf({
+      line: 19, endLine: 21, existingCode: [
+        'const fee = lookupFee(input.region);',
+        'const surcharge = lookupSurcharge(input.region);',
+        'const subtotal = quantity * fee;',
+      ].join('\n'),
+    }, [modified]);
+
+    expect(payload).not.toContain('position%5B');
+    expect(payload).not.toContain('position[');
+    expect(sent!.body).toBe('b');
+    const range = sent!.position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
+    expect(typeof sent!.position!.new_line).toBe('number');
+    expect(range.start).toMatchObject({ type: 'new', new_line: 19 });
+    expect(range.end).toMatchObject({ type: 'old', old_line: 20, new_line: 21 });
+  });
+
+  it('不可发布时压根没有 body：连请求都不该发出去', () => {
+    const { payload, params } = payloadOf({ line: 19, endLine: 19, existingCode: 'const nope = 1;' }, [modified]);
+    expect(payload).toBeUndefined();
+    expect(params).toBeUndefined();
+  });
+});
+
 describe('position 逐形态：rename 与 path 前缀', () => {
   it('rename：old_path / new_path 各写各的真实路径，Finding 只带旧路径也对得上', () => {
     const { publish, params } = payloadOf({
@@ -188,10 +230,12 @@ describe('position 逐形态：rename 与 path 前缀', () => {
   });
 
   it('path 前缀不会漏进 payload：GitLab 把 a/ b/ 当路径过滤条件，那样一律 400', () => {
-    const { params } = payloadOf({
+    const { params, payload } = payloadOf({
       path: 'b/src/pricing.ts', line: 19, endLine: 19, existingCode: 'const fee = lookupFee(input.region);',
     }, [modified]);
-    for (const value of Object.values(params!)) expect(String(value)).not.toMatch(/^[ab]\//);
+    for (const value of Object.values(params!)) expect(value).not.toMatch(/^[ab]\//);
+    expect(payload).not.toContain('"a/');
+    expect(payload).not.toContain('"b/');
   });
 });
 

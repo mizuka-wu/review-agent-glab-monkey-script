@@ -508,8 +508,9 @@ test.describe('行内评论矩阵（真实 GitLab）', () => {
         `${realGitlabUrl}/api/v4/projects/${project}/merge_requests/${matrix!.iid}/discussions`,
         {
           method: 'POST',
-          headers: { 'PRIVATE-TOKEN': gitlabPat, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: buildDiscussionPayload({ body: `MATRIX-PROBE ${anchored.path}:${anchored.line}`, position: discussionPosition }).toString(),
+          // 与生产一致：JSON 直发原生 position 结构（form 平铺字段在老 GitLab 上会被解析成畸形结构）
+          headers: { 'PRIVATE-TOKEN': gitlabPat, 'Content-Type': 'application/json' },
+          body: buildDiscussionPayload({ body: `MATRIX-PROBE ${anchored.path}:${anchored.line}`, position: discussionPosition }),
         },
       );
       const body = await response.text();

@@ -5,6 +5,15 @@ import { resolve } from 'node:path';
 const bundlePath = resolve(process.cwd(), 'dist/review-agent-glab-monkey-script.user.js');
 const bundle = readFileSync(bundlePath, 'utf8');
 
+/**
+ * 0.4.24 起发布端点一律发 JSON body（form 编码的嵌套 position 在老 GitLab + GM 链路上会被解析成
+ * 畸形结构，GitLab 只回 400 `position 必须是有效的 json schema`）：断言统一从 JSON 里取。
+ */
+type SentDiscussion = { body?: string; position?: Record<string, unknown> };
+const sentOf = (post: string | null) => JSON.parse(post ?? '{}') as SentDiscussion;
+const positionField = (post: string | null, key: string) => sentOf(post).position?.[key];
+const hasPosition = (post: string | null) => sentOf(post).position !== undefined;
+
 // --- 真实 GitLab 模式配置 ---
 // 设置 GITLAB_URL + GITLAB_PAT + GITLAB_MR_URL 即可测试真实 GitLab MR
 // 示例:
@@ -14,6 +23,7 @@ const bundle = readFileSync(bundlePath, 'utf8');
 //   pnpm test:e2e
 
 const realGitlabUrl = process.env.GITLAB_URL || '';
+
 const modelBaseUrl = process.env.MODEL_BASE_URL || 'http://localhost:8000/v1';
 const modelName = process.env.MODEL_NAME || 'qwen35-a3b';
 const modelApiKey = process.env.MODEL_API_KEY || '';
@@ -437,7 +447,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
     if (url.pathname.endsWith('/discussions') && route.request().method() === 'POST') {
       const posted = route.request().postData() ?? '';
       // position 的 head_sha 与服务端当前 head 不一致 → GitLab 409；conflictOnce 就在这一刻把 MR 往前推一个 commit
-      if (options?.conflictOnce && !conflicted && new URLSearchParams(posted).get('position[head_sha]') === mrState.head) {
+      if (options?.conflictOnce && !conflicted && positionField(posted, 'head_sha') === mrState.head) {
         conflicted = true;
         mrState.head = options.conflictOnce.headSha;
         mrState.diffs = [options.conflictOnce.diff];
@@ -445,7 +455,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
         await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'position is invalid' }) });
         return;
       }
-      if (options?.rejectPosition && posted.includes('position%5B')) {
+      if (options?.rejectPosition && hasPosition(posted)) {
         await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'position is invalid' }) });
         return;
       }
@@ -510,8 +520,12 @@ test.describe('mock mode', () => {
       request.url().endsWith('/discussions') && request.method() === 'POST');
     await page.getByRole('button', { name: '确认行内评论' }).click();
     const request = await discussionRequest;
-    expect(request.postData()).toContain('body=Edited+review+comment');
-    expect(request.postData()).toContain('position%5Bhead_sha%5D=head-sha');
+    // JSON body：正文与嵌套 position 都在同一份 JSON 里，Content-Type 必须跟着是 application/json
+    expect(request.headers()['content-type']).toContain('application/json');
+    expect(sentOf(request.postData()).body).toBe('Edited review comment');
+    expect(request.postData()).not.toContain('position%5B');
+    expect(positionField(request.postData(), 'head_sha')).toBe('head-sha');
+    expect(positionField(request.postData(), 'position_type')).toBe('text');
     await expect(page.getByText('行级 Discussion 已发布')).toBeVisible();
     // diff 与 diff_refs 同源读取：走版本响应，不再分别打 MR 详情 + diffs 两个接口凑
     expect(requests.some((path) => path.endsWith('/merge_requests/248/versions'))).toBe(true);
@@ -540,9 +554,9 @@ test.describe('mock mode', () => {
     await expect(page.getByRole('status'))
       .toHaveText(/行内失败：GitLab 拒绝了这个行内位置（position is invalid），已降级全文评论/, { timeout: 15000 });
     expect(posts).toHaveLength(2);
-    expect(posts[0]).toContain('position%5Bnew_line%5D=2');
-    expect(posts[1]).not.toContain('position');
-    expect(decodeURIComponent(posts[1])).toContain('src/payment.ts:2');
+    expect(positionField(posts[0], 'new_line')).toBe(2);
+    expect(hasPosition(posts[1])).toBe(false);
+    expect(sentOf(posts[1]).body).toContain('src/payment.ts:2');
     await expect(finding.getByRole('button', { name: '已发布', exact: true })).toBeVisible();
     // 卡片默认是收起的：展开后降级原因要一直留在卡上，toast 消失了也看得出这条是降级发出去的
     const header = finding.locator('button[aria-expanded]').first();
@@ -572,15 +586,15 @@ test.describe('mock mode', () => {
     await expect(page.getByText('行级 Discussion 已发布')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(/行内失败/)).toHaveCount(0);
     expect(posts).toHaveLength(2);
-    const first = new URLSearchParams(posts[0]);
-    const retry = new URLSearchParams(posts[1]);
-    expect(first.get('position[head_sha]')).toBe('head-sha');
-    expect(first.get('position[new_line]')).toBe('2');
-    expect(retry.get('position[head_sha]')).toBe('head-sha-2');
-    expect(retry.get('position[new_line]')).toBe('3');
-    expect(retry.get('position[new_path]')).toBe('src/payment.ts');
+    const first = sentOf(posts[0]).position!;
+    const retry = sentOf(posts[1]).position!;
+    expect(first.head_sha).toBe('head-sha');
+    expect(first.new_line).toBe(2);
+    expect(retry.head_sha).toBe('head-sha-2');
+    expect(retry.new_line).toBe(3);
+    expect(retry.new_path).toBe('src/payment.ts');
     // 降级为全文的那条链路一次都没走
-    expect(posts.every((post) => post.includes('position%5B'))).toBe(true);
+    expect(posts.every((post) => hasPosition(post))).toBe(true);
   });
 
   test('runs rule-only review without an API key and shows the setup hint', async ({ page }) => {
@@ -1052,7 +1066,7 @@ test.describe('mock mode', () => {
     await quickBar.getByRole('button', { name: /^一键(行内评论|全文评论|发布)/ }).click();
     await quickBar.getByRole('button', { name: '确认发布？' }).click();
     const response = await firstPost;
-    expect(response.request().postData()).toContain('position%5Bhead_sha%5D=head-sha');
+    expect(positionField(response.request().postData(), 'head_sha')).toBe('head-sha');
     await expect(page.getByRole('button', { name: '已发布', exact: true }).first()).toBeVisible({ timeout: 30000 });
 
     // 项目标识可能是数字 id 或编码路径，但 host 与 MR 必须永远是当前这一个
@@ -2006,10 +2020,10 @@ test.describe('real GitLab mode', () => {
     expect(status, raw).toBe(201);
     expect(noteId, 'GitLab 没有返回行内 note').toBeTruthy();
 
-    const sent = decodeURIComponent(response.request().postData() ?? '');
-    expect(sent).not.toContain('/dev/null');
-    expect(sent).toContain(`position[new_path]=${path}`);
-    expect(sent).toContain(`position[old_path]=${path}`);
+    const sent = sentOf(response.request().postData());
+    expect(response.request().postData()).not.toContain('/dev/null');
+    expect(response.request().headers()['content-type']).toContain('application/json');
+    expect(sent.position).toMatchObject({ position_type: 'text', new_path: path, old_path: path });
 
     const position = discussion!.notes![0].position ?? {};
     expect(position).toMatchObject({ position_type: 'text', new_path: path, old_path: path });
@@ -2442,12 +2456,12 @@ test.describe('real GitLab mode', () => {
     expect(noteId, 'GitLab 没有返回行内 note').toBeTruthy();
     // 过期那份 position 在发布前预检就被拦下，只有重锚后这一次真的打到 GitLab
     expect(posts).toHaveLength(1);
-    const sent = new URLSearchParams(posts[0]);
-    expect(sent.get('position[head_sha]')).toBe(headAfter);
-    expect(sent.get('position[head_sha]')).not.toBe(headBefore);
-    expect(sent.get('position[new_path]')).toBe(fixPath);
+    const sent = sentOf(posts[0]).position!;
+    expect(sent.head_sha).toBe(headAfter);
+    expect(sent.head_sha).not.toBe(headBefore);
+    expect(sent.new_path).toBe(fixPath);
     // 旧行号 2 在新 diff 里已经是函数签名，重锚必须按内容把评论挪到第 3 行
-    expect(sent.get('position[new_line]')).toBe('3');
+    expect(sent.new_line).toBe(3);
     expect(discussion!.notes![0].position)
       .toMatchObject({ position_type: 'text', new_path: fixPath, new_line: 3, head_sha: headAfter });
 

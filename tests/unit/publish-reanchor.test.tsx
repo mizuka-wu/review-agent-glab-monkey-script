@@ -53,6 +53,11 @@ const RULES_ONLY = { reviewMode: 'rules', gitlabToken: '', language: 'zh-CN' };
  * 服务端只认当前 head：position 带旧 head_sha 就 409。
  * push() 用来在评审跑完之后模拟「有人往 MR 推了新 commit」，之后 MR / diffs 接口一律返回新 head 与新 diff。
  */
+/** 0.4.24 起 discussions 端点发 JSON body：有没有带 position 直接看 body 里的 position 键。 */
+const hasPosition = (body: string) => (JSON.parse(body) as { position?: unknown }).position !== undefined;
+const positionField = (body: string, key: string) =>
+  (JSON.parse(body) as { position?: Record<string, unknown> }).position?.[key];
+
 function stubMr(afterPush: unknown = pushedDiff) {
   const posts: string[] = [];
   const diffGets: string[] = [];
@@ -70,7 +75,7 @@ function stubMr(afterPush: unknown = pushedDiff) {
     if (url.includes('/discussions') && method === 'POST') {
       const body = String(init?.body ?? '');
       posts.push(body);
-      const sentHead = new URLSearchParams(body).get('position[head_sha]');
+      const sentHead = positionField(body, 'head_sha');
       if (sentHead && sentHead !== state.head) return json({ message: 'position is invalid' }, 409);
       return json({ id: `d${posts.length}`, notes: [{ id: posts.length }] }, 201);
     }
@@ -88,7 +93,7 @@ function stubMr(afterPush: unknown = pushedDiff) {
     posts,
     diffGets,
     push: () => { state.head = NEW_HEAD; state.diff = afterPush; },
-    field: (post: string, key: string) => new URLSearchParams(post).get(`position[${key}]`),
+    field: (post: string, key: string) => positionField(post, key),
   };
 }
 
@@ -148,8 +153,8 @@ describe('行内位置 409 不再直接降级全文：重拉 diff_refs 重锚后
     // 重锚后重发的那一次：新 head_sha + 按内容重算出的新行号（2 → 3）
     expect(mr.posts).toHaveLength(1);
     expect(mr.field(mr.posts[0], 'head_sha')).toBe(NEW_HEAD);
-    expect(mr.field(mr.posts[0], 'new_line')).toBe('3');
-    expect(mr.posts[0]).toContain('position%5B');
+    expect(mr.field(mr.posts[0], 'new_line')).toBe(3);
+    expect(hasPosition(mr.posts[0])).toBe(true);
     // 静默成功：不打降级日志，只留计数
     expect(console_.blocks()).toHaveLength(0);
     expect(debugBus.getCounters()['publish-inline-reanchored']).toBe(1);
@@ -172,7 +177,7 @@ describe('行内位置 409 不再直接降级全文：重拉 diff_refs 重锚后
     expect(mr.posts).toHaveLength(4);
     expect(mr.posts.every((post) => mr.field(post, 'head_sha') === NEW_HEAD)).toBe(true);
     // 四条 Finding 原来在 2/4/2/3 行，push 之后整体下移一行
-    expect(mr.posts.map((post) => mr.field(post, 'new_line')).sort()).toEqual(['3', '3', '4', '5']);
+    expect(mr.posts.map((post) => mr.field(post, 'new_line')).sort()).toEqual([3, 3, 4, 5]);
     // 整批只重新拉了一次 diff：第一条 409 之后剩下的评论直接用新 refs 重锚
     expect(mr.diffGets.length - diffsBeforePublish).toBe(1);
     expect(debugBus.getCounters()['publish-409-refresh']).toBe(1);
@@ -240,7 +245,7 @@ describe('行内位置 409 不再直接降级全文：重拉 diff_refs 重锚后
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/行级 Discussion 已发布/));
     expect(mr.posts).toHaveLength(1);
     expect(mr.field(mr.posts[0], 'head_sha')).toBe(OLD_HEAD);
-    expect(mr.field(mr.posts[0], 'new_line')).toBe('2');
+    expect(mr.field(mr.posts[0], 'new_line')).toBe(2);
     expect(mr.diffGets.length).toBe(diffsBeforePublish);
     expect(debugBus.getCounters()['publish-409-refresh']).toBeUndefined();
     expect(debugBus.getCounters()['publish-inline-reanchored']).toBeUndefined();

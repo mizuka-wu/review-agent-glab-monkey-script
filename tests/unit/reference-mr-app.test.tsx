@@ -203,7 +203,8 @@ describe('reference MRs in the app', () => {
       expect(post.url.startsWith('https://other.test')).toBe(false);
       if (post.url.includes('/discussions')) {
         expect(post.url).toContain('https://gitlab.test/api/v4/projects/42/merge_requests/248/discussions');
-        expect(post.body).toContain('position%5Bhead_sha%5D=head-sha');
+        expect(JSON.parse(post.body) as { position?: Record<string, unknown> })
+          .toMatchObject({ position: { position_type: 'text', head_sha: 'head-sha' } });
       }
     }
     expect(calls.filter((call) => call.url.includes('/discussions') && call.method === 'POST')).toHaveLength(1);

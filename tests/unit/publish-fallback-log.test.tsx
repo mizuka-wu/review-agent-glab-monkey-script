@@ -35,6 +35,11 @@ const RULES_ONLY = { reviewMode: 'rules', gitlabToken: TOKEN, language: 'zh-CN' 
 const REJECTION = "Note {:line_code=>[\"can't be blank\", \"must be a valid line code\"]}";
 
 /** rejectPosition=true 时带 position 的行内请求一律 400；不带 position 的全文重发一律 201。 */
+/** 0.4.24 起 discussions 端点发 JSON body：有没有带 position 直接看 body 里的 position 键。 */
+const hasPosition = (body: string) => (JSON.parse(body) as { position?: unknown }).position !== undefined;
+const positionField = (body: string, key: string) =>
+  (JSON.parse(body) as { position?: Record<string, unknown> }).position?.[key];
+
 function stubPublish(rejectPosition: boolean) {
   const posts: string[] = [];
   const json = (body: unknown, status = 200) =>
@@ -47,7 +52,7 @@ function stubPublish(rejectPosition: boolean) {
     if (url.includes('/discussions') && method === 'POST') {
       const body = String(init?.body ?? '');
       posts.push(body);
-      return rejectPosition && body.includes('position%5B')
+      return rejectPosition && hasPosition(body)
         ? json({ message: `400 Bad request - ${REJECTION}` }, 400)
         : json({ id: `d${posts.length}`, notes: [{ id: posts.length }] }, 201);
     }
@@ -169,7 +174,7 @@ describe('行内降级为全文时把原因与完整参数打到 console', () =>
     fireEvent.click(within(dialog).getByRole('button', { name: /^确认(行内|全文)评论/ }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/行级 Discussion 已发布/));
 
-    expect(posts[0]).toContain('position%5B');
+    expect(hasPosition(posts[0])).toBe(true);
     expect(console_.blocks()).toHaveLength(0);
     expect(debugBus.getLogs().some((entry) => entry.message.startsWith(INLINE_FALLBACK_PREFIX))).toBe(false);
   });
@@ -184,7 +189,7 @@ describe('行内降级为全文时把原因与完整参数打到 console', () =>
     fireEvent.click(bottomBar().getByRole('button', { name: '确认发布？' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/总评论已发布/));
 
-    expect(posts.some((body) => body.includes('position%5B'))).toBe(false);
+    expect(posts.some((body) => hasPosition(body))).toBe(false);
     expect(console_.blocks()).toHaveLength(0);
   });
 });

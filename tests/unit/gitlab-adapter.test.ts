@@ -1,13 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildCommitPayload, buildDiscussionPayload, GitLabAdapter, GitLabApiError, positionRejectionReason } from '../../src/core/gitlab-adapter';
+import { buildCommitPayload, buildDiscussionPayload, buildDiscussionPosition, GitLabAdapter, GitLabApiError, positionRejectionReason } from '../../src/core/gitlab-adapter';
 import { resolvePublishPosition } from '../../src/core/anchor';
 import { debugBus } from '../../src/core/debug-bus';
 import { toDiscussionPosition } from '../../src/core/reanchor';
-import type { DiscussionPosition, Finding, MergeRequestRef, PageContext } from '../../src/core/types';
+import type { DiscussionDraft, DiscussionPosition, Finding, MergeRequestRef, PageContext } from '../../src/core/types';
 
-describe('GitLab discussion payload', () => {
+/** 真实发出去的那一份 JSON body：所有断言都基于它，不再看 form 平铺键。 */
+type SentDiscussion = { body: string; position?: Record<string, unknown> };
+
+function sent(draft: DiscussionDraft): SentDiscussion {
+  const payload = buildDiscussionPayload(draft);
+  // 不再是 form：整条 body 必须是合法 JSON，且不许出现 form 编码的平铺 position 键
+  expect(payload).not.toContain('position%5B');
+  expect(payload).not.toContain('position[');
+  return JSON.parse(payload) as SentDiscussion;
+}
+
+const positionOf = (draft: DiscussionDraft) => sent(draft).position;
+
+describe('GitLab discussion payload（JSON body）', () => {
   it('builds a new-side text position with all diff refs', () => {
-    const payload = buildDiscussionPayload({
+    const payload = sent({
       body: 'review comment',
       position: {
         path: 'src/a.ts',
@@ -17,29 +30,31 @@ describe('GitLab discussion payload', () => {
         diffRefs: { baseSha: 'base', headSha: 'head', startSha: 'start' },
       },
     });
-    expect(Object.fromEntries(payload)).toMatchObject({
-      body: 'review comment',
-      'position[position_type]': 'text',
-      'position[base_sha]': 'base',
-      'position[head_sha]': 'head',
-      'position[start_sha]': 'start',
-      'position[new_path]': 'src/a.ts',
-      'position[old_path]': 'src/a.ts',
-      'position[new_line]': '3',
+    expect(payload.body).toBe('review comment');
+    expect(payload.position).toMatchObject({
+      position_type: 'text',
+      base_sha: 'base',
+      head_sha: 'head',
+      start_sha: 'start',
+      new_path: 'src/a.ts',
+      old_path: 'src/a.ts',
+      new_line: 3,
     });
-    expect(payload.has('position[old_line]')).toBe(false);
+    // JSON 里行号是整数（position.json 的 old_line / new_line 就是 integer），不是 form 的字符串
+    expect(typeof payload.position!.new_line).toBe('number');
+    expect('old_line' in payload.position!).toBe(false);
   });
 
   it('uses old_line for deleted code', () => {
-    const payload = buildDiscussionPayload({
+    const position = positionOf({
       body: 'comment',
       position: { path: 'a.ts', startLine: 4, endLine: 4, side: 'old', diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' } },
     });
-    expect(payload.get('position[old_line]')).toBe('4');
+    expect(position!.old_line).toBe(4);
   });
 
   it('keeps the real path on both sides for a new file and supports line ranges', () => {
-    const payload = buildDiscussionPayload({
+    const position = positionOf({
       body: 'comment',
       position: {
         path: 'src/new.ts', oldPath: '/dev/null', newPath: 'src/new.ts',
@@ -49,14 +64,15 @@ describe('GitLab discussion payload', () => {
       },
     });
     // GitLab 把 old_path/new_path 当 diff 路径过滤条件传给 Gitaly，/dev/null 会 500。
-    expect(payload.get('position[old_path]')).toBe('src/new.ts');
-    expect(payload.get('position[new_path]')).toBe('src/new.ts');
-    expect(payload.get('position[line_range][start][new_line]')).toBe('1');
-    expect(payload.get('position[line_range][end][new_line]')).toBe('3');
+    expect(position!.old_path).toBe('src/new.ts');
+    expect(position!.new_path).toBe('src/new.ts');
+    const range = position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
+    expect(range.start.new_line).toBe(1);
+    expect(range.end.new_line).toBe(3);
   });
 
   it('sends both old_line and new_line for a context line', () => {
-    const payload = buildDiscussionPayload({
+    const payload = sent({
       body: 'comment',
       position: {
         path: 'a.ts', startLine: 15, endLine: 15, side: 'new',
@@ -64,13 +80,12 @@ describe('GitLab discussion payload', () => {
         diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
       },
     });
-    expect(payload.get('position[old_line]')).toBe('15');
-    expect(payload.get('position[new_line]')).toBe('15');
-    expect([...payload.keys()].some((key) => key.startsWith('position[line_range]'))).toBe(false);
+    expect(payload.position).toMatchObject({ old_line: 15, new_line: 15 });
+    expect('line_range' in payload.position!).toBe(false);
   });
 
   it('sends only the side that really exists on a removed line', () => {
-    const payload = buildDiscussionPayload({
+    const position = positionOf({
       body: 'comment',
       position: {
         path: 'a.ts', startLine: 33, endLine: 33, side: 'old',
@@ -78,12 +93,12 @@ describe('GitLab discussion payload', () => {
         diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
       },
     });
-    expect(payload.get('position[old_line]')).toBe('33');
-    expect(payload.has('position[new_line]')).toBe(false);
+    expect(position!.old_line).toBe(33);
+    expect('new_line' in position!).toBe(false);
   });
 
   it('describes the end line at top level and pairs every line_range endpoint separately', () => {
-    const payload = buildDiscussionPayload({
+    const position = positionOf({
       body: 'comment',
       position: {
         // start 是 context 行（两侧都有行号），end 是 added 行（只有 new 侧）
@@ -92,16 +107,16 @@ describe('GitLab discussion payload', () => {
         diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
       },
     });
-    expect(payload.get('position[new_line]')).toBe('16');
-    expect(payload.has('position[old_line]')).toBe(false);
-    expect(payload.get('position[line_range][start][old_line]')).toBe('15');
-    expect(payload.get('position[line_range][start][new_line]')).toBe('15');
-    expect(payload.get('position[line_range][end][new_line]')).toBe('16');
-    expect(payload.has('position[line_range][end][old_line]')).toBe(false);
+    const range = position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
+    expect(position!.new_line).toBe(16);
+    expect('old_line' in position!).toBe(false);
+    expect(range.start).toMatchObject({ old_line: 15, new_line: 15 });
+    expect(range.end.new_line).toBe(16);
+    expect('old_line' in range.end).toBe(false);
   });
 
   it('only emits line_range keys the GitLab json schema allows', () => {
-    const payload = buildDiscussionPayload({
+    const position = positionOf({
       body: 'comment',
       position: {
         path: 'a.ts', startLine: 29, endLine: 36, side: 'new',
@@ -111,30 +126,46 @@ describe('GitLab discussion payload', () => {
     });
     // line_range 被 GitLab 原样存下并按 additionalProperties: false 校验，多一个键就整条 400。
     // 键名抄 19.4 容器 app/validators/json_schemas/position.json 里 line_range.start / .end 的 properties。
-    const allowed = new Set(['start', 'end'].flatMap((endpoint) =>
-      ['line_code', 'type', 'old_line', 'new_line'].map((field) => `position[line_range][${endpoint}][${field}]`)));
-    const emitted = [...payload.keys()].filter((key) => key.startsWith('position[line_range]'));
-    expect(emitted.length).toBeGreaterThan(0);
-    expect(emitted.filter((key) => !allowed.has(key))).toEqual([]);
+    const allowed = ['line_code', 'type', 'old_line', 'new_line'];
+    const range = position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
+    for (const endpoint of ['start', 'end'] as const) {
+      const keys = Object.keys(range[endpoint]);
+      expect(keys.length).toBeGreaterThan(0);
+      expect(keys.filter((key) => !allowed.includes(key))).toEqual([]);
+    }
   });
 
   it('drops blank position fields instead of sending empty values', () => {
-    const payload = buildDiscussionPayload({
+    const position = positionOf({
       body: 'comment',
       position: {
         path: 'a.ts', startLine: 2, endLine: 2, side: 'new',
         diffRefs: { baseSha: '', headSha: 'h', startSha: '' },
       },
     });
-    expect(payload.has('position[base_sha]')).toBe(false);
-    expect(payload.has('position[start_sha]')).toBe(false);
-    expect(payload.get('position[head_sha]')).toBe('h');
+    // undefined 键由 JSON.stringify 自动省略：body 里连键名都不出现
+    expect('base_sha' in position!).toBe(false);
+    expect('start_sha' in position!).toBe(false);
+    expect(buildDiscussionPayload({
+      body: 'comment',
+      position: { path: 'a.ts', startLine: 2, endLine: 2, side: 'new', diffRefs: { baseSha: '', headSha: 'h', startSha: '' } },
+    })).not.toContain('base_sha');
+    expect(position!.head_sha).toBe('h');
   });
 
   it('omits every position field for a full-text comment', () => {
-    const payload = buildDiscussionPayload({ body: 'MR 级评论' });
-    expect(Object.fromEntries(payload)).toEqual({ body: 'MR 级评论' });
-    expect([...payload.keys()].some((key) => key.startsWith('position'))).toBe(false);
+    expect(sent({ body: 'MR 级评论' })).toEqual({ body: 'MR 级评论' });
+    expect(buildDiscussionPayload({ body: 'MR 级评论' })).toBe('{"body":"MR 级评论"}');
+  });
+
+  it('position 对象由 DiscussionPosition 直接构造，序列化前后是同一份结构', () => {
+    const position: DiscussionPosition = {
+      path: 'a.ts', startLine: 2, endLine: 4, side: 'new',
+      start: { newLine: 2 }, end: { newLine: 4 },
+      diffRefs: { baseSha: 'b', headSha: 'h', startSha: 's' },
+    };
+    expect(JSON.parse(buildDiscussionPayload({ body: 'x', position })) as SentDiscussion)
+      .toEqual({ body: 'x', position: JSON.parse(JSON.stringify(buildDiscussionPosition(position))) as unknown });
   });
 });
 
@@ -249,13 +280,15 @@ describe('publishComment inline → full-text fallback', () => {
     return { adapter: new GitLabAdapter(page, '', fetcher), posts };
   }
 
-  const bodyOf = (post: string) => new URLSearchParams(post).get('body') ?? '';
+  const parsedOf = (post: string) => JSON.parse(post) as SentDiscussion;
+  const bodyOf = (post: string) => parsedOf(post).body;
+  const positionOf = (post: string) => parsedOf(post).position;
 
   it('creates an inline discussion when the position is accepted', async () => {
     const { adapter, posts } = publisher([200]);
     expect(await adapter.publishComment(ref, finding, 'Comment', position)).toMatchObject({ id: 'd1', mode: 'inline' });
     expect(posts).toHaveLength(1);
-    expect(new URLSearchParams(posts[0]).get('position[new_line]')).toBe('12');
+    expect(positionOf(posts[0])!.new_line).toBe(12);
     expect(bodyOf(posts[0])).toBe('Comment');
   });
 
@@ -263,7 +296,7 @@ describe('publishComment inline → full-text fallback', () => {
     const { adapter, posts } = publisher([200]);
     expect(await adapter.publishComment(ref, finding, 'Comment')).toMatchObject({ id: 'd1', mode: 'full' });
     expect(posts).toHaveLength(1);
-    expect(posts[0]).not.toContain('position');
+    expect(positionOf(posts[0])).toBeUndefined();
     expect(bodyOf(posts[0])).toContain('src/a.ts:12');
     expect(bodyOf(posts[0])).toContain('Comment');
   });
@@ -273,8 +306,8 @@ describe('publishComment inline → full-text fallback', () => {
       const { adapter, posts } = publisher([status, 200]);
       expect(await adapter.publishComment(ref, finding, 'Comment', position)).toMatchObject({ id: 'd2', mode: 'full' });
       expect(posts).toHaveLength(2);
-      expect(new URLSearchParams(posts[0]).get('position[new_line]')).toBe('12');
-      expect(posts[1]).not.toContain('position');
+      expect(positionOf(posts[0])!.new_line).toBe(12);
+      expect(positionOf(posts[1])).toBeUndefined();
       expect(bodyOf(posts[1])).toContain('全文评论');
     }
   });
@@ -284,7 +317,7 @@ describe('publishComment inline → full-text fallback', () => {
     const stale = { ...position, diffRefs: { baseSha: 'base', headSha: 'old', startSha: 'start' } };
     expect(await adapter.publishComment(ref, finding, 'Comment', stale)).toMatchObject({ mode: 'full' });
     expect(posts).toHaveLength(1);
-    expect(posts[0]).not.toContain('position');
+    expect(positionOf(posts[0])).toBeUndefined();
   });
 
   it('does not retry when GitLab rejects the request itself', async () => {
@@ -348,7 +381,7 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
     path: 'src/a.ts', startLine, endLine: startLine, side: 'new',
     diffRefs: { baseSha: 'base', headSha, startSha: 'start' },
   });
-  const field = (post: string, key: string) => new URLSearchParams(post).get(`position[${key}]`);
+  const field = (post: string, key: string) => (JSON.parse(post) as SentDiscussion).position?.[key];
 
   /**
    * 服务端 head 已经是 head-2：带旧 head_sha 的 position 在发布前预检就被判 409（不会真的发出去），
@@ -363,8 +396,8 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
       if (init?.method === 'POST') {
         const body = String(init.body);
         posts.push(body);
-        const sentHead = new URLSearchParams(body).get('position[head_sha]');
-        const rejected = sentHead !== null && (conflicts > 0 || sentHead !== head);
+        const sentHead = (JSON.parse(body) as SentDiscussion).position?.head_sha;
+        const rejected = sentHead !== undefined && (conflicts > 0 || sentHead !== head);
         if (rejected && conflicts > 0) conflicts -= 1;
         return rejected
           ? new Response('{"message":"position is invalid"}', { status: 409 })
@@ -391,8 +424,8 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
     expect(published.downgrade).toBeUndefined();
     expect(reanchor).toHaveBeenCalledTimes(1);
     expect(posts).toHaveLength(2);
-    expect(field(posts[0], 'new_line')).toBe('12');
-    expect(field(posts[1], 'new_line')).toBe('13');
+    expect(field(posts[0], 'new_line')).toBe(12);
+    expect(field(posts[1], 'new_line')).toBe(13);
     expect(debugBus.getCounters()['publish-inline-reanchored']).toBe(1);
     expect(debugBus.getCounters()['publish-inline-reanchor-failed']).toBeUndefined();
   });
@@ -432,9 +465,9 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
     expect(published.downgrade?.reanchorReason).toContain('重发仍被 GitLab 拒绝');
     expect(published.downgrade?.reanchorPosition?.startLine).toBe(13);
     expect(posts).toHaveLength(3);
-    expect(field(posts[0], 'new_line')).toBe('12');
-    expect(field(posts[1], 'new_line')).toBe('13');
-    expect(posts[2]).not.toContain('position');
+    expect(field(posts[0], 'new_line')).toBe(12);
+    expect(field(posts[1], 'new_line')).toBe(13);
+    expect((JSON.parse(posts[2]) as SentDiscussion).position).toBeUndefined();
     expect(debugBus.getCounters()).toMatchObject({
       'publish-inline-rejected:409': 1,
       'publish-inline-reanchor-failed': 1,
@@ -453,7 +486,7 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
     expect(published.downgrade?.reanchored).toBe(true);
     expect(published.downgrade?.reanchorPosition).toBeUndefined();
     expect(posts).toHaveLength(2);
-    expect(posts[1]).not.toContain('position');
+    expect((JSON.parse(posts[1]) as SentDiscussion).position).toBeUndefined();
   });
 
   it('400 / 422 不是 diff_refs 过期，不触发重锚', async () => {
@@ -463,7 +496,7 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
         const url = new URL(input);
         if (init?.method === 'POST') {
           posts.push(String(init.body));
-          return new URLSearchParams(String(init.body)).get('position[head_sha]')
+          return (JSON.parse(String(init.body)) as SentDiscussion).position?.head_sha
             ? new Response('{"message":"nope"}', { status })
             : new Response(JSON.stringify({ id: 'd1', notes: [{ id: 1 }] }), { status: 200 });
         }
@@ -497,8 +530,8 @@ describe('行内位置 409 → 重拉 diff_refs 重锚后重发', () => {
     expect(published.mode).toBe('full');
     // 行内两次（原位置 + 重锚后各一次）+ 全文一次，到此为止不再循环
     expect(posts).toHaveLength(3);
-    expect(field(posts[1], 'new_line')).toBe('14');
-    expect(posts[2]).not.toContain('position');
+    expect(field(posts[1], 'new_line')).toBe(14);
+    expect((JSON.parse(posts[2]) as SentDiscussion).position).toBeUndefined();
   });
 
   it('没给重锚钩子时行为不变：409 直接降级全文', async () => {
@@ -703,12 +736,11 @@ describe('fetchMrDiffSnapshot：diff_refs 与 diff 同源（stale diff_refs 的�
 
     // 模型报的第 9 行在这份 diff 里是 traceId：按内容锚到第 10 行，sha 用同一个响应里的
     expect(publish.finding.line).toBe(10);
-    const params = Object.fromEntries(buildDiscussionPayload({
+    const sentPayload = JSON.parse(buildDiscussionPayload({
       body: 'b', position: toDiscussionPosition(publish, snapshot.context.diffRefs)!,
-    }));
-    expect(params).toMatchObject({
-      'position[base_sha]': 'v-base', 'position[head_sha]': 'v-head', 'position[start_sha]': 'v-start',
-      'position[new_line]': '10',
+    })) as SentDiscussion;
+    expect(sentPayload.position).toMatchObject({
+      base_sha: 'v-base', head_sha: 'v-head', start_sha: 'v-start', new_line: 10,
     });
   });
 
@@ -752,38 +784,39 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
   };
   const SCHEMA_FIELDS = ['line_code', 'type', 'old_line', 'new_line'];
 
+  type SentRange = { start: Record<string, unknown>; end: Record<string, unknown> };
+
   const paramsOf = (position: Partial<DiscussionPosition> & { startLine: number; endLine: number }) =>
-    Object.fromEntries(buildDiscussionPayload({
+    (JSON.parse(buildDiscussionPayload({
       body: 'c',
       position: { path: 'a.ts', side: 'new', diffRefs: REFS, ...position } as DiscussionPosition,
-    })) as Record<string, string>;
+    })) as SentDiscussion).position!;
+
+  const rangeOf = (params: Record<string, unknown>) => params.line_range as SentRange;
 
   /** 模拟老 GitLab 的严格校验：必填键到齐、值是字符串枚举、没有 additionalProperties 之外的键、行号自洽。 */
-  function expectStrictLineRange(params: Record<string, string>) {
-    const emitted = Object.keys(params).filter((key) => key.startsWith('position[line_range]'));
-    expect(emitted.length, '多行评论没发 line_range').toBeGreaterThan(0);
+  function expectStrictLineRange(params: Record<string, unknown>) {
+    const range = params.line_range as SentRange | undefined;
+    expect(range, '多行评论没发 line_range').toBeTruthy();
 
-    for (const endpoint of ['start', 'end']) {
-      const prefix = `position[line_range][${endpoint}]`;
-      const fields = emitted
-        .filter((key) => key.startsWith(`${prefix}[`))
-        .map((key) => key.slice(prefix.length + 1, -1));
+    for (const endpoint of ['start', 'end'] as const) {
+      const sent = range![endpoint];
       // position.json 里 line_range.start / .end 都是 additionalProperties: false，多一个键整条 400
-      expect(fields.filter((field) => !SCHEMA_FIELDS.includes(field)), `${endpoint} 多了 schema 不允许的键`).toEqual([]);
+      expect(Object.keys(sent).filter((field) => !SCHEMA_FIELDS.includes(field)), `${endpoint} 多了 schema 不允许的键`).toEqual([]);
 
       // 文档标的两个 Required 键：line_code 是 SHA1(path)_old_new，type 只能是 'new' / 'old'
-      expect(params[`${prefix}[line_code]`], `${endpoint} 缺 line_code`).toMatch(/^[0-9a-f]{40}_\d+_\d+$/);
-      expect(['new', 'old'], `${endpoint} 的 type 不是字符串枚举`).toContain(params[`${prefix}[type]`]);
+      expect(sent.line_code, `${endpoint} 缺 line_code`).toMatch(/^[0-9a-f]{40}_\d+_\d+$/);
+      expect(['new', 'old'], `${endpoint} 的 type 不是字符串枚举`).toContain(sent.type);
 
       // line_code 里的行号必须和同一 endpoint 的 old_line / new_line 对得上，缺的一侧按 GitLab 口径补 0
-      const [, oldPart, newPart] = params[`${prefix}[line_code]`].split('_');
+      const [, oldPart, newPart] = String(sent.line_code).split('_');
       expect(Number(oldPart), `${endpoint} line_code 的 old 行号和 old_line 不一致`)
-        .toBe(params[`${prefix}[old_line]`] === undefined ? 0 : Number(params[`${prefix}[old_line]`]));
+        .toBe(sent.old_line === undefined ? 0 : Number(sent.old_line));
       expect(Number(newPart), `${endpoint} line_code 的 new 行号和 new_line 不一致`)
-        .toBe(params[`${prefix}[new_line]`] === undefined ? 0 : Number(params[`${prefix}[new_line]`]));
+        .toBe(sent.new_line === undefined ? 0 : Number(sent.new_line));
       // 只有本 commit 新增的行（没有 old_line）才是 'new'
-      expect(params[`${prefix}[type]`], `${endpoint} 的 type 和行号配对不自洽`)
-        .toBe(params[`${prefix}[old_line]`] === undefined ? 'new' : 'old');
+      expect(sent.type, `${endpoint} 的 type 和行号配对不自洽`)
+        .toBe(sent.old_line === undefined ? 'new' : 'old');
     }
   }
 
@@ -792,16 +825,12 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       startLine: 18, endLine: 20, side: 'new',
       start: { oldLine: 18, newLine: 18 }, end: { newLine: 20 },
     });
-    expect(params).toMatchObject({
-      'position[line_range][start][line_code]': `${HASH['a.ts']}_18_18`,
-      'position[line_range][start][type]': 'old',
-      'position[line_range][start][old_line]': '18',
-      'position[line_range][start][new_line]': '18',
-      'position[line_range][end][line_code]': `${HASH['a.ts']}_0_20`,
-      'position[line_range][end][type]': 'new',
-      'position[line_range][end][new_line]': '20',
+    const range = rangeOf(params);
+    expect(range.start).toEqual({
+      line_code: `${HASH['a.ts']}_18_18`, type: 'old', old_line: 18, new_line: 18,
     });
-    expect(params['position[line_range][end][old_line]']).toBeUndefined();
+    expect(range.end).toEqual({ line_code: `${HASH['a.ts']}_0_20`, type: 'new', new_line: 20 });
+    expect('old_line' in range.end).toBe(false);
     expectStrictLineRange(params);
   });
 
@@ -810,20 +839,22 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       startLine: 19, endLine: 21, side: 'old',
       start: { oldLine: 19 }, end: { oldLine: 20, newLine: 21 },
     });
+    const range = rangeOf(params);
     // start 是 removed 行：只有 old_line → 'old'；end 是 context 行：两侧都有 → 也是 'old'
-    expect(params['position[line_range][start][type]']).toBe('old');
-    expect(params['position[line_range][end][type]']).toBe('old');
-    expect(params['position[line_range][start][line_code]']).toBe(`${HASH['a.ts']}_19_0`);
-    expect(params['position[line_range][end][line_code]']).toBe(`${HASH['a.ts']}_20_21`);
+    expect(range.start.type).toBe('old');
+    expect(range.end.type).toBe('old');
+    expect(range.start.line_code).toBe(`${HASH['a.ts']}_19_0`);
+    expect(range.end.line_code).toBe(`${HASH['a.ts']}_20_21`);
     expectStrictLineRange(params);
   });
 
   it('line_code 缺的一侧补 0，不是留空串', () => {
     const params = paramsOf({ startLine: 2, endLine: 5, side: 'new', start: { newLine: 2 }, end: { newLine: 5 } });
-    expect(params['position[line_range][start][line_code]']).toBe(`${HASH['a.ts']}_0_2`);
-    expect(params['position[line_range][end][line_code]']).toBe(`${HASH['a.ts']}_0_5`);
-    expect(params['position[line_range][start][line_code]']).not.toContain('__');
-    expect(params['position[line_range][start][line_code]']).not.toMatch(/_$/);
+    const range = rangeOf(params);
+    expect(range.start.line_code).toBe(`${HASH['a.ts']}_0_2`);
+    expect(range.end.line_code).toBe(`${HASH['a.ts']}_0_5`);
+    expect(String(range.start.line_code)).not.toContain('__');
+    expect(String(range.start.line_code)).not.toMatch(/_$/);
     expectStrictLineRange(params);
   });
 
@@ -832,8 +863,8 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       path: 'src/new.ts', oldPath: 'src/old.ts', newPath: 'src/new.ts',
       startLine: 3, endLine: 4, side: 'new', start: { oldLine: 3, newLine: 3 }, end: { newLine: 4 },
     });
-    expect(renamed['position[new_path]']).toBe('src/new.ts');
-    expect(renamed['position[line_range][start][line_code]']).toBe(`${HASH['src/new.ts']}_3_3`);
+    expect(renamed.new_path).toBe('src/new.ts');
+    expect(rangeOf(renamed).start.line_code).toBe(`${HASH['src/new.ts']}_3_3`);
     expectStrictLineRange(renamed);
 
     // 新增文件：old_path 是 /dev/null，两侧都只能哈希新路径
@@ -841,8 +872,8 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       path: 'src/new.ts', oldPath: '/dev/null', newPath: 'src/new.ts',
       startLine: 1, endLine: 3, side: 'new', start: { newLine: 1 }, end: { newLine: 3 },
     });
-    expect(created['position[line_range][start][line_code]']).toBe(`${HASH['src/new.ts']}_0_1`);
-    expect(created['position[line_range][end][line_code]']).toBe(`${HASH['src/new.ts']}_0_3`);
+    expect(rangeOf(created).start.line_code).toBe(`${HASH['src/new.ts']}_0_1`);
+    expect(rangeOf(created).end.line_code).toBe(`${HASH['src/new.ts']}_0_3`);
     expectStrictLineRange(created);
 
     // 删除文件：new_path 是 /dev/null，哈希回落 old_path
@@ -850,29 +881,21 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       path: 'src/gone.ts', oldPath: 'src/gone.ts', newPath: '/dev/null',
       startLine: 7, endLine: 9, side: 'old', start: { oldLine: 7 }, end: { oldLine: 9 },
     });
-    expect(deleted['position[new_path]']).toBe('src/gone.ts');
-    expect(deleted['position[line_range][start][line_code]']).toBe(`${HASH['src/gone.ts']}_7_0`);
-    expect(deleted['position[line_range][start][type]']).toBe('old');
+    expect(deleted.new_path).toBe('src/gone.ts');
+    expect(rangeOf(deleted).start.line_code).toBe(`${HASH['src/gone.ts']}_7_0`);
+    expect(rangeOf(deleted).start.type).toBe('old');
     expectStrictLineRange(deleted);
   });
 
   it('没有 diff 行配对时按 side 兜底，两个必填键照样发得出去', () => {
     const byNew = paramsOf({ startLine: 2, endLine: 5, side: 'new' });
-    expect(byNew).toMatchObject({
-      'position[line_range][start][line_code]': `${HASH['a.ts']}_0_2`,
-      'position[line_range][start][type]': 'new',
-      'position[line_range][end][line_code]': `${HASH['a.ts']}_0_5`,
-      'position[line_range][end][type]': 'new',
-    });
+    expect(rangeOf(byNew).start).toMatchObject({ line_code: `${HASH['a.ts']}_0_2`, type: 'new' });
+    expect(rangeOf(byNew).end).toMatchObject({ line_code: `${HASH['a.ts']}_0_5`, type: 'new' });
     expectStrictLineRange(byNew);
 
     const byOld = paramsOf({ startLine: 4, endLine: 6, side: 'old' });
-    expect(byOld).toMatchObject({
-      'position[line_range][start][line_code]': `${HASH['a.ts']}_4_0`,
-      'position[line_range][start][type]': 'old',
-      'position[line_range][end][line_code]': `${HASH['a.ts']}_6_0`,
-      'position[line_range][end][type]': 'old',
-    });
+    expect(rangeOf(byOld).start).toMatchObject({ line_code: `${HASH['a.ts']}_4_0`, type: 'old' });
+    expect(rangeOf(byOld).end).toMatchObject({ line_code: `${HASH['a.ts']}_6_0`, type: 'old' });
     expectStrictLineRange(byOld);
   });
 
@@ -882,14 +905,143 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       { path: 'a.ts', startLine: 9, endLine: 9, side: 'old' as const, start: { oldLine: 9 }, end: { oldLine: 9 }, diffRefs: REFS },
       { path: 'a.ts', startLine: 9, endLine: 9, side: 'new' as const, diffRefs: REFS },
     ]) {
-      const params = Object.fromEntries(buildDiscussionPayload({ body: 'c', position })) as Record<string, string>;
-      expect(Object.keys(params).filter((key) => key.includes('line_range'))).toEqual([]);
-      expect(params['position[new_line]'] ?? params['position[old_line]']).toBe('9');
+      const params = (JSON.parse(buildDiscussionPayload({ body: 'c', position })) as SentDiscussion).position!;
+      expect('line_range' in params).toBe(false);
+      expect(buildDiscussionPayload({ body: 'c', position })).not.toContain('line_range');
+      expect(params.new_line ?? params.old_line).toBe(9);
     }
   });
 
   it('MR 级全文评论不发任何 position 键', () => {
-    const params = Object.fromEntries(buildDiscussionPayload({ body: 'c' }));
-    expect(Object.keys(params)).toEqual(['body']);
+    expect(Object.keys(JSON.parse(buildDiscussionPayload({ body: 'c' })) as SentDiscussion)).toEqual(['body']);
+  });
+});
+
+/**
+ * 真实链路（老 GitLab + 油猴 GM.xmlHttpRequest）上 form 编码的嵌套 position 会被解析成畸形结构，
+ * GitLab 只回一句 400 `position 必须是有效的 json schema`。发布端点因此一律改发 JSON：
+ * 这里把「真的打到 fetcher 的那一次请求」的 Content-Type 与 body 结构钉死。
+ */
+describe('发布端点走 JSON body（不再 form 编码嵌套 position）', () => {
+  const page: PageContext = { origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 };
+  const ref: MergeRequestRef = { origin: 'https://gitlab.test', projectPath: 'group/project', mergeRequestIid: 7 };
+  const REFS = { baseSha: 'base', headSha: 'head', startSha: 'start' };
+
+  type Seen = { url: string; contentType: string; body: string };
+
+  function recorder(options: { discussions?: unknown[] } = {}) {
+    const seen: Seen[] = [];
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (init?.method === 'POST') {
+        seen.push({ url: input, contentType: headers['Content-Type'] ?? '', body: String(init?.body ?? '') });
+        return new Response(
+          JSON.stringify(input.endsWith('/notes') || input.endsWith('/approve')
+            ? { id: 99 }
+            : { id: 'd1', notes: [{ id: 11 }] }),
+          { status: 201 },
+        );
+      }
+      if (input.endsWith('/merge_requests/7')) {
+        return new Response(JSON.stringify({ diff_refs: { base_sha: 'base', head_sha: 'head', start_sha: 'start' } }), { status: 200 });
+      }
+      return new Response(JSON.stringify(options.discussions ?? []), { status: 200 });
+    });
+    return { adapter: new GitLabAdapter(page, 'glpat-test', fetcher), seen };
+  }
+
+  it('单行行内评论：Content-Type 是 application/json，body 解析后是原生 position 结构', async () => {
+    const { adapter, seen } = recorder();
+
+    const published = await adapter.createDiscussion(ref, {
+      body: 'inline single',
+      position: {
+        path: 'src/a.ts', startLine: 12, endLine: 12, side: 'new',
+        start: { oldLine: 11, newLine: 12 }, end: { oldLine: 11, newLine: 12 }, diffRefs: REFS,
+      },
+    });
+
+    expect(published).toEqual({ id: 'd1', noteId: '11' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe('https://gitlab.test/api/v4/projects/group%2Fproject/merge_requests/7/discussions');
+    expect(seen[0].contentType).toBe('application/json');
+    // 一个 form 平铺键都不许有：position[line_range][...] 这种嵌套字段正是老 GitLab 解析出畸形结构的原因
+    expect(seen[0].body).not.toContain('position%5B');
+    expect(seen[0].body).not.toContain('position[');
+    expect(JSON.parse(seen[0].body)).toEqual({
+      body: 'inline single',
+      position: {
+        position_type: 'text', base_sha: 'base', head_sha: 'head', start_sha: 'start',
+        new_path: 'src/a.ts', old_path: 'src/a.ts', old_line: 11, new_line: 12,
+      },
+    });
+  });
+
+  it('多行行内评论：line_range 是嵌套对象，行号是整数，缺的一侧整个键都不出现', async () => {
+    const { adapter, seen } = recorder();
+
+    await adapter.createDiscussion(ref, {
+      body: 'inline multi',
+      position: {
+        path: 'src/a.ts', startLine: 12, endLine: 14, side: 'new',
+        start: { newLine: 12 }, end: { oldLine: 13, newLine: 14 }, diffRefs: REFS,
+      },
+    });
+
+    expect(seen[0].contentType).toBe('application/json');
+    const body = JSON.parse(seen[0].body) as SentDiscussion;
+    const range = body.position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
+    expect(body.body).toBe('inline multi');
+    expect(body.position).toMatchObject({ position_type: 'text', old_line: 13, new_line: 14 });
+    expect(range.start).toMatchObject({ type: 'new', new_line: 12 });
+    expect(range.start.line_code).toMatch(/^[0-9a-f]{40}_0_12$/);
+    expect(range.end).toMatchObject({ type: 'old', old_line: 13, new_line: 14 });
+    expect(range.end.line_code).toMatch(/^[0-9a-f]{40}_13_14$/);
+    expect('old_line' in range.start).toBe(false);
+    expect(Object.keys(range)).toEqual(['start', 'end']);
+  });
+
+  it('MR 级全文评论：body 里只有 body 一个键，position 整个不出现', async () => {
+    const { adapter, seen } = recorder();
+
+    await adapter.createDiscussion(ref, { body: '全文评论' });
+
+    expect(seen[0].contentType).toBe('application/json');
+    expect(JSON.parse(seen[0].body)).toEqual({ body: '全文评论' });
+  });
+
+  it('总评论（notes 端点）同族一致：也是 JSON，接口照样 201', async () => {
+    const { adapter, seen } = recorder();
+
+    await expect(adapter.createNote(ref, 'MR 总评论')).resolves.toEqual({ id: 99 });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe('https://gitlab.test/api/v4/projects/group%2Fproject/merge_requests/7/notes');
+    expect(seen[0].contentType).toBe('application/json');
+    expect(JSON.parse(seen[0].body)).toEqual({ body: 'MR 总评论' });
+  });
+
+  it('去重路径不变：命中已有讨论时一次 POST 都不发，也就谈不上编码', async () => {
+    const { adapter, seen } = recorder({
+      discussions: [{ id: 'existing', notes: [{ id: 2, body: 'inline single' }] }],
+    });
+
+    const published = await adapter.createDiscussion(ref, {
+      body: 'inline single',
+      position: { path: 'src/a.ts', startLine: 12, endLine: 12, side: 'new', diffRefs: REFS },
+    });
+
+    expect(published).toEqual({ id: 'existing', noteId: '2', deduplicated: true });
+    expect(seen).toEqual([]);
+  });
+
+  it('approve 是唯一还吃 form 默认 Content-Type 的端点：它没有 body，JSON 化没有把它改坏', async () => {
+    const { adapter, seen } = recorder();
+
+    await adapter.approveMergeRequest(ref);
+
+    expect(seen[0].url).toBe('https://gitlab.test/api/v4/projects/group%2Fproject/merge_requests/7/approve');
+    expect(seen[0].contentType).toBe('application/x-www-form-urlencoded');
+    expect(seen[0].body).toBe('');
   });
 });

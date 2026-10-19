@@ -57,8 +57,9 @@ async function postDiscussion(
     `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(sandbox.projectPath)}/merge_requests/${sandbox.iid}/discussions`,
     {
       method: 'POST',
-      headers: { 'PRIVATE-TOKEN': gitlabPat, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: buildDiscussionPayload({ body, position }).toString(),
+      // form 编码的嵌套 position 在老 GitLab + GM 链路上会被解析成畸形结构（400 position 必须是有效的 json schema）：一律发 JSON
+      headers: { 'PRIVATE-TOKEN': gitlabPat, 'Content-Type': 'application/json' },
+      body: buildDiscussionPayload({ body, position }),
     },
   );
   return { status: response.status, text: await response.text() };
@@ -120,6 +121,20 @@ async function cleanProbes(sandbox: { projectPath: string; iid: number }) {
   }
 }
 
+/** 真实发出的那份 JSON body 里的 position：断言一律走解析后的结构。 */
+interface SentEndpoint { line_code?: string; type?: string; old_line?: number; new_line?: number }
+interface SentPosition {
+  position_type?: string; base_sha?: string; head_sha?: string; start_sha?: string;
+  old_path?: string; new_path?: string; old_line?: number; new_line?: number;
+  line_range?: { start: SentEndpoint; end: SentEndpoint };
+}
+
+function sentPosition(position: DiscussionPosition, body: string): SentPosition {
+  const payload = buildDiscussionPayload({ body, position });
+  expect(payload, '发布 body 里不许再有 form 平铺键').not.toContain('position[');
+  return (JSON.parse(payload) as { position?: SentPosition }).position!;
+}
+
 interface Row {
   sandbox: string;
   kind: string;
@@ -129,7 +144,7 @@ interface Row {
   side: string;
   status?: number;
   detail?: string;
-  params: Record<string, string>;
+  params: SentPosition;
   reasonCode?: string;
   corrected?: boolean;
 }
@@ -174,24 +189,24 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
           expect(publish.finding.line, `${label} ${kind} 行锚错了行`).toBe(realLine);
           expect(publish.finding.path).toBe(path);
 
-          const params = Object.fromEntries(buildDiscussionPayload({ body: candidate.comment, position: position! })) as Record<string, string>;
+          const params = sentPosition(position!, candidate.comment);
           // 三类行各自的行号配对：added 只有 new_line、removed 只有 old_line、context 两个都有
           if (kind === 'added') {
-            expect(params['position[new_line]'], `${label} added 行少了 new_line`).toBe(String(realLine));
-            expect(params['position[old_line]'], `${label} added 行多带了 old_line`).toBeUndefined();
+            expect(params.new_line, `${label} added 行少了 new_line`).toBe(realLine);
+            expect(params.old_line, `${label} added 行多带了 old_line`).toBeUndefined();
           } else if (kind === 'removed') {
-            expect(params['position[old_line]'], `${label} removed 行少了 old_line`).toBe(String(realLine));
-            expect(params['position[new_line]'], `${label} removed 行多带了 new_line`).toBeUndefined();
+            expect(params.old_line, `${label} removed 行少了 old_line`).toBe(realLine);
+            expect(params.new_line, `${label} removed 行多带了 new_line`).toBeUndefined();
           } else {
-            expect(params['position[new_line]'], `${label} context 行少了 new_line`).toBe(String(row.newLine));
-            expect(params['position[old_line]'], `${label} context 行少了 old_line`).toBe(String(row.oldLine));
+            expect(params.new_line, `${label} context 行少了 new_line`).toBe(row.newLine);
+            expect(params.old_line, `${label} context 行少了 old_line`).toBe(row.oldLine);
           }
           // 路径必须是 diff 里的真实路径：rename 时两侧各写各的，且不许带 a/ b/ 前缀
-          expect(params['position[new_path]']).toBe(file.newPath === '/dev/null' ? file.oldPath : file.newPath);
-          expect(params['position[old_path]']).toBe(file.oldPath === '/dev/null' ? file.newPath : file.oldPath);
-          expect(params['position[base_sha]']).toBe(snapshot.context.diffRefs.baseSha);
-          expect(params['position[head_sha]']).toBe(snapshot.context.diffRefs.headSha);
-          expect(params['position[start_sha]']).toBe(snapshot.context.diffRefs.startSha);
+          expect(params.new_path).toBe(file.newPath === '/dev/null' ? file.oldPath : file.newPath);
+          expect(params.old_path).toBe(file.oldPath === '/dev/null' ? file.newPath : file.oldPath);
+          expect(params.base_sha).toBe(snapshot.context.diffRefs.baseSha);
+          expect(params.head_sha).toBe(snapshot.context.diffRefs.headSha);
+          expect(params.start_sha).toBe(snapshot.context.diffRefs.startSha);
 
           const posted = await postDiscussion(sandbox, position!, candidate.comment);
           results.push({
@@ -331,7 +346,7 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
   test('多行评论：line_range 补齐官方必填的 line_code + type，真实发布仍 201 且被原样存下', async () => {
     const results: {
       sandbox: string; pair: string; path: string; side: string; status?: number; detail?: string;
-      params: Record<string, string>; stored?: unknown; types: string[];
+      params: SentPosition; stored?: unknown; types: string[];
     }[] = [];
     const PER_SANDBOX = 3;
 
@@ -382,25 +397,23 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
         expect(publish.finding.endLine, `${label} ${pair} 多行终点锚错了`).toBe(startLine + 1);
 
         const position = toDiscussionPosition(publish, snapshot.context.diffRefs)!;
-        const params = Object.fromEntries(
-          buildDiscussionPayload({ body: candidate.comment, position }),
-        ) as Record<string, string>;
+        const params = sentPosition(position, candidate.comment);
 
         // line_code 口径照抄 GitLab：SHA1(new_path.presence || old_path)_old_new，缺的一侧补 0
-        const fileHash = sha1Hex(params['position[new_path]']);
+        const fileHash = sha1Hex(String(params.new_path));
         const types: string[] = [];
         for (const endpoint of ['start', 'end'] as const) {
-          const prefix = `position[line_range][${endpoint}]`;
+          const sent = params.line_range![endpoint];
           const ref = endpoint === 'start' ? publish.lines!.start : publish.lines!.end;
-          expect(params[`${prefix}[line_code]`], `${label} ${pair} ${endpoint} 缺 line_code`)
+          expect(sent.line_code, `${label} ${pair} ${endpoint} 缺 line_code`)
             .toBe(`${fileHash}_${ref.oldLine ?? 0}_${ref.newLine ?? 0}`);
-          expect(params[`${prefix}[type]`], `${label} ${pair} ${endpoint} 的 type 不合文档口径`)
+          expect(sent.type, `${label} ${pair} ${endpoint} 的 type 不合文档口径`)
             .toBe(ref.oldLine === undefined && ref.newLine !== undefined ? 'new' : 'old');
           // additionalProperties: false —— schema 之外的键一个都不能有
-          expect(Object.keys(params).filter((key) => key.startsWith(`${prefix}[`)).sort())
-            .toEqual([`${prefix}[line_code]`, ...(ref.oldLine !== undefined ? [`${prefix}[old_line]`] : []),
-              ...(ref.newLine !== undefined ? [`${prefix}[new_line]`] : []), `${prefix}[type]`].sort());
-          types.push(params[`${prefix}[type]`]);
+          expect(Object.keys(sent).sort())
+            .toEqual(['line_code', ...(ref.oldLine !== undefined ? ['old_line'] : []),
+              ...(ref.newLine !== undefined ? ['new_line'] : []), 'type'].sort());
+          types.push(String(sent.type));
         }
 
         const posted = await postDiscussion(sandbox, position, candidate.comment);
@@ -429,16 +442,14 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
     for (const row of results) {
       const stored = row.stored as { start?: Record<string, unknown>; end?: Record<string, unknown> };
       for (const endpoint of ['start', 'end'] as const) {
-        const sent = Object.fromEntries(Object.entries(row.params)
-          .filter(([key]) => key.startsWith(`position[line_range][${endpoint}][`))
-          .map(([key, value]) => [key.slice(`position[line_range][${endpoint}][`.length, -1), value]));
+        const sent = row.params.line_range![endpoint];
         expect(stored?.[endpoint], `${row.sandbox} ${row.pair} ${endpoint} 没被存下来`).toMatchObject({
           line_code: sent.line_code, type: sent.type,
         });
-        for (const field of ['old_line', 'new_line']) {
+        for (const field of ['old_line', 'new_line'] as const) {
           if (sent[field] === undefined) expect(stored![endpoint]![field]).toBeUndefined();
           else expect(stored![endpoint]![field], `${row.sandbox} ${row.pair} ${endpoint} ${field}`)
-            .toBe(Number(sent[field]));
+            .toBe(sent[field]);
         }
       }
     }
