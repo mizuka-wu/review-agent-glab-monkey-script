@@ -77,17 +77,20 @@ describe('resolvePublishPosition', () => {
     expect(position.finding.anchor).toMatchObject({ corrected: true });
   });
 
-  it('clamps an end line that is not part of the diff', () => {
-    const position = resolvePublishPosition(finding({ line: 2, endLine: 9 }), [file]);
+  it('narrows a range whose end line is not part of the matched code', () => {
+    const position = resolvePublishPosition(
+      finding({ line: 2, endLine: 9, existingCode: 'const x = 1;' }), [file]);
     expect(position).toMatchObject({ publishable: true, corrected: true });
     expect(position.finding).toMatchObject({ line: 2, endLine: 2 });
+    expect(position.lines).toEqual({ start: { newLine: 2 }, end: { newLine: 2 } });
   });
 
-  it('blocks when neither the line nor the content can be located', () => {
+  it('blocks when the content cannot be located in the current diff', () => {
     const position = resolvePublishPosition(
       finding({ line: 99, endLine: 99, existingCode: 'totallyAbsentCall()' }), [file]);
     expect(position.publishable).toBe(false);
-    expect(position.reason).toContain('无法按 Finding 内容自动修正位置');
+    expect(position.reasonCode).toBe('reanchor-no-match');
+    expect(position.reason).toContain('重新锚定失败：无匹配');
   });
 
   it('maps a renamed path onto the new path expected by GitLab', () => {
@@ -99,20 +102,28 @@ describe('resolvePublishPosition', () => {
     });
   });
 
-  it('fuzzy-matches a snippet whose whitespace and case drifted', () => {
-    const position = resolvePublishPosition(
+  it('ignores whitespace drift but never a rewritten snippet', () => {
+    const drifted = resolvePublishPosition(
+      finding({ path: 'src/p.ts', line: 40, endLine: 40, existingCode: '   const   apiKey = "sk-live-123";  ' }),
+      [secretFile]);
+    expect(drifted).toMatchObject({ publishable: true, corrected: true });
+    expect(drifted.finding).toMatchObject({ line: 2, endLine: 2 });
+
+    // 大小写 / 少个分号就是另一段代码了：不再按相似度挑一行，宁可降级也不挂错位置
+    const rewritten = resolvePublishPosition(
       finding({ path: 'src/p.ts', line: 40, endLine: 40, existingCode: 'const apikey="sk-live-123"' }), [secretFile]);
-    expect(position).toMatchObject({ publishable: true, corrected: true });
-    expect(position.finding).toMatchObject({ line: 2, endLine: 2 });
+    expect(rewritten.publishable).toBe(false);
+    expect(rewritten.reasonCode).toBe('reanchor-no-match');
   });
 
-  it('falls back to identifier tokens from the title and description', () => {
+  it('does not pick a line from identifier tokens in the title and description', () => {
     const position = resolvePublishPosition(finding({
       path: 'src/auth.ts', line: 77, endLine: 77, existingCode: '',
       title: 'verifyToken 没有校验过期', content: '调用 verifyToken(token) 之后没有检查返回值',
     }), [authFile]);
-    expect(position).toMatchObject({ publishable: true, corrected: true });
-    expect(position.finding).toMatchObject({ line: 2, endLine: 2, side: 'new' });
+    expect(position.publishable).toBe(false);
+    expect(position.reasonCode).toBe('reanchor-no-match');
+    expect(position.reason).toContain('没有可比对的代码片段');
   });
 
   it('flips to the old side when the code only exists on a removed line', () => {
@@ -137,16 +148,14 @@ describe('resolvePublishPosition', () => {
     expect(position.reason).toContain('不在当前 Diff 中');
   });
 
-  it('uses nearby context only when the finding carries no searchable content', () => {
-    const near = resolvePublishPosition(
-      finding({ line: 5, endLine: 5, title: '问题', content: '说明', existingCode: '' }), [file]);
-    expect(near).toMatchObject({ publishable: true, corrected: true });
-    expect(near.finding).toMatchObject({ line: 3, endLine: 3 });
-
-    const far = resolvePublishPosition(
-      finding({ line: 500, endLine: 500, title: '问题', content: '说明', existingCode: '' }), [file]);
-    expect(far.publishable).toBe(false);
-    expect(far.reason).toContain('Diff 中找不到第 500 行');
+  it('never falls back to nearby context when the finding carries no searchable content', () => {
+    for (const line of [5, 500]) {
+      const position = resolvePublishPosition(
+        finding({ line, endLine: line, title: '问题', content: '说明', existingCode: '' }), [file]);
+      expect(position.publishable).toBe(false);
+      expect(position.reasonCode).toBe('reanchor-no-match');
+      expect(position.reason).toContain('没有可比对的代码片段');
+    }
   });
 
   it('does not trust the line number of a full-file anchored finding', () => {

@@ -1,0 +1,313 @@
+import { test, expect } from '@playwright/test';
+import { resolvePublishPosition } from '../../src/core/anchor';
+import { buildDiscussionPayload, GitLabAdapter } from '../../src/core/gitlab-adapter';
+import { toDiscussionPosition } from '../../src/core/reanchor';
+import type {
+  DiscussionPosition, DiffLine, FileDiff, Finding, MergeRequestRef, PageContext,
+} from '../../src/core/types';
+
+/**
+ * anchor → GitLab position 的真实链路验证（真实 GitLab）。
+ *
+ * inline-matrix 量的是「拿真实行号 + 真实代码发得出去吗」；这里量的是产品真正走的那条路：
+ * 模型报的行号一律不采信，位置由当前 diff 的真实行重新锚定，sha 与行号取自同一份版本响应。
+ * 三类行都要真的 201，锚不上的必须在发请求之前就降级，400 一条都不许出现。
+ */
+
+const realGitlabUrl = process.env.GITLAB_URL || '';
+const realMrUrl = process.env.GITLAB_MR_URL || '';
+const gitlabPat = process.env.GITLAB_PAT || '';
+const isRealGitlab = Boolean(realGitlabUrl && realMrUrl);
+
+/** 沙箱 MR：只读它们的 diff，发出去的评论跑完全部删掉。 */
+const SANDBOXES = [
+  { projectPath: 'test/test', iid: 7 },
+  { projectPath: 'test/test', iid: 6 },
+  { projectPath: 'test/y-mxgraph', iid: 1 },
+];
+
+const MARKER = 'POSITION-REANCHOR-PROBE';
+
+function loose(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+/** 用生产代码读快照：diff_refs 与 diff 必须同源，测试里另抄一份就读不出改动。 */
+function adapterFor(projectPath: string, iid: number) {
+  const page: PageContext = { origin: realGitlabUrl, route: 'diff', projectPath, mergeRequestIid: iid };
+  const fetcher = async (input: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers as HeadersInit | undefined);
+    headers.set('PRIVATE-TOKEN', gitlabPat);
+    return fetch(String(input), { ...init, headers });
+  };
+  return new GitLabAdapter(page, '', fetcher);
+}
+
+function refFor(sandbox: { projectPath: string; iid: number }): MergeRequestRef {
+  return { origin: realGitlabUrl, projectPath: sandbox.projectPath, mergeRequestIid: sandbox.iid };
+}
+
+async function postDiscussion(
+  sandbox: { projectPath: string; iid: number },
+  position: DiscussionPosition,
+  body: string,
+) {
+  const response = await fetch(
+    `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(sandbox.projectPath)}/merge_requests/${sandbox.iid}/discussions`,
+    {
+      method: 'POST',
+      headers: { 'PRIVATE-TOKEN': gitlabPat, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: buildDiscussionPayload({ body, position }).toString(),
+    },
+  );
+  return { status: response.status, text: await response.text() };
+}
+
+const draft = (input: Partial<Finding> & { path: string; line: number }): Finding => ({
+  id: `probe-${Math.random().toString(36).slice(2)}`, fingerprint: 'probe',
+  endLine: input.line, side: 'new', category: 'bug', severity: 'medium', confidence: 'high',
+  title: 'PROBE', content: 'position reanchor probe', evidence: [],
+  existingCode: '', suggestionCode: '', comment: `${MARKER} ${input.path}:${input.line}`,
+  source: 'model', status: 'draft', ...input,
+} as Finding);
+
+/** 这一行在同侧真实 diff 行里是不是唯一：不唯一的片段本来就该判多候选，不能拿来验 201。 */
+function uniqueOnSide(file: FileDiff, row: DiffLine, side: 'old' | 'new') {
+  const wanted = loose(row.text);
+  const same = file.lines.filter((line) =>
+    (side === 'new' ? line.newLine : line.oldLine) !== undefined && loose(line.text) === wanted);
+  return same.length === 1;
+}
+
+function pickRow(file: FileDiff, kind: DiffLine['kind']) {
+  return file.lines
+    .filter((row) => row.kind === kind && row.text.trim().length >= 12)
+    .find((row) => uniqueOnSide(file, row, kind === 'removed' ? 'old' : 'new'));
+}
+
+/** 沙箱 MR 上跑完就把探针评论删干净：留下的评论会污染后面每一次 DOM / 发布验证。 */
+async function cleanProbes(sandbox: { projectPath: string; iid: number }) {
+  const project = encodeURIComponent(sandbox.projectPath);
+  const api = async (path: string, method = 'GET') => {
+    const response = await fetch(`${realGitlabUrl}/api/v4${path}`, {
+      method, headers: { 'PRIVATE-TOKEN': gitlabPat },
+    });
+    const text = await response.text();
+    try { return { status: response.status, data: JSON.parse(text) as unknown } } catch { return { status: response.status, data: text } }
+  };
+  for (let round = 0; round < 20; round += 1) {
+    const listed = await api(`/projects/${project}/merge_requests/${sandbox.iid}/discussions?per_page=100`);
+    const discussions = Array.isArray(listed.data) ? listed.data as { notes?: { id: number; body?: string }[] }[] : [];
+    const strays = discussions.flatMap((discussion) => (discussion.notes ?? [])
+      .filter((note) => typeof note.body === 'string' && note.body.startsWith(MARKER))
+      .map((note) => note.id));
+    if (strays.length === 0) return;
+    for (const id of strays) {
+      await api(`/projects/${project}/merge_requests/${sandbox.iid}/notes/${id}`, 'DELETE');
+    }
+  }
+}
+
+interface Row {
+  sandbox: string;
+  kind: string;
+  path: string;
+  modelLine: number;
+  realLine: number;
+  side: string;
+  status?: number;
+  detail?: string;
+  params: Record<string, string>;
+  reasonCode?: string;
+  corrected?: boolean;
+}
+
+test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () => {
+  test.skip(!isRealGitlab, '需要 GITLAB_URL / GITLAB_MR_URL');
+  test.skip(!gitlabPat, '需要 GITLAB_PAT');
+  test.describe.configure({ timeout: 300_000 });
+
+  test('三类 diff 行都按内容重新锚定后真实发布 201，模型行号故意报偏也照样挂对行', async () => {
+    const results: Row[] = [];
+
+    for (const sandbox of SANDBOXES) {
+      const adapter = adapterFor(sandbox.projectPath, sandbox.iid);
+      const snapshot = await adapter.fetchMrDiffSnapshot(refFor(sandbox));
+      const label = `${sandbox.projectPath}!${sandbox.iid}`;
+
+      // 快照自带的三个 sha 都得有值：position 的 diff_refs 只能从这一份取
+      expect(snapshot.context.diffRefs.headSha, `${label} 快照没有 head_sha`).toMatch(/^[0-9a-f]{7,40}$/);
+      expect(snapshot.context.diffRefs.baseSha, `${label} 快照没有 base_sha`).toMatch(/^[0-9a-f]{7,40}$/);
+      expect(snapshot.context.diffRefs.startSha, `${label} 快照没有 start_sha`).toMatch(/^[0-9a-f]{7,40}$/);
+      expect(snapshot.files.length, `${label} 快照没有 diff`).toBeGreaterThan(0);
+
+      for (const file of snapshot.files) {
+        for (const kind of ['added', 'removed', 'context'] as const) {
+          const row = pickRow(file, kind);
+          if (!row) continue;
+          const side = kind === 'removed' ? 'old' : 'new';
+          const realLine = (side === 'new' ? row.newLine : row.oldLine)!;
+          const path = file.newPath === '/dev/null' ? file.oldPath : file.newPath;
+
+          // 模型行号整体报偏 11 行：位置必须由内容重新锚定回来，而不是拿这个行号发出去
+          const candidate = draft({
+            path, line: realLine + 11, endLine: realLine + 11, side, existingCode: row.text,
+            comment: `${MARKER} ${label} ${kind} ${path}:${realLine}`,
+          });
+          const publish = resolvePublishPosition(candidate, snapshot.files);
+          const position = toDiscussionPosition(publish, snapshot.context.diffRefs);
+
+          expect(publish.publishable, `${label} ${kind} 行没能重新锚定：${publish.reason}`).toBe(true);
+          expect(publish.corrected, `${label} ${kind} 行没有标记为重新锚定`).toBe(true);
+          expect(publish.finding.line, `${label} ${kind} 行锚错了行`).toBe(realLine);
+          expect(publish.finding.path).toBe(path);
+
+          const params = Object.fromEntries(buildDiscussionPayload({ body: candidate.comment, position: position! })) as Record<string, string>;
+          // 三类行各自的行号配对：added 只有 new_line、removed 只有 old_line、context 两个都有
+          if (kind === 'added') {
+            expect(params['position[new_line]'], `${label} added 行少了 new_line`).toBe(String(realLine));
+            expect(params['position[old_line]'], `${label} added 行多带了 old_line`).toBeUndefined();
+          } else if (kind === 'removed') {
+            expect(params['position[old_line]'], `${label} removed 行少了 old_line`).toBe(String(realLine));
+            expect(params['position[new_line]'], `${label} removed 行多带了 new_line`).toBeUndefined();
+          } else {
+            expect(params['position[new_line]'], `${label} context 行少了 new_line`).toBe(String(row.newLine));
+            expect(params['position[old_line]'], `${label} context 行少了 old_line`).toBe(String(row.oldLine));
+          }
+          // 路径必须是 diff 里的真实路径：rename 时两侧各写各的，且不许带 a/ b/ 前缀
+          expect(params['position[new_path]']).toBe(file.newPath === '/dev/null' ? file.oldPath : file.newPath);
+          expect(params['position[old_path]']).toBe(file.oldPath === '/dev/null' ? file.newPath : file.oldPath);
+          expect(params['position[base_sha]']).toBe(snapshot.context.diffRefs.baseSha);
+          expect(params['position[head_sha]']).toBe(snapshot.context.diffRefs.headSha);
+          expect(params['position[start_sha]']).toBe(snapshot.context.diffRefs.startSha);
+
+          const posted = await postDiscussion(sandbox, position!, candidate.comment);
+          results.push({
+            sandbox: label, kind, path, modelLine: realLine + 11, realLine, side,
+            status: posted.status, detail: posted.text.slice(0, 200), params,
+            corrected: publish.corrected,
+          });
+        }
+      }
+    }
+
+    await Promise.all(SANDBOXES.map((sandbox) => cleanProbes(sandbox)));
+
+    for (const kind of ['added', 'removed', 'context']) {
+      expect(results.filter((row) => row.kind === kind && row.status === 201).length,
+        `${kind} 行没有真实发布成功过`).toBeGreaterThan(0);
+    }
+    const rejected = results.filter((row) => row.status !== 201);
+    expect(rejected.map((row) => `${row.sandbox} ${row.kind} ${row.path}:${row.realLine} → ${row.status} ${row.detail}`),
+      '重新锚定后的 position 被 GitLab 拒了').toEqual([]);
+    expect(results.filter((row) => row.status === 400), '出现了 400').toHaveLength(0);
+    expect(results.length, '三类行没都量到').toBeGreaterThanOrEqual(3);
+
+    // 评论清零
+    for (const sandbox of SANDBOXES) {
+      const response = await fetch(
+        `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(sandbox.projectPath)}/merge_requests/${sandbox.iid}/discussions?per_page=100`,
+        { headers: { 'PRIVATE-TOKEN': gitlabPat } },
+      );
+      const discussions = await response.json() as { notes?: { body?: string }[] }[];
+      const leftovers = discussions.filter((discussion) =>
+        String(discussion.notes?.[0]?.body ?? '').startsWith(MARKER));
+      expect(leftovers, `${sandbox.projectPath}!${sandbox.iid} 上留下了探针评论`).toHaveLength(0);
+    }
+  });
+
+  test('锚不上就在发请求之前降级：无匹配 / 多候选都不猜行号', async () => {
+    const sandbox = SANDBOXES[0];
+    const adapter = adapterFor(sandbox.projectPath, sandbox.iid);
+    const snapshot = await adapter.fetchMrDiffSnapshot(refFor(sandbox));
+    const file = snapshot.files.find((candidate) => pickRow(candidate, 'added') ?? pickRow(candidate, 'context'));
+    test.skip(file === undefined, '沙箱 MR 里没有可用的 diff 行');
+
+    const row = pickRow(file!, 'added') ?? pickRow(file!, 'context')!;
+    const path = file!.newPath === '/dev/null' ? file!.oldPath : file!.newPath;
+    const realLine = row.newLine ?? row.oldLine!;
+
+    // ① 行号是真实 diff 行，但内容与那一行对不上 → 无匹配，不发请求
+    const contradicted = resolvePublishPosition(draft({
+      path, line: realLine, endLine: realLine,
+      existingCode: `const notInTheDiff_${Date.now()} = 1;`,
+    }), snapshot.files);
+    expect(contradicted.publishable).toBe(false);
+    expect(contradicted.reasonCode).toBe('reanchor-no-match');
+    expect(contradicted.reason).toContain('重新锚定失败：无匹配');
+    expect(toDiscussionPosition(contradicted, snapshot.context.diffRefs)).toBeUndefined();
+
+    // ② 完全没有可比对内容 → 也不拿行号硬发
+    const noSnippet = resolvePublishPosition(draft({ path, line: realLine, endLine: realLine, existingCode: '' }), snapshot.files);
+    expect(noSnippet.publishable).toBe(false);
+    expect(noSnippet.reasonCode).toBe('reanchor-no-match');
+    expect(noSnippet.reason).toContain('没有可比对的代码片段');
+
+    // ③ 同一段代码出现在两个文件里 → 多候选，说清命中几处
+    const twin: FileDiff = { ...file!, oldPath: `probe/twin-${file!.oldPath}`, newPath: `probe/twin-${file!.newPath}` };
+    const ambiguous = resolvePublishPosition(draft({
+      path: 'probe/not-in-mr.ts', line: realLine, endLine: realLine, existingCode: row.text,
+    }), [file!, twin]);
+    expect(ambiguous.publishable).toBe(false);
+    expect(ambiguous.reasonCode).toBe('reanchor-ambiguous');
+    expect(ambiguous.reason).toContain('重新锚定失败：多候选');
+    expect(ambiguous.reason).toContain('命中 2 处');
+    expect(toDiscussionPosition(ambiguous, snapshot.context.diffRefs)).toBeUndefined();
+
+    // ④ 同一文件内同侧重复的行也是多候选（真实 MR 里能找到就用真实的验）
+    const repeated = snapshot.files
+      .flatMap((candidate) => candidate.lines
+        .filter((line) => line.text.trim().length >= 12)
+        .filter((line) => !uniqueOnSide(candidate, line, line.kind === 'removed' ? 'old' : 'new'))
+        .map((line) => ({ file: candidate, line })))
+      .find((entry) => entry.file.lines.filter((candidate) =>
+        loose(candidate.text) === loose(entry.line.text)
+        && (entry.line.kind === 'removed' ? candidate.oldLine : candidate.newLine) !== undefined).length >= 2);
+    if (repeated) {
+      const duplicate = resolvePublishPosition(draft({
+        path: repeated.file.newPath, line: repeated.line.newLine ?? repeated.line.oldLine!,
+        endLine: repeated.line.newLine ?? repeated.line.oldLine!, existingCode: repeated.line.text,
+      }), snapshot.files);
+      expect(duplicate.publishable, `重复片段应当判多候选：${duplicate.reason}`).toBe(false);
+      expect(duplicate.reasonCode).toBe('reanchor-ambiguous');
+    }
+  });
+
+  test('stale diff_refs：混一次请求的 sha 就会被 GitLab 拒，同源快照才发得出去', async () => {
+    const sandbox = SANDBOXES[0];
+    const adapter = adapterFor(sandbox.projectPath, sandbox.iid);
+    const snapshot = await adapter.fetchMrDiffSnapshot(refFor(sandbox));
+    const file = snapshot.files.find((candidate) => pickRow(candidate, 'added') ?? pickRow(candidate, 'context'));
+    test.skip(file === undefined, '沙箱 MR 里没有可用的 diff 行');
+
+    const row = pickRow(file!, 'added') ?? pickRow(file!, 'context')!;
+    const path = file!.newPath === '/dev/null' ? file!.oldPath : file!.newPath;
+    const realLine = row.newLine ?? row.oldLine!;
+    const candidate = draft({ path, line: realLine, endLine: realLine, existingCode: row.text });
+    const publish = resolvePublishPosition(candidate, snapshot.files);
+    expect(publish.publishable).toBe(true);
+
+    // 行号与路径都对，只把 head_sha 换成另一次请求里的 sha（这里用 base_sha 顶替）：GitLab 直接拒
+    const stale = toDiscussionPosition(publish, {
+      ...snapshot.context.diffRefs, headSha: snapshot.context.diffRefs.baseSha,
+    })!;
+    const staleBody = `${MARKER} stale-refs ${path}:${realLine}`;
+    const rejected = await postDiscussion(sandbox, stale, staleBody);
+    expect(rejected.status, `stale head_sha 居然被收下了：${rejected.text}`).toBeGreaterThanOrEqual(400);
+
+    // 同一份快照出来的 refs + 行号才是同源的：一模一样的行号，只换回快照里的 sha 就 201
+    const fresh = toDiscussionPosition(publish, snapshot.context.diffRefs)!;
+    const accepted = await postDiscussion(sandbox, fresh, `${MARKER} fresh-refs ${path}:${realLine}`);
+
+    await cleanProbes(sandbox);
+
+    expect(accepted.status, `同源快照的 position 被拒了：${accepted.text}`).toBe(201);
+    // 400 归零：能被脚本发出去的 position 里不再有「行号对、sha 不对」这种形态
+    const leftover = await fetch(
+      `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(sandbox.projectPath)}/merge_requests/${sandbox.iid}/discussions?per_page=100`,
+      { headers: { 'PRIVATE-TOKEN': gitlabPat } },
+    );
+    const discussions = await leftover.json() as { notes?: { body?: string }[] }[];
+    expect(discussions.filter((discussion) => String(discussion.notes?.[0]?.body ?? '').startsWith(MARKER))).toHaveLength(0);
+  });
+});

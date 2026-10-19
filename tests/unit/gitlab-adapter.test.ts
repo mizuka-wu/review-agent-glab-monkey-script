@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCommitPayload, buildDiscussionPayload, GitLabAdapter, GitLabApiError, positionRejectionReason } from '../../src/core/gitlab-adapter';
+import { resolvePublishPosition } from '../../src/core/anchor';
 import { debugBus } from '../../src/core/debug-bus';
+import { toDiscussionPosition } from '../../src/core/reanchor';
 import type { DiscussionPosition, Finding, MergeRequestRef, PageContext } from '../../src/core/types';
 
 describe('GitLab discussion payload', () => {
@@ -596,5 +598,140 @@ describe('createCommit', () => {
     await expect(adapter.createCommit({
       branch: 'main', message: 'm', files: [{ path: 'a.ts', content: 'a', action: 'update' }],
     })).rejects.toMatchObject({ status: 403, code: 'forbidden' });
+  });
+});
+
+describe('fetchMrDiffSnapshot：diff_refs 与 diff 同源（stale diff_refs 的根）', () => {
+  const ref: MergeRequestRef = { origin: 'https://gitlab.test', projectPath: 'group/project', mergeRequestIid: 7 };
+  const page: PageContext = { origin: 'https://gitlab.test', projectPath: 'group/project', route: 'diff', mergeRequestIid: 7 };
+
+  const mrDetail = {
+    title: 'feat: pay', description: '', state: 'opened', source_branch: 'feat/pay', target_branch: 'main',
+    sha: 'mr-head', diff_refs: { base_sha: 'mr-base', head_sha: 'mr-head', start_sha: 'mr-start' },
+  };
+  const versionRaw = (diff: string) => ({
+    old_path: 'src/payment.ts', new_path: 'src/payment.ts',
+    new_file: false, deleted_file: false, renamed_file: false, diff,
+  });
+  /** 版本响应里的那份 diff：apiKey 在新侧第 10 行。 */
+  const versionDiff = '@@ -8,2 +8,5 @@\n function pay() {\n+  const traceId = nextTraceId();\n+  const apiKey = "sk-live-1";\n+  return charge(apiKey);\n }';
+  /** MR diffs 接口会返回的那份（旧 head）：apiKey 还在新侧第 9 行。 */
+  const staleDiff = '@@ -8,2 +8,4 @@\n function pay() {\n+  const apiKey = "sk-live-1";\n+  return charge(apiKey);\n }';
+
+  interface Routes { versions?: unknown; version?: unknown; versionsStatus?: number }
+
+  function stub(routes: Routes) {
+    const seen: string[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      seen.push(url.pathname);
+      if (url.pathname.endsWith('/versions/9')) return new Response(JSON.stringify(routes.version), { status: 200 });
+      if (url.pathname.endsWith('/versions')) {
+        return new Response(JSON.stringify(routes.versions ?? { message: '404 Not Found' }), { status: routes.versionsStatus ?? 200 });
+      }
+      if (url.pathname.endsWith('/merge_requests/7/diffs')) return new Response(JSON.stringify([versionRaw(staleDiff)]), { status: 200 });
+      if (url.pathname.endsWith('/merge_requests/7')) return new Response(JSON.stringify(mrDetail), { status: 200 });
+      return new Response(JSON.stringify({ message: '404 Not Found' }), { status: 404 });
+    });
+    return { adapter: new GitLabAdapter(page, '', fetcher), seen };
+  }
+
+  const collected = {
+    id: 9, base_commit_sha: 'v-base', head_commit_sha: 'v-head', start_commit_sha: 'v-start',
+    diffs: [versionRaw(versionDiff)],
+  };
+
+  it('三个 sha 与 diff 取自同一个版本响应：MR 详情读到的 head 已经过期也用它那份', async () => {
+    const { adapter, seen } = stub({
+      versions: [{ id: 9, head_commit_sha: 'v-head' }, { id: 8, head_commit_sha: 'older-head' }],
+      version: collected,
+    });
+
+    const snapshot = await adapter.fetchMrDiffSnapshot(ref);
+
+    expect(snapshot.context.diffRefs).toEqual({ baseSha: 'v-base', headSha: 'v-head', startSha: 'v-start' });
+    // MR 标题这些元信息仍来自 MR 详情，只有 diff_refs 换成与 diff 同源的那一份
+    expect(snapshot.context.title).toBe('feat: pay');
+    expect(snapshot.files).toHaveLength(1);
+    expect(snapshot.files[0].lines.some((line) => line.newLine === 10 && line.text.includes('apiKey'))).toBe(true);
+    expect(seen.some((path) => path.endsWith('/merge_requests/7/diffs'))).toBe(false);
+  });
+
+  it('按 head_sha 挑版本：MR 详情与版本列表对得上时就是它', async () => {
+    const { adapter } = stub({
+      versions: [{ id: 8, head_commit_sha: 'older-head' }, { id: 9, head_commit_sha: 'mr-head' }],
+      version: collected,
+    });
+    expect((await adapter.fetchMrDiffSnapshot(ref)).context.diffRefs.headSha).toBe('v-head');
+  });
+
+  it('老 GitLab 没有 versions 接口（404）时回落到 MR 详情 + diffs 两次读', async () => {
+    const { adapter, seen } = stub({ versionsStatus: 404 });
+
+    const snapshot = await adapter.fetchMrDiffSnapshot(ref);
+
+    expect(snapshot.context.diffRefs).toEqual({ baseSha: 'mr-base', headSha: 'mr-head', startSha: 'mr-start' });
+    expect(snapshot.files[0].lines.some((line) => line.newLine === 9 && line.text.includes('apiKey'))).toBe(true);
+    expect(seen.some((path) => path.endsWith('/merge_requests/7/diffs'))).toBe(true);
+  });
+
+  it('versions 被网关包成 200 + 错误体、列表为空、或版本里没有 diff 时都回落，不拿半份数据当快照', async () => {
+    for (const routes of [
+      { versions: { message: '404 Not Found' } },
+      { versions: [] },
+      { versions: [{ id: 9, head_commit_sha: 'v-head' }], version: { ...collected, diffs: [] } },
+      { versions: [{ id: 9, head_commit_sha: 'v-head' }], version: { id: 9 } },
+    ]) {
+      const { adapter } = stub(routes);
+      const snapshot = await adapter.fetchMrDiffSnapshot(ref);
+      expect(snapshot.context.diffRefs.headSha).toBe('mr-head');
+      expect(snapshot.files[0].lines.some((line) => line.newLine === 9)).toBe(true);
+    }
+  });
+
+  it('发布用的 position 三个 sha 与行号同源：sha 来自版本响应，行号来自同一响应里的那份 diff', async () => {
+    const { adapter } = stub({ versions: [{ id: 9, head_commit_sha: 'v-head' }], version: collected });
+    const snapshot = await adapter.fetchMrDiffSnapshot(ref);
+
+    const publish = resolvePublishPosition({
+      id: 'f', fingerprint: 'fp', path: 'src/payment.ts', line: 9, endLine: 9, side: 'new',
+      category: 'security', severity: 'high', confidence: 'high', title: '硬编码密钥', content: 'c',
+      evidence: [], existingCode: 'const apiKey = "sk-live-1";', suggestionCode: '', comment: 'c',
+      source: 'model', status: 'draft',
+    } as Finding, snapshot.files);
+
+    // 模型报的第 9 行在这份 diff 里是 traceId：按内容锚到第 10 行，sha 用同一个响应里的
+    expect(publish.finding.line).toBe(10);
+    const params = Object.fromEntries(buildDiscussionPayload({
+      body: 'b', position: toDiscussionPosition(publish, snapshot.context.diffRefs)!,
+    }));
+    expect(params).toMatchObject({
+      'position[base_sha]': 'v-base', 'position[head_sha]': 'v-head', 'position[start_sha]': 'v-start',
+      'position[new_line]': '10',
+    });
+  });
+
+  it('position 的 head_sha 与服务端当前不一致时预检就 409，一次 POST 都不发', async () => {
+    const posted: string[] = [];
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      if (init?.method === 'POST') posted.push(url.pathname);
+      if (url.pathname.endsWith('/merge_requests/7')) return new Response(JSON.stringify(mrDetail), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    const adapter = new GitLabAdapter(page, '', fetcher);
+
+    const error = await adapter.createDiscussion(ref, {
+      body: 'b',
+      position: {
+        path: 'src/payment.ts', startLine: 9, endLine: 9, side: 'new',
+        start: { newLine: 9 }, end: { newLine: 9 },
+        diffRefs: { baseSha: 'mr-base', headSha: 'stale-head', startSha: 'mr-start' },
+      },
+    }).catch((caught: unknown) => caught as GitLabApiError);
+
+    expect(error).toBeInstanceOf(GitLabApiError);
+    expect(error).toMatchObject({ status: 409, code: 'stale_diff_refs' });
+    expect(posted).toEqual([]);
   });
 });

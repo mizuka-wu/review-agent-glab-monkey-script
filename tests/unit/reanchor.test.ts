@@ -47,20 +47,19 @@ const stalePosition: DiscussionPosition = {
   diffRefs: OLD_REFS,
 };
 
-/** 默认按 push 之后的 MR 建模；files 可以换成「代码已被改掉」的版本。 */
+/**
+ * 默认按 push 之后的 MR 建模；files 可以换成「代码已被改掉」的版本。
+ * 快照一次给出 diff_refs 与 diff：这两样必须同源，分开取就会拿旧行号配新 sha（GitLab 直接 400）。
+ */
 function source(options: { files?: FileDiff[]; fail?: string } = {}): ReanchorSource & {
-  mrCalls: () => number; diffCalls: () => number;
+  snapshotCalls: () => number;
 } {
-  const fetchMergeRequest = vi.fn(async () => context(NEW_REFS.headSha));
-  const fetchFiles = options.fail
-    ? vi.fn(async (): Promise<FileDiff[]> => { throw new Error(options.fail); })
-    : vi.fn(async () => options.files ?? newFiles);
-  return {
-    fetchMergeRequest,
-    fetchFiles,
-    mrCalls: () => fetchMergeRequest.mock.calls.length,
-    diffCalls: () => fetchFiles.mock.calls.length,
-  };
+  const fetchSnapshot = options.fail
+    ? vi.fn(async (): Promise<{ context: MergeRequestContext; files: FileDiff[] }> => {
+      throw new Error(options.fail);
+    })
+    : vi.fn(async () => ({ context: context(NEW_REFS.headSha), files: options.files ?? newFiles }));
+  return { fetchSnapshot, snapshotCalls: () => fetchSnapshot.mock.calls.length };
 }
 
 beforeEach(() => {
@@ -103,10 +102,9 @@ describe('409 重锚会话', () => {
 
     const result = await session.reanchor(finding, stalePosition);
 
-    // 新 diff 的第 9 行是 traceId，内容对不上：必须重定位到第 10 行，而不是沿用旧行号
+    // 新 diff 的第 9 行是 traceId：行号一律不采信，按内容重定位到第 10 行
     expect(result.position?.startLine).toBe(10);
-    const trusted = resolvePublishPosition(finding, newFiles);
-    expect(trusted.finding.line).toBe(9);
+    expect(resolvePublishPosition(finding, newFiles).finding.line).toBe(10);
     expect(session.positionFor(finding)?.publish.corrected).toBe(true);
   });
 
@@ -118,8 +116,7 @@ describe('409 重锚会话', () => {
     await session.reanchor({ ...finding, id: 'f2' }, stalePosition);
     await session.reanchor({ ...finding, id: 'f3' }, stalePosition);
 
-    expect(deps.mrCalls()).toBe(1);
-    expect(deps.diffCalls()).toBe(1);
+    expect(deps.snapshotCalls()).toBe(1);
     expect(debugBus.getCounters()['publish-409-refresh']).toBe(1);
   });
 
@@ -145,7 +142,7 @@ describe('409 重锚会话', () => {
     expect(debugBus.getLogs().some((entry) => entry.message.includes('409 重锚后仍定位不到行内位置'))).toBe(true);
   });
 
-  it('重新拉 MR 失败时给出原因，不把异常抛回发布链路', async () => {
+  it('重新拉快照失败时给出原因，不把异常抛回发布链路', async () => {
     const session = createReanchorSession(source({ fail: 'GitLab API 500：boom' }));
 
     const result = await session.reanchor(finding, stalePosition);

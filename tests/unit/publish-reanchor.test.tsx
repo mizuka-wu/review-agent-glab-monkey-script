@@ -192,7 +192,7 @@ describe('行内位置 409 不再直接降级全文：重拉 diff_refs 重锚后
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/已降级全文评论/));
     expect(screen.getByRole('status').textContent).toContain('MR 已更新，已尝试重锚');
-    expect(screen.getByRole('status').textContent).toContain('无法按 Finding 内容自动修正位置');
+    expect(screen.getByRole('status').textContent).toContain('重新锚定失败：无匹配');
     // 行内没发出去（预检就 409 了），只有全文那一次
     expect(mr.posts).toHaveLength(1);
     expect(mr.posts[0]).not.toContain('position');

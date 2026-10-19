@@ -276,7 +276,7 @@ async function routeCompanion(page: Page, requests: string[] = [], options?: { s
 interface ConflictOnce { headSha: string; diff: unknown }
 
 async function routeGitLab(page: Page, requests: string[] = [], options?: { stream?: boolean; delayMs?: number; modelStatus?: number; rejectPosition?: boolean; diffs?: unknown[]; extraFindings?: unknown[]; recentMrs?: unknown[]; fixResponse?: string; commitStatus?: number; commits?: MockCommit[]; mrCommits?: unknown[]; conflictOnce?: ConflictOnce }) {
-  const mrState = { head: mergeRequest.diff_refs.head_sha, diffs: options?.diffs ?? [diff] };
+  const mrState = { head: mergeRequest.diff_refs.head_sha, diffs: options?.diffs ?? [diff], version: 1 };
   let conflicted = false;
   // Mock model API
   await page.route('https://model.test/**', async (route) => {
@@ -369,6 +369,23 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
       await route.fulfill({ json: options?.recentMrs ?? [] });
       return;
     }
+    // diff 版本：一个响应里同时给三个 sha 和那份 diff，油猴的 position 就从这一份取（不许混两次请求的 sha）
+    if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/versions')) {
+      await route.fulfill({ json: [{ id: mrState.version, head_commit_sha: mrState.head }] });
+      return;
+    }
+    if (url.pathname.startsWith('/api/v4/projects/') && /\/merge_requests\/248\/versions\/\d+$/.test(url.pathname)) {
+      await route.fulfill({
+        json: {
+          id: mrState.version,
+          base_commit_sha: mergeRequest.diff_refs.base_sha,
+          head_commit_sha: mrState.head,
+          start_commit_sha: mergeRequest.diff_refs.start_sha,
+          diffs: mrState.diffs,
+        },
+      });
+      return;
+    }
     if (url.pathname.startsWith('/api/v4/projects/') && url.pathname.endsWith('/merge_requests/248/diffs')) {
       await route.fulfill({ json: mrState.diffs });
       return;
@@ -424,6 +441,7 @@ async function routeGitLab(page: Page, requests: string[] = [], options?: { stre
         conflicted = true;
         mrState.head = options.conflictOnce.headSha;
         mrState.diffs = [options.conflictOnce.diff];
+        mrState.version += 1;
         await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'position is invalid' }) });
         return;
       }
@@ -495,7 +513,9 @@ test.describe('mock mode', () => {
     expect(request.postData()).toContain('body=Edited+review+comment');
     expect(request.postData()).toContain('position%5Bhead_sha%5D=head-sha');
     await expect(page.getByText('行级 Discussion 已发布')).toBeVisible();
-    expect(requests.some((path) => path.endsWith('/diffs'))).toBe(true);
+    // diff 与 diff_refs 同源读取：走版本响应，不再分别打 MR 详情 + diffs 两个接口凑
+    expect(requests.some((path) => path.endsWith('/merge_requests/248/versions'))).toBe(true);
+    expect(requests.some((path) => path.endsWith('/merge_requests/248/versions/1'))).toBe(true);
   });
 
   test('degrades to a full-text comment when GitLab rejects the inline position', async ({ page }) => {

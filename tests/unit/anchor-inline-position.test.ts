@@ -54,7 +54,8 @@ describe('repo path matching', () => {
 
 describe('inline position: GitLab line pairing', () => {
   it('pairs both sides for a context line', () => {
-    const position = resolvePublishPosition(finding({ line: 8, endLine: 8 }), [payment]);
+    const position = resolvePublishPosition(
+      finding({ line: 8, endLine: 8, existingCode: 'function pay() {' }), [payment]);
     expect(position.publishable).toBe(true);
     expect(position.lines).toEqual({
       start: { oldLine: 8, newLine: 8 },
@@ -63,19 +64,23 @@ describe('inline position: GitLab line pairing', () => {
   });
 
   it('keeps only new_line for an added line', () => {
-    const position = resolvePublishPosition(finding({ line: 9, endLine: 9 }), [payment]);
+    const position = resolvePublishPosition(
+      finding({ line: 9, endLine: 9, existingCode: 'const apiKey = "sk-live-1";' }), [payment]);
     expect(position.lines).toEqual({ start: { newLine: 9 }, end: { newLine: 9 } });
   });
 
   it('keeps only old_line for a removed line', () => {
     const position = resolvePublishPosition(
-      finding({ path: 'src/r.ts', line: 30, endLine: 30, side: 'old' }), [removed]);
+      finding({ path: 'src/r.ts', line: 30, endLine: 30, side: 'old', existingCode: 'const fee = 0.1;' }),
+      [removed]);
     expect(position.publishable).toBe(true);
     expect(position.lines).toEqual({ start: { oldLine: 30 }, end: { oldLine: 30 } });
   });
 
   it('pairs each endpoint of a range on its own diff line', () => {
-    const position = resolvePublishPosition(finding({ line: 8, endLine: 9 }), [payment]);
+    const position = resolvePublishPosition(finding({
+      line: 8, endLine: 9, existingCode: 'function pay() {\nconst apiKey = "sk-live-1";',
+    }), [payment]);
     expect(position.lines).toEqual({
       start: { oldLine: 8, newLine: 8 },
       end: { newLine: 9 },
@@ -102,39 +107,46 @@ describe('inline position: GitLab line pairing', () => {
 
 describe('inline position: path matching', () => {
   it('resolves a path carrying the diff prefix', () => {
-    const position = resolvePublishPosition(finding({ path: 'b/src/payment.ts', line: 9, endLine: 9 }), [payment]);
+    const position = resolvePublishPosition(finding({
+      path: 'b/src/payment.ts', line: 9, endLine: 9, existingCode: 'const apiKey = "sk-live-1";',
+    }), [payment]);
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ path: 'src/payment.ts', line: 9, endLine: 9 });
   });
 
   it('resolves a percent-encoded path', () => {
     const position = resolvePublishPosition(
-      finding({ path: 'src/my%20file.ts', line: 2, endLine: 2 }), [spaced]);
+      finding({ path: 'src/my%20file.ts', line: 2, endLine: 2, existingCode: 'added();' }), [spaced]);
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ path: 'src/my file.ts', line: 2 });
   });
 
   it('maps a finding that only knows the pre-rename path', () => {
-    const position = resolvePublishPosition(finding({ path: 'src/old.ts', line: 2, endLine: 2 }), [renamed]);
+    const position = resolvePublishPosition(
+      finding({ path: 'src/old.ts', line: 2, endLine: 2, existingCode: 'moved();' }), [renamed]);
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ path: 'src/new.ts', oldPath: 'src/old.ts', line: 2 });
   });
 
   it('maps a finding that only knows the post-rename path', () => {
     const position = resolvePublishPosition(
-      finding({ path: 'src/new.ts', oldPath: 'src/old.ts', line: 2, endLine: 2 }), [renamed]);
+      finding({ path: 'src/new.ts', oldPath: 'src/old.ts', line: 2, endLine: 2, existingCode: 'moved();' }),
+      [renamed]);
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ path: 'src/new.ts', line: 2 });
   });
 
   it('resolves a path the model reported relative to a subdirectory', () => {
-    const position = resolvePublishPosition(finding({ path: 'payment.ts', line: 10, endLine: 10 }), [payment]);
+    const position = resolvePublishPosition(finding({
+      path: 'payment.ts', line: 10, endLine: 10, existingCode: 'return charge(apiKey);',
+    }), [payment]);
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ path: 'src/payment.ts', line: 10 });
   });
 
   it('resolves a path whose case drifted', () => {
-    const position = resolvePublishPosition(finding({ path: 'src/PAYMENT.ts', line: 11, endLine: 11 }), [payment]);
+    const position = resolvePublishPosition(
+      finding({ path: 'src/PAYMENT.ts', line: 11, endLine: 11, existingCode: '}' }), [payment]);
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ path: 'src/payment.ts', line: 11 });
   });
@@ -163,7 +175,8 @@ describe('inline position: model output normalization', () => {
 
 describe('inline position: line number semantics', () => {
   it('publishes on an unchanged context line inside the hunk', () => {
-    const position = resolvePublishPosition(finding({ line: 8, endLine: 8 }), [payment]);
+    const position = resolvePublishPosition(
+      finding({ line: 8, endLine: 8, existingCode: 'function pay() {' }), [payment]);
     expect(position.publishable).toBe(true);
     expect(position.corrected).toBeUndefined();
     expect(position.finding).toMatchObject({ line: 8, endLine: 8, side: 'new' });
@@ -182,7 +195,7 @@ describe('inline position: line number semantics', () => {
       id: 'wrong-side', path: 'src/r.ts', line: 30, endLine: 30, side: 'new', existingCode: 'unrelatedCall();',
     }), [removed]);
     expect(position.publishable).toBe(false);
-    expect(position.reasonCode).toBe('line-not-in-diff');
+    expect(position.reasonCode).toBe('reanchor-no-match');
   });
 
   it('matches code whose indentation drifted from tabs to spaces', () => {
@@ -231,7 +244,8 @@ describe('inline position: full-file anchors', () => {
       anchor: { source: 'full-file', publishable: false },
     }), [payment]);
     expect(position.publishable).toBe(false);
-    expect(position.reasonCode).toBe('full-file-only');
+    expect(position.reasonCode).toBe('reanchor-no-match');
+    expect(position.reason).toContain('只锚定到完整文件');
   });
 });
 
@@ -260,7 +274,7 @@ describe('inline position: downgrade reporting', () => {
   it('reports an unloaded diff separately from a missing file', () => {
     expect(resolvePublishPosition(finding({ id: 'no-diff', line: 2, endLine: 2 }), []).reasonCode).toBe('no-diff');
     expect(resolvePublishPosition(finding({ id: 'no-line', line: 500, endLine: 500 }), [payment]).reasonCode)
-      .toBe('line-not-in-diff');
+      .toBe('reanchor-no-match');
   });
 });
 
@@ -337,17 +351,17 @@ describe('inline position: 真实 GitLab 矩阵里查出来的两类降级', () 
     expect(position.lines?.start).toEqual({ newLine: 20 });
   });
 
-  it('没有片段可比时仍按行号发，不因为怀疑侧别就丢位置', () => {
+  it('没有片段可比时不拿行号硬发：行号只是提示，提示发不出 line_code', () => {
     const position = resolvePublishPosition(finding({
       id: 'no-snippet', path: 'src/m.ts', line: 21, endLine: 21, side: 'old', existingCode: '',
     }), [shifted]);
 
-    expect(position.publishable).toBe(true);
-    expect(position.finding).toMatchObject({ line: 21, side: 'old' });
-    expect(position.lines?.start).toEqual({ oldLine: 21, newLine: 22 });
+    expect(position.publishable).toBe(false);
+    expect(position.reasonCode).toBe('reanchor-no-match');
+    expect(position.reason).toContain('没有可比对的代码片段');
   });
 
-  it('行号与片段本来就一致时按行号直发，不做多余的重新定位', () => {
+  it('行号与片段本来就一致时重新锚定回同一行，不算修正', () => {
     const position = resolvePublishPosition(finding({
       id: 'consistent', path: 'src/m.ts', line: 22, endLine: 22, side: 'new',
       existingCode: 'export const base21 = 21;',
@@ -372,7 +386,7 @@ describe('inline position: 真实 GitLab 矩阵里查出来的两类降级', () 
   });
 });
 
-describe('inline position: trustLine（409 重锚时旧行号不可信）', () => {
+describe('inline position: 行号只作提示（MR 被 push 之后旧行号一律不采信）', () => {
   /** MR 被 push 之后：上面多插了一行，apiKey 从新侧第 9 行落到第 10 行。 */
   const pushed = normalizeFileDiff({
     old_path: 'src/payment.ts', new_path: 'src/payment.ts',
@@ -389,35 +403,33 @@ describe('inline position: trustLine（409 重锚时旧行号不可信）', () =
     line: 9, endLine: 9, existingCode: 'const apiKey = "sk-live-1";', ...input,
   });
 
-  it('默认信行号：第 9 行还在 diff 里就按行号发（哪怕内容已经对不上）', () => {
+  it('旧行号还在 diff 里但那一行是别的代码时，按内容重定位，不沿用旧行号', () => {
     const position = resolvePublishPosition(stale(), [pushed]);
-    expect(position.publishable).toBe(true);
-    expect(position.finding.line).toBe(9);
-    expect(position.corrected).toBeUndefined();
-  });
-
-  it('trustLine=false：旧行号指向别的代码时只认内容，重新定位到真正的行', () => {
-    const position = resolvePublishPosition(stale(), [pushed], { trustLine: false });
     expect(position.publishable).toBe(true);
     expect(position.finding).toMatchObject({ line: 10, endLine: 10, side: 'new' });
     expect(position.corrected).toBe(true);
     expect(position.lines).toEqual({ start: { newLine: 10 }, end: { newLine: 10 } });
   });
 
-  it('trustLine=false：内容也找不到就判为不可发布，不按邻近行硬发', () => {
-    // 没有任何可搜索内容时，默认会按邻近上下文猜一行；重锚时宁可降级为全文评论也不猜
-    const noSnippet = finding({ line: 9, endLine: 9, existingCode: '', title: '硬编码密钥', content: '密钥不能写死在源码里' });
-    expect(resolvePublishPosition(noSnippet, [rewritten]).publishable).toBe(true);
-    expect(resolvePublishPosition(noSnippet, [rewritten]).finding.line).toBe(40);
-
-    const blocked = resolvePublishPosition(noSnippet, [rewritten], { trustLine: false });
+  it('内容在当前 diff 里找不到就判为不可发布，不按邻近行硬发', () => {
+    const blocked = resolvePublishPosition(stale(), [rewritten]);
     expect(blocked.publishable).toBe(false);
-    expect(blocked.reasonCode).toBe('line-not-in-diff');
+    expect(blocked.reasonCode).toBe('reanchor-no-match');
+    expect(blocked.reason).toContain('重新锚定失败：无匹配');
   });
 
-  it('trustLine=false：内容在原行号上就对得上时照旧发布，不算修正', () => {
-    const position = resolvePublishPosition(stale({ line: 10 }), [pushed], { trustLine: false });
+  it('没有可比对内容时连邻近行也不猜：直接降级为全文评论', () => {
+    const noSnippet = finding({ line: 9, endLine: 9, existingCode: '', title: '硬编码密钥', content: '密钥不能写死在源码里' });
+    const blocked = resolvePublishPosition(noSnippet, [rewritten]);
+    expect(blocked.publishable).toBe(false);
+    expect(blocked.reasonCode).toBe('reanchor-no-match');
+    expect(blocked.reason).toContain('没有可比对的代码片段');
+  });
+
+  it('内容在模型报的行号上就对得上时重新锚定回同一行，不算修正', () => {
+    const position = resolvePublishPosition(stale({ line: 10, endLine: 10 }), [pushed]);
     expect(position.publishable).toBe(true);
     expect(position.finding.line).toBe(10);
+    expect(position.corrected).toBeUndefined();
   });
 });
