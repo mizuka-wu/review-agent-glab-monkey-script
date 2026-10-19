@@ -23,6 +23,14 @@ import type {
   PublishedDiscussion,
 } from './types';
 
+/**
+ * 一次读到的 MR 变更快照：context.diffRefs 与 files 同源，发布 position 的三个 sha 只能从这里取。
+ */
+export interface MrDiffSnapshot {
+  context: MergeRequestContext;
+  files: FileDiff[];
+}
+
 export class GitLabApiError extends Error {
   constructor(
     public status: number,
@@ -141,6 +149,19 @@ function errorCode(status: number) {
 }
 
 type RawDiff = Parameters<typeof normalizeFileDiff>[0];
+
+/** MR diff 版本列表的一条：GitLab 每次 push 收集一个版本，三个 sha 与那份 diff 同属一个版本。 */
+interface RawDiffVersion {
+  id: number;
+  head_commit_sha?: string;
+  base_commit_sha?: string;
+  start_commit_sha?: string;
+  state?: string;
+}
+
+interface RawDiffVersionDetail extends RawDiffVersion {
+  diffs?: RawDiff[];
+}
 
 interface RawMergeRequestSummary {
   iid: number;
@@ -410,6 +431,61 @@ export class GitLabAdapter {
       if (data.length < 100) break;
     }
     return raw.map(normalizeMrCommit);
+  }
+
+  /**
+   * 行内评论 position 的 base_sha / start_sha / head_sha 与行号必须同源：分两次请求取
+   * （MR 详情拿 sha、diffs 拿行号），中间 MR 被 push 就是「旧行号 + 新 sha」，
+   * GitLab 不报 409 而是直接 400 `line_code can't be blank`，从报错里看不出是 sha 混了。
+   * versions/:id 一个响应里同时给三个 sha 和那份 diff，取到的天然同源；
+   * GitLab 还没收集出 diff 版本（老版本没这个接口 / state=empty / diffs 为空）才回落到 MR 详情 + diffs 两次读。
+   */
+  async fetchMrDiffSnapshot(
+    ref: MergeRequestRef,
+    options: { onPage?: (loaded: number, hasMore: boolean) => void; signal?: AbortSignal } = {},
+  ): Promise<MrDiffSnapshot> {
+    const context = await this.getMergeRequest(ref);
+    const version = await this.diffVersionSnapshot(ref, context.diffRefs.headSha, options.signal);
+    if (version) {
+      return { context: { ...context, diffRefs: version.diffRefs }, files: version.files };
+    }
+    return { context, files: await this.listDiffs(ref, options) };
+  }
+
+  /** 优先取 head_sha 对得上的那个版本，取不到就取最新的一个；版本详情里没 diff 就当没有。 */
+  private async diffVersionSnapshot(
+    ref: MergeRequestRef,
+    headSha: string,
+    signal?: AbortSignal,
+  ): Promise<{ diffRefs: DiffRefs; files: FileDiff[] } | undefined> {
+    const base = `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/versions`;
+    try {
+      const versions = await this.request<RawDiffVersion[]>(`${base}?per_page=100`, { signal });
+      // 老 GitLab 没有这个接口（404），网关也可能把它包成 200 + 错误体：都当「没有版本可读」回落
+      const picked = Array.isArray(versions)
+        ? versions.find((version) => version.head_commit_sha === headSha) ?? versions[0]
+        : undefined;
+      if (!picked?.id) return undefined;
+
+      const detail = await this.request<RawDiffVersionDetail>(`${base}/${picked.id}`, { signal });
+      const raw = detail?.diffs;
+      if (!Array.isArray(raw) || raw.length === 0) return undefined;
+
+      const diffRefs: DiffRefs = {
+        baseSha: detail.base_commit_sha ?? '',
+        headSha: detail.head_commit_sha ?? '',
+        startSha: detail.start_commit_sha ?? detail.base_commit_sha ?? '',
+      };
+      debugBus.log('debug', 'gitlab', `diff_refs 与 diff 取自同一个版本响应 !${ref.mergeRequestIid} v${picked.id}`, [
+        `head=${diffRefs.headSha.slice(0, 8)}`,
+        `base=${diffRefs.baseSha.slice(0, 8)}`,
+        `start=${diffRefs.startSha.slice(0, 8)}`,
+        `files=${raw.length}`,
+      ].join(' · '));
+      return { diffRefs, files: raw.map(normalizeFileDiff) };
+    } catch {
+      return undefined;
+    }
   }
 
   async listDiffs(

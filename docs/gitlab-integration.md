@@ -157,29 +157,41 @@ position[new_line]=42
 
 ### 4.1 可定位条件
 
-同时满足：
+发布位置一律由**当前 MR diff 的真实行**重新锚定得到，同时满足：
 
-- 当前 MR 拥有有效 `diff_refs`。
-- Finding 的 `path` 存在于当前 Diff。
-- `existingCode` 能在目标 Diff Hunk 中唯一或高置信匹配。
-- `startLine` / `endLine` 位于新增行或明确可评论的上下文行。
+- 当前 MR 拥有有效 `diff_refs`，且与那份 Diff 同源（见 4.5）。
+- Finding 的 `path`（含 rename / `a/` `b/` 前缀 / 子目录相对路径 / 大小写漂移的还原）存在于当前 Diff。
+- `existingCode` 或 `evidence.quote` 能在该文件的真实 diff 行里匹配到**唯一一处**。
+- 命中行的 `(old_line, new_line)` 配对直接抄那一行：added 行只有 `new_line`、removed 行只有 `old_line`、context 行两者都有。
+
+任何一条不满足就判为不可发布，降级为 MR 全文评论，不再按行号或相似度凑一个位置。
 
 ### 4.2 行号来源优先级
 
-1. API Diff 解析出的新文件行号。
-2. Diff DOM 的 `data-new-line` / `data-old-line`。
-3. 模型返回行号与 existingCode 交叉验证。
+1. 当前 Diff 的真实行：由 `existingCode` / `evidence.quote` 重新匹配得到（唯一可信来源）。
+2. 模型返回的 `line` / `endLine` / `side`：**只作提示**，用来决定搜哪一侧、以及在命中起点与提示一致时把多行范围补回模型报的长度。
+3. Diff DOM 的 `data-new-line` / `data-old-line`：只用于划词与页内定位，不进 `position`。
 
-模型行号不能单独作为发布依据。
+模型行号绝不单独作为发布依据：行号对不上真实 diff 行、或侧别与行的真实形态不符，GitLab 一律只回一句 `line_code can't be blank` 400，从报错里看不出是哪一样错了。
+
+匹配只在「写法变体」这一层放宽（原文 → 去 diff 行首 `L` 行号 → 去完整文件 `42:` 行号 → 去 `+`/`-` 前缀 → 去空行，比对忽略缩进与多余空白）；**不做相似度模糊匹配、不按标识符猜行、不按邻近行兜底**——那些都会把评论挂到看起来像但不是的行上，且 GitLab 会照收（201），比 400 更难发现。
 
 模型看到的 diff 每行行首都带显式行号（`+L23` = 新增行的 new 侧行号、`-L17` = 删除行的 old 侧行号、` L5` = 上下文行的 new 侧行号，hunk 头原样保留，diff 段前面另有一行格式图例）：模型不需要也不应该从 `@@` 头自己往下数行号，`line` / `endLine` 直接引用行首数字。前缀的字符开销按渲染后的实际长度计入上下文预算（与分组预算同一口径），预算不足时整文件裁掉并记 `budget` 省略原因，不会出现「半个文件带行号、半个文件不带」。
 
 ### 4.3 失败分类
 
+发布前判定（`PublishBlockCode`，一条请求都不发）：
+
+- `no-diff`：当前 Diff 还没加载。
+- `path-not-in-diff`：文件不在当前 MR Diff，内容也没在别的文件里匹配到。
+- `diff-collapsed`：GitLab 没返回该文件的 diff 行（`too_large` / 折叠 / 纯重命名），没有行就没有 `line_code`。
+- `reanchor-no-match`：**重新锚定失败：无匹配** —— 片段在当前 Diff 的真实行里找不到（或这条 Finding 根本没有可比对的代码片段）。
+- `reanchor-ambiguous`：**重新锚定失败：多候选** —— 同一段代码在当前 Diff 里命中多处，分不清是哪一处。
+
+服务端返回：
+
 - `diff_refs_missing`：缺少 base/start/head SHA。
-- `path_not_in_diff`：文件不在当前 MR Diff。
 - `line_out_of_diff`：目标行不是可评论行。
-- `anchor_ambiguous`：existingCode 匹配多处且无法消歧。
 - `stale_diff_refs`：MR 已更新，评论版本过期。
 - `permission_denied`：当前身份不能创建 discussion。
 - `rate_limited`：GitLab 返回限流。
@@ -190,12 +202,26 @@ position[new_line]=42
 
 评审到发布之间 MR 被 push 了新 commit 时，`position` 里的 `base_sha` / `head_sha` 与 MR 当前 `diff_refs` 不匹配，GitLab 以 409 拒绝（脚本自己的发布前预检也给出同样的 409）。这是行内评论降级为全文最高频的原因，而它其实可救：
 
-1. 重新拉 `GET merge_requests/:iid`（当前 `diff_refs`）与 `GET merge_requests/:iid/diffs`（行号已经变了的 Diff）。
-2. 在新 Diff 上重跑锚定，且**不采信旧行号**（`resolvePublishPosition(finding, files, { trustLine: false })`）：只按内容重定位（片段精确 → 片段模糊 → 标识符），内容对不上就判为不可发布，绝不按旧行号或邻近行硬发。
+1. 重新拉一份**同源快照**（见 4.5）：新的 `diff_refs` 与行号已经变了的 Diff 取自同一次响应。
+2. 在新 Diff 上重跑锚定：与首次发布同一条路径（`resolvePublishPosition(finding, files)`），旧行号本来就不采信，只按内容重新匹配；内容对不上或命中多处就判为不可发布，绝不按旧行号或邻近行硬发。
 3. 用新的 `diff_refs` + 新行号重发一次行内 Discussion；成功就静默保住行内评论（调试计数 `publish-inline-reanchored`），不打扰用户。
 4. 重锚上限一次：重锚出不来位置、或重发仍被拒，才降级为全文评论，原因写成「MR 已更新，已尝试重锚：<原因>」，`[inline-fallback]` 日志同时给出两次 `position` 参数。
 
-批量发布共享同一次刷新：整批只重拉一次 `diff_refs` 与 Diff，第一条 409 之后剩下的评论直接用新 refs 重锚，不必每条各自撞一次 409。面板里的 Finding 仍基于旧 head，位置只在发布那一刻按新 Diff 重算，state 不替换（换了会让旧 Finding 的行号对到新 Diff 的别的行上）。
+批量发布共享同一次刷新：整批只重拉一次快照，第一条 409 之后剩下的评论直接用新 refs 重锚，不必每条各自撞一次 409。面板里的 Finding 仍基于旧 head，位置只在发布那一刻按新 Diff 重算，state 不替换（换了会让旧 Finding 的行号对到新 Diff 的别的行上）。
+
+### 4.5 diff_refs 与 Diff 必须同源
+
+`position` 的三个 SHA 与行号必须来自**同一次 MR diff 响应**。分两次请求取（先 `GET merge_requests/:iid` 拿 `diff_refs`、再 `GET merge_requests/:iid/diffs` 拿行号），中间 MR 被 push 就是「旧行号 + 新 sha」或反过来：GitLab 不报 409，而是直接 400 `line_code can't be blank`（实测把 `head_sha` 换成 `base_sha` 就是这个形态），排查时看不出是 sha 混了。
+
+因此统一走 `GitLabAdapter#fetchMrDiffSnapshot(ref)`：
+
+- `GET merge_requests/:iid/versions` → 挑 `head_commit_sha` 与 MR 当前 head 对得上的那个版本（对不上就取最新一个）；
+- `GET merge_requests/:iid/versions/:id` → **一个响应里同时给出** `base_commit_sha` / `head_commit_sha` / `start_commit_sha` 与那份 `diffs`（含 `collapsed` / `too_large` / `generated_file` 标记）；
+- 用版本里的三个 sha 覆盖 `context.diffRefs`，行号也来自同一份 `diffs`，两者天然同源。
+
+老 GitLab 没有 versions 接口、被网关包成 200 + 错误体、版本列表为空、或版本里没 diff 时，回落到 `getMergeRequest` + `listDiffs` 两次读（此时 `createDiscussion` 的发布前 head 预检仍会把过期位置拦成 409 交给重锚）。
+
+首次加载、修复提交后的刷新、409 重锚都走这一个入口，不再各自分别打两个接口。
 
 ## 5. 认证模式
 

@@ -36,7 +36,7 @@ import {
   type FixPlan,
 } from './core/finding-fix';
 import { exportSiteConfig, probeCapabilities, type DiagnosticEntry, type ExtendedCapabilities } from './core/capabilities';
-import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage, projectAdapter } from './core/gitlab-adapter';
+import { GitLabAdapter, GitLabApiError, mergeRequestRefFromPage, projectAdapter, type MrDiffSnapshot } from './core/gitlab-adapter';
 import { McpClient, MultiMcpClient } from './core/mcp-client';
 import { createModelRuntime, type AgentMessage, type ModelRuntime } from './core/model-runtime';
 import { createRepoIndex, type RepoIndex, type RepoIndexStatus } from './core/repo-index';
@@ -410,11 +410,15 @@ export default function App({ page }: AppProps) {
       return () => controller.abort();
     }
     addLog('debug', 'gitlab', `读取 ${page.projectPath} !${mergeRequestRef.mergeRequestIid}`);
+    const commitSha = page.commitSha;
     void Promise.all([
-      api.getMergeRequest(mergeRequestRef),
-      page.route === 'commit' && page.commitSha
-        ? api.listCommitDiffs(page.commitSha)
-        : api.listDiffs(mergeRequestRef, { signal: controller.signal }),
+      // diff_refs 与 diff 同源读取：发布 position 的三个 sha 必须和行号来自同一次响应，
+      // 混两次请求的 sha 会让 GitLab 直接 400（line_code can't be blank）而不是 409。
+      // commit 页没有 MR diff 版本可读，仍按 MR 详情 + commit diff 两次取（该页本来也不发布行内评论）。
+      commitSha && page.route === 'commit'
+        ? api.getMergeRequest(mergeRequestRef)
+          .then(async (context): Promise<MrDiffSnapshot> => ({ context, files: await api.listCommitDiffs(commitSha) }))
+        : api.fetchMrDiffSnapshot(mergeRequestRef, { signal: controller.signal }),
       // commits 只是评审背景：开关关掉就整个不打这个接口；打了但失败也不能连累 MR 主体与 diff，
       // 一样退化成「不带 commit 上下文」
       settings.includeMrCommits
@@ -425,7 +429,7 @@ export default function App({ page }: AppProps) {
           return [] as MrCommit[];
         })
         : Promise.resolve([] as MrCommit[]),
-    ]).then(([context, diffs, commits]) => {
+    ]).then(([{ context, files: diffs }, commits]) => {
       if (controller.signal.aborted) return;
       setMrContext(context);
       setMrCommits(commits);
@@ -1481,8 +1485,7 @@ export default function App({ page }: AppProps) {
    * 不必每条各自撞一次 409。会话只在本次发布内有效，重锚上限一次。
    */
   const createReanchor = (ref: MergeRequestRef): ReanchorSession => createReanchorSession({
-    fetchMergeRequest: () => api.getMergeRequest(ref),
-    fetchFiles: () => api.listDiffs(ref),
+    fetchSnapshot: () => api.fetchMrDiffSnapshot(ref),
   });
 
   /**
@@ -1656,9 +1659,8 @@ export default function App({ page }: AppProps) {
   const reloadMrChanges = useCallback(async () => {
     if (!mergeRequestRef) return;
     try {
-      const [context, diffs, commits] = await Promise.all([
-        api.getMergeRequest(mergeRequestRef),
-        api.listDiffs(mergeRequestRef),
+      const [{ context, files: diffs }, commits] = await Promise.all([
+        api.fetchMrDiffSnapshot(mergeRequestRef),
         // 与首次读取同一口径：开关关掉就不打 commits 接口
         settings.includeMrCommits
           ? api.listMrCommits(mergeRequestRef).catch((error: unknown) => {
