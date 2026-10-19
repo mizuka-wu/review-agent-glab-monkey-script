@@ -138,22 +138,38 @@ Reading:
 GET /api/v4/projects/:project/merge_requests/:iid/discussions?per_page=100
 ```
 
-Creating a line comment:
+Creating a line comment (always a JSON body):
 
 ```http
 POST /api/v4/projects/:project/merge_requests/:iid/discussions
-Content-Type: application/x-www-form-urlencoded
+Content-Type: application/json
 
-body=Review comment
-position[position_type]=text
-position[base_sha]=...
-position[start_sha]=...
-position[head_sha]=...
-position[new_path]=src/checkout.ts
-position[new_line]=42
+{
+  "body": "Review comment",
+  "position": {
+    "position_type": "text",
+    "base_sha": "...",
+    "start_sha": "...",
+    "head_sha": "...",
+    "old_path": "src/checkout.ts",
+    "new_path": "src/checkout.ts",
+    "new_line": 42
+  }
+}
 ```
 
-For lines on the old path, use `position[old_path]` with `position[old_line]`. For multiple lines, prefer the `line_range` supported by the target GitLab version; otherwise anchor only the most relevant added line.
+For lines on the old path, use `old_path` with `old_line`. For multiple lines, add `line_range` whose
+`start` / `end` each carry the officially required `line_code`, `type`, `old_line` and `new_line`
+(otherwise anchor only the most relevant added line). The MR-level summary note uses the sibling
+`POST .../notes` endpoint with a JSON body as well (a single `body` key).
+
+Never `application/x-www-form-urlencoded`: form encoding flattens the nested
+`position[line_range][start][line_code]` fields, and on older GitLab releases over the Tampermonkey
+`GM.xmlHttpRequest` path the server parses that into a malformed position, answering
+400 `position must be a valid json schema`. JSON sends the native structure, and line numbers are
+natively integers (`old_line` / `new_line` are `integer` in `position.json`) instead of relying on form
+string coercion. The only endpoint still taking the form default `Content-Type` is the bodyless
+`POST .../approve`.
 
 ## 4. Comment Position Rules
 

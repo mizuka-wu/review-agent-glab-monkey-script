@@ -46,7 +46,7 @@ export class GitLabApiError extends Error {
 interface RequestOptions {
   method?: 'GET' | 'POST';
   headers?: Record<string, string>;
-  body?: string | URLSearchParams;
+  body?: string;
   signal?: AbortSignal;
 }
 
@@ -174,9 +174,29 @@ interface RawMergeRequestSummary {
   web_url?: string;
 }
 
-/** 空值字段一律不发：GitLab 收到 position[base_sha]= 会把整个 diff_refs 判为不完整。 */
-function setPositionField(payload: URLSearchParams, key: string, value: string) {
-  if (value) payload.set(key, value);
+/** position 的 JSON 结构：键名逐字抄 19.4 容器 app/validators/json_schemas/position.json。 */
+export interface PositionLineRangeEndpoint {
+  line_code: string;
+  type: 'old' | 'new';
+  old_line?: number;
+  new_line?: number;
+}
+
+export interface DiscussionPositionPayload {
+  position_type: 'text';
+  base_sha?: string;
+  head_sha?: string;
+  start_sha?: string;
+  new_path?: string;
+  old_path?: string;
+  old_line?: number;
+  new_line?: number;
+  line_range?: { start: PositionLineRangeEndpoint; end: PositionLineRangeEndpoint };
+}
+
+/** 空值字段一律不发：GitLab 收到 base_sha: '' 会把整个 diff_refs 判为不完整。 */
+function optionalField(value: string) {
+  return value || undefined;
 }
 
 /**
@@ -191,10 +211,10 @@ function setPositionPath(...candidates: (string | undefined)[]) {
  * GitLab 的 line_for_position 拿 (old_line, new_line) 同时比对 diff 行：added 行只有 new_line、
  * removed 行只有 old_line、context 行两者都有。只按 side 填一侧，context 行就匹配不到任何 diff 行，
  * Note 以 `line_code can't be blank` 400；自己凑一对同样匹配不到。配对只能取自真实 diff 行。
+ * JSON 里行号原生就是整数（position.json 的 old_line / new_line 是 integer），不再靠 form 的字符串强转。
  */
-function setPositionLine(payload: URLSearchParams, prefix: string, line: PositionLineRef) {
-  if (line.oldLine !== undefined) payload.set(`${prefix}[old_line]`, String(line.oldLine));
-  if (line.newLine !== undefined) payload.set(`${prefix}[new_line]`, String(line.newLine));
+function positionLines(line: PositionLineRef) {
+  return { old_line: line.oldLine, new_line: line.newLine };
 }
 
 /** 没有 diff 行配对时的兜底：按 side 填一侧，至少 added / removed 行还能发出去。 */
@@ -205,7 +225,7 @@ function sideLineRef(side: 'old' | 'new', line: number): PositionLineRef {
 /**
  * GitLab 算 line_code 的路径口径是 `new_path.presence || old_path`
  * （lib/gitlab/diff/file.rb#file_path，MergeRequests::ResolveDiffPositionService 也照这个解析），
- * 和 payload 里 position[new_path] 用的是同一个值：rename 后哈希的是新路径。
+ * 和 payload 里 new_path 用的是同一个值：rename 后哈希的是新路径。
  */
 function lineCodePath(position: DiscussionPosition) {
   return setPositionPath(position.newPath, position.oldPath, position.path)
@@ -229,7 +249,7 @@ function lineCode(filePath: string, line: PositionLineRef) {
  * GitLab 自己的 ResolveDiffPositionService 对上下文行给 nil，但文档把这 4 个键标成必填、
  * 类型是 string，老版本严格校验时 null 一样会被 schema 拒，所以恒发字符串。
  */
-function lineAge(line: PositionLineRef) {
+function lineAge(line: PositionLineRef): 'old' | 'new' {
   return line.newLine !== undefined && line.oldLine === undefined ? 'new' : 'old';
 }
 
@@ -238,41 +258,51 @@ function lineAge(line: PositionLineRef) {
  * 19.4 的 position.json 没写 required，缺键本地照样 201；老 GitLab 严格校验就是
  * 400 `position must be a valid json schema`。
  */
-function setPositionRangeEndpoint(payload: URLSearchParams, prefix: string, filePath: string, line: PositionLineRef) {
-  payload.set(`${prefix}[line_code]`, lineCode(filePath, line));
-  payload.set(`${prefix}[type]`, lineAge(line));
-  setPositionLine(payload, prefix, line);
+function lineRangeEndpoint(filePath: string, line: PositionLineRef): PositionLineRangeEndpoint {
+  return { line_code: lineCode(filePath, line), type: lineAge(line), ...positionLines(line) };
 }
 
 /**
- * 无 position 时只带 body，GitLab 会创建 MR 级全文评论。
- * position[line_range] 会被 GitLab 原样存下并按 json schema 校验（additionalProperties: false），
- * 多一个键就是 `position must be a valid json schema`，所以只发 schema 里存在的键。
+ * 由 DiscussionPosition 构造真实的 position 对象：JSON 直发原生结构，undefined 键由
+ * JSON.stringify 自动省略，不需要手工拼任何字符串。
  */
-export function buildDiscussionPayload(input: DiscussionDraft) {
-  const payload = new URLSearchParams();
-  payload.set('body', input.body);
-  const position = input.position;
-  if (!position) return payload;
-
-  payload.set('position[position_type]', 'text');
-  setPositionField(payload, 'position[base_sha]', position.diffRefs.baseSha);
-  setPositionField(payload, 'position[head_sha]', position.diffRefs.headSha);
-  setPositionField(payload, 'position[start_sha]', position.diffRefs.startSha);
-  setPositionField(payload, 'position[new_path]', setPositionPath(position.newPath, position.oldPath, position.path));
-  setPositionField(payload, 'position[old_path]', setPositionPath(position.oldPath, position.newPath, position.path));
-
+export function buildDiscussionPosition(position: DiscussionPosition): DiscussionPositionPayload {
   // 顶层 old_line / new_line 描述的是评论结束行，必须和该行在 diff 里的配对完全一致。
   const end = position.end ?? sideLineRef(position.side, position.endLine);
-  setPositionLine(payload, 'position', end);
+  const payload: DiscussionPositionPayload = {
+    position_type: 'text',
+    base_sha: optionalField(position.diffRefs.baseSha),
+    head_sha: optionalField(position.diffRefs.headSha),
+    start_sha: optionalField(position.diffRefs.startSha),
+    new_path: optionalField(setPositionPath(position.newPath, position.oldPath, position.path)),
+    old_path: optionalField(setPositionPath(position.oldPath, position.newPath, position.path)),
+    ...positionLines(end),
+  };
   // 单行评论不进 line_range：文档的单行示例也只有顶层 old_line / new_line。
   if (position.startLine === position.endLine) return payload;
 
   const filePath = lineCodePath(position);
-  setPositionRangeEndpoint(payload, 'position[line_range][start]', filePath,
-    position.start ?? sideLineRef(position.side, position.startLine));
-  setPositionRangeEndpoint(payload, 'position[line_range][end]', filePath, end);
-  return payload;
+  return {
+    ...payload,
+    line_range: {
+      start: lineRangeEndpoint(filePath, position.start ?? sideLineRef(position.side, position.startLine)),
+      end: lineRangeEndpoint(filePath, end),
+    },
+  };
+}
+
+/**
+ * discussions 端点发 JSON body：form 编码会把嵌套的 position[line_range][start][line_code] 拆成一堆
+ * 平铺字段，老 GitLab 与油猴 GM.xmlHttpRequest 这条链路上解析出来的 position 不是合法结构，
+ * 一律 400 `position 必须是有效的 json schema`。
+ * 无 position 时只带 body，GitLab 会创建 MR 级全文评论。
+ * position 会被 GitLab 原样存下并按 json schema 校验（additionalProperties: false），
+ * 多一个键就是 `position must be a valid json schema`，所以只发 schema 里存在的键。
+ */
+export function buildDiscussionPayload(input: DiscussionDraft): string {
+  return JSON.stringify(input.position
+    ? { body: input.body, position: buildDiscussionPosition(input.position) }
+    : { body: input.body });
 }
 
 /** GitLab 判 position 非法的状态码：行号不在 diff 内、路径不在 MR 里、diff_refs 过期。 */
@@ -342,6 +372,7 @@ export class GitLabAdapter {
     if (this.gitlabToken) headers['PRIVATE-TOKEN'] = this.gitlabToken;
     if (options.method === 'POST') {
       headers['X-CSRF-Token'] = csrfToken();
+      // 只剩 approveMergeRequest 这种没有 body 的端点吃这个默认值；带 body 的一律显式声明 JSON。
       headers['Content-Type'] ??= 'application/x-www-form-urlencoded';
     }
 
@@ -620,6 +651,7 @@ export class GitLabAdapter {
       `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/discussions`,
       {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: buildDiscussionPayload(draft),
       },
     );
@@ -700,11 +732,9 @@ export class GitLabAdapter {
 
   /** 发布 MR 级总评论（不带行位置）。 */
   async createNote(ref: MergeRequestRef, body: string) {
-    const payload = new URLSearchParams();
-    payload.set('body', body);
     return this.request<{ id: number }>(
       `/api/v4/projects/${this.projectRef()}/merge_requests/${ref.mergeRequestIid}/notes`,
-      { method: 'POST', body: payload },
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) },
     );
   }
 

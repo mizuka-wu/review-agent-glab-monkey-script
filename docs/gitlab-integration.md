@@ -136,22 +136,35 @@ GET /api/v4/projects/:project/repository/files/:encoded_path/raw?ref=:sha
 GET /api/v4/projects/:project/merge_requests/:iid/discussions?per_page=100
 ```
 
-创建行评论：
+创建行评论（一律 JSON body）：
 
 ```http
 POST /api/v4/projects/:project/merge_requests/:iid/discussions
-Content-Type: application/x-www-form-urlencoded
+Content-Type: application/json
 
-body=Review comment
-position[position_type]=text
-position[base_sha]=...
-position[start_sha]=...
-position[head_sha]=...
-position[new_path]=src/checkout.ts
-position[new_line]=42
+{
+  "body": "Review comment",
+  "position": {
+    "position_type": "text",
+    "base_sha": "...",
+    "start_sha": "...",
+    "head_sha": "...",
+    "old_path": "src/checkout.ts",
+    "new_path": "src/checkout.ts",
+    "new_line": 42
+  }
+}
 ```
 
-旧路径行使用 `position[old_path]` 与 `position[old_line]`。跨多行建议使用 GitLab 目标版本支持的 `line_range`，否则只锚定最相关新增行。
+旧路径行使用 `old_path` 与 `old_line`；跨多行再带 `line_range`，`start` / `end` 各自补齐官方必填的
+`line_code`、`type`、`old_line`、`new_line`（否则只锚定最相关新增行）。MR 级总评论走同一族的
+`POST .../notes`，body 同样是 JSON（只有 `body` 一个键）。
+
+不用 `application/x-www-form-urlencoded`：嵌套的 `position[line_range][start][line_code]` 被 form 拆成
+平铺字段后，老 GitLab 与油猴 `GM.xmlHttpRequest` 这条链路解析出来的不是合法 position 结构，
+一律 400 `position must be a valid json schema`。JSON 直发原生结构，行号也天然是 `integer`
+（`position.json` 里 `old_line` / `new_line` 就是整数），不依赖 form 的字符串强转。
+唯一还吃 form 默认 `Content-Type` 的是没有 body 的 `POST .../approve`。
 
 ## 4. 评论位置规则
 

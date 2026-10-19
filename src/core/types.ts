@@ -310,13 +310,13 @@ export interface DiscussionPosition {
   startLine: number;
   endLine: number;
   side: 'old' | 'new';
-  /** 起止行在真实 diff 行上的行号配对，对应 GitLab 的 position[line_range][start|end]。 */
+  /** 起止行在真实 diff 行上的行号配对，对应 GitLab position JSON 里的 line_range.start / line_range.end。 */
   start?: PositionLineRef;
   end?: PositionLineRef;
   diffRefs: DiffRefs;
 }
 
-/** position 缺省时创建 MR 级全文评论，payload 不含任何 position[...] 字段。 */
+/** position 缺省时创建 MR 级全文评论，JSON payload 里连 position 键都不出现。 */
 export interface DiscussionDraft {
   body: string;
   position?: DiscussionPosition;

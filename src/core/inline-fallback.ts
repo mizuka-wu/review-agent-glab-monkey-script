@@ -13,7 +13,7 @@ import { sanitizeLog } from './capabilities';
 import { debugBus } from './debug-bus';
 import { findDiffLine, repoPathEquals } from './diff';
 import { diffViewKind, domLineSource } from './dom-line-number';
-import { buildDiscussionPayload } from './gitlab-adapter';
+import { buildDiscussionPosition } from './gitlab-adapter';
 import { selectionLabel } from './selection';
 import type {
   CodeSelection,
@@ -106,13 +106,19 @@ function lineRef(label: string, ref?: PositionLineRef) {
   return parts.length > 0 ? `${label}{${parts.join(',')}}` : '';
 }
 
-/** 实际发出的 position 参数原样还原（去掉正文），排查 `line_code can't be blank` 这类拒绝只能看这个。 */
+/** JSON payload 展平成 position[a][b]=v：键名与 position.json 一致，排查时能直接对上文档。 */
+function flattenParams(value: unknown, prefix: string): [string, string][] {
+  if (value === null || typeof value !== 'object') return [[prefix, String(value)]];
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .flatMap(([key, item]) => flattenParams(item, `${prefix}[${key}]`));
+}
+
+/** 实际发出的 position 参数原样还原（不含正文），排查 `line_code can't be blank` 这类拒绝只能看这个。 */
 export function positionParams(position?: DiscussionPosition) {
   if (!position) return undefined;
-  const params = buildDiscussionPayload({ body: '', position });
-  params.delete('body');
-  return [...params.entries()]
-    .map(([key, value]) => `${decodeURIComponent(key)}=${value}`)
+  return flattenParams(buildDiscussionPosition(position), 'position')
+    .map(([key, value]) => `${key}=${value}`)
     .join(' · ');
 }
 
