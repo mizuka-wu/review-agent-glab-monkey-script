@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { resolvePublishPosition } from '../../src/core/anchor';
 import { buildDiscussionPayload, GitLabAdapter } from '../../src/core/gitlab-adapter';
 import { toDiscussionPosition } from '../../src/core/reanchor';
+import { sha1Hex } from '../../src/core/sha1';
 import type {
   DiscussionPosition, DiffLine, FileDiff, Finding, MergeRequestRef, PageContext,
 } from '../../src/core/types';
@@ -77,6 +78,17 @@ function uniqueOnSide(file: FileDiff, row: DiffLine, side: 'old' | 'new') {
   const same = file.lines.filter((line) =>
     (side === 'new' ? line.newLine : line.oldLine) !== undefined && loose(line.text) === wanted);
   return same.length === 1;
+}
+
+/** 连续两行组成的片段在该侧真实 diff 行里是不是只出现一次：不唯一的会被 anchor 判多候选。 */
+function snippetUnique(file: FileDiff, rows: DiffLine[], side: 'old' | 'new') {
+  const target = rows.map((row) => loose(row.text));
+  const entries = file.lines.filter((line) => (side === 'new' ? line.newLine : line.oldLine) !== undefined);
+  let hits = 0;
+  for (let index = 0; index + target.length <= entries.length; index += 1) {
+    if (target.every((text, offset) => loose(entries[index + offset].text) === text)) hits += 1;
+  }
+  return hits === 1;
 }
 
 function pickRow(file: FileDiff, kind: DiffLine['kind']) {
@@ -309,5 +321,131 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
     );
     const discussions = await leftover.json() as { notes?: { body?: string }[] }[];
     expect(discussions.filter((discussion) => String(discussion.notes?.[0]?.body ?? '').startsWith(MARKER))).toHaveLength(0);
+  });
+
+  /**
+   * line_range 的 line_code / type 在官方文档里是 Required，19.4 容器的 position.json 没写 required，
+   * 缺键本地也 201（老 GitLab 才 400），所以这里两件事都要量：
+   * ① 4 个键齐全且值符合 GitLab 口径；② 补键之后真实 GitLab 仍然照收，并且原样把 line_range 存下来。
+   */
+  test('多行评论：line_range 补齐官方必填的 line_code + type，真实发布仍 201 且被原样存下', async () => {
+    const results: {
+      sandbox: string; pair: string; path: string; side: string; status?: number; detail?: string;
+      params: Record<string, string>; stored?: unknown; types: string[];
+    }[] = [];
+    const PER_SANDBOX = 3;
+
+    for (const sandbox of SANDBOXES) {
+      const label = `${sandbox.projectPath}!${sandbox.iid}`;
+      const adapter = adapterFor(sandbox.projectPath, sandbox.iid);
+      const snapshot = await adapter.fetchMrDiffSnapshot(refFor(sandbox));
+      // 一段连续两行、内容够长、且这一对在文件里唯一（不唯一的片段本来就该判多候选，量不到 201）
+      const candidates: { file: FileDiff; rows: [DiffLine, DiffLine]; side: 'old' | 'new'; mixed: boolean }[] = [];
+      for (const file of snapshot.files) {
+        for (const side of ['new', 'old'] as const) {
+          const entries = file.lines.filter((line) => (side === 'new' ? line.newLine : line.oldLine) !== undefined);
+          const value = (line: DiffLine) => (side === 'new' ? line.newLine! : line.oldLine!);
+          for (let index = 0; index + 1 < entries.length; index += 1) {
+            const rows = [entries[index], entries[index + 1]] as [DiffLine, DiffLine];
+            if (value(rows[1]) !== value(rows[0]) + 1 || rows[0].hunkId !== rows[1].hunkId) continue;
+            if (rows.some((row) => row.text.trim().length < 12)) continue;
+            if (!snippetUnique(file, rows, side)) continue;
+            candidates.push({ file, rows, side, mixed: rows[0].kind !== rows[1].kind });
+          }
+        }
+      }
+
+      // 起止两行形态不同的优先：一条 payload 就能同时量到 type='old' 与 type='new'
+      const picked: typeof candidates = [];
+      for (const mixed of [true, false]) {
+        for (const candidate of candidates.filter((entry) => entry.mixed === mixed)) {
+          const pair = candidate.rows.map((row) => row.kind).join('+');
+          if (picked.some((entry) => entry.rows.map((row) => row.kind).join('+') === pair)) continue;
+          picked.push(candidate);
+        }
+      }
+
+      for (const { file, rows, side } of picked.slice(0, PER_SANDBOX)) {
+        const path = file.newPath === '/dev/null' ? file.oldPath : file.newPath;
+        const startLine = side === 'new' ? rows[0].newLine! : rows[0].oldLine!;
+        const snippet = rows.map((row) => row.text).join('\n');
+        const pair = rows.map((row) => row.kind).join('+');
+
+        // 模型行号照旧整体报偏 11 行：范围必须由内容重新锚定回真实的两行
+        const candidate = draft({
+          path, line: startLine + 11, endLine: startLine + 12, side, existingCode: snippet,
+          comment: `${MARKER} multiline ${label} ${pair} ${path}:${startLine}`,
+        });
+        const publish = resolvePublishPosition(candidate, snapshot.files);
+        expect(publish.publishable, `${label} ${pair} 多行没能重新锚定：${publish.reason}`).toBe(true);
+        expect(publish.finding.line, `${label} ${pair} 多行起点锚错了`).toBe(startLine);
+        expect(publish.finding.endLine, `${label} ${pair} 多行终点锚错了`).toBe(startLine + 1);
+
+        const position = toDiscussionPosition(publish, snapshot.context.diffRefs)!;
+        const params = Object.fromEntries(
+          buildDiscussionPayload({ body: candidate.comment, position }),
+        ) as Record<string, string>;
+
+        // line_code 口径照抄 GitLab：SHA1(new_path.presence || old_path)_old_new，缺的一侧补 0
+        const fileHash = sha1Hex(params['position[new_path]']);
+        const types: string[] = [];
+        for (const endpoint of ['start', 'end'] as const) {
+          const prefix = `position[line_range][${endpoint}]`;
+          const ref = endpoint === 'start' ? publish.lines!.start : publish.lines!.end;
+          expect(params[`${prefix}[line_code]`], `${label} ${pair} ${endpoint} 缺 line_code`)
+            .toBe(`${fileHash}_${ref.oldLine ?? 0}_${ref.newLine ?? 0}`);
+          expect(params[`${prefix}[type]`], `${label} ${pair} ${endpoint} 的 type 不合文档口径`)
+            .toBe(ref.oldLine === undefined && ref.newLine !== undefined ? 'new' : 'old');
+          // additionalProperties: false —— schema 之外的键一个都不能有
+          expect(Object.keys(params).filter((key) => key.startsWith(`${prefix}[`)).sort())
+            .toEqual([`${prefix}[line_code]`, ...(ref.oldLine !== undefined ? [`${prefix}[old_line]`] : []),
+              ...(ref.newLine !== undefined ? [`${prefix}[new_line]`] : []), `${prefix}[type]`].sort());
+          types.push(params[`${prefix}[type]`]);
+        }
+
+        const posted = await postDiscussion(sandbox, position, candidate.comment);
+        let stored: unknown;
+        try {
+          stored = (JSON.parse(posted.text) as { notes?: { position?: { line_range?: unknown } }[] })
+            .notes?.[0]?.position?.line_range;
+        } catch { stored = posted.text.slice(0, 200); }
+
+        results.push({
+          sandbox: label, pair, path, side, status: posted.status, detail: posted.text.slice(0, 200),
+          params, stored, types,
+        });
+      }
+
+      await cleanProbes(sandbox);
+    }
+
+    expect(results.length, '沙箱 MR 里一段连续两行都没量到').toBeGreaterThan(0);
+    const rejected = results.filter((row) => row.status !== 201);
+    expect(rejected.map((row) => `${row.sandbox} ${row.pair} ${row.path} → ${row.status} ${row.detail}`),
+      '补齐 line_code + type 后多行评论被 GitLab 拒了').toEqual([]);
+    expect(results.filter((row) => row.status === 400), '出现了 400').toHaveLength(0);
+
+    // GitLab 原样存下我们发的 4 个键（存的时候不会自己补 line_code / type）
+    for (const row of results) {
+      const stored = row.stored as { start?: Record<string, unknown>; end?: Record<string, unknown> };
+      for (const endpoint of ['start', 'end'] as const) {
+        const sent = Object.fromEntries(Object.entries(row.params)
+          .filter(([key]) => key.startsWith(`position[line_range][${endpoint}][`))
+          .map(([key, value]) => [key.slice(`position[line_range][${endpoint}][`.length, -1), value]));
+        expect(stored?.[endpoint], `${row.sandbox} ${row.pair} ${endpoint} 没被存下来`).toMatchObject({
+          line_code: sent.line_code, type: sent.type,
+        });
+        for (const field of ['old_line', 'new_line']) {
+          if (sent[field] === undefined) expect(stored![endpoint]![field]).toBeUndefined();
+          else expect(stored![endpoint]![field], `${row.sandbox} ${row.pair} ${endpoint} ${field}`)
+            .toBe(Number(sent[field]));
+        }
+      }
+    }
+
+    // type 的三态判定真的被量到：新增行 'new'、上下文 / 删除行 'old'
+    const observed = new Set(results.flatMap((row) => row.types));
+    expect(observed.has('new'), '没量到新增行端点（type=new）').toBe(true);
+    expect(observed.has('old'), '没量到上下文 / 删除行端点（type=old）').toBe(true);
   });
 });

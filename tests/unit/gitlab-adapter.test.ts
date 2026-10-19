@@ -110,8 +110,9 @@ describe('GitLab discussion payload', () => {
       },
     });
     // line_range 被 GitLab 原样存下并按 additionalProperties: false 校验，多一个键就整条 400。
+    // 键名抄 19.4 容器 app/validators/json_schemas/position.json 里 line_range.start / .end 的 properties。
     const allowed = new Set(['start', 'end'].flatMap((endpoint) =>
-      ['old_line', 'new_line'].map((field) => `position[line_range][${endpoint}][${field}]`)));
+      ['line_code', 'type', 'old_line', 'new_line'].map((field) => `position[line_range][${endpoint}][${field}]`)));
     const emitted = [...payload.keys()].filter((key) => key.startsWith('position[line_range]'));
     expect(emitted.length).toBeGreaterThan(0);
     expect(emitted.filter((key) => !allowed.has(key))).toEqual([]);
@@ -733,5 +734,162 @@ describe('fetchMrDiffSnapshot：diff_refs 与 diff 同源（stale diff_refs 的�
     expect(error).toBeInstanceOf(GitLabApiError);
     expect(error).toMatchObject({ status: 409, code: 'stale_diff_refs' });
     expect(posted).toEqual([]);
+  });
+});
+
+/**
+ * 多行评论的 line_range 在官方文档里 4 个键全是 Required（line_code / type / old_line / new_line），
+ * 19.4 容器的 position.json 没写 required，缺键本地照样 201；老 GitLab 严格校验就是
+ * 400 `position 必须是有效的 json schema`。老版本起不来，这里按文档口径做键级严格自检。
+ */
+describe('discussion payload: line_range 官方必填键（line_code + type）', () => {
+  const REFS = { baseSha: 'b', headSha: 'h', startSha: 's' };
+  // 下面三个 hex 是在 GitLab 容器里用 Digest::SHA1.hexdigest 跑出来的，不是测试自己算的
+  const HASH: Record<string, string> = {
+    'a.ts': '02699cd6ca65aa6819d7e387678d8ea5359b5e59',
+    'src/new.ts': 'df2b62deb31702acddc8aa626ad5715d14f6ec2b',
+    'src/gone.ts': '3610915ac3ee397af8456cf1dd1f95aa7a212463',
+  };
+  const SCHEMA_FIELDS = ['line_code', 'type', 'old_line', 'new_line'];
+
+  const paramsOf = (position: Partial<DiscussionPosition> & { startLine: number; endLine: number }) =>
+    Object.fromEntries(buildDiscussionPayload({
+      body: 'c',
+      position: { path: 'a.ts', side: 'new', diffRefs: REFS, ...position } as DiscussionPosition,
+    })) as Record<string, string>;
+
+  /** 模拟老 GitLab 的严格校验：必填键到齐、值是字符串枚举、没有 additionalProperties 之外的键、行号自洽。 */
+  function expectStrictLineRange(params: Record<string, string>) {
+    const emitted = Object.keys(params).filter((key) => key.startsWith('position[line_range]'));
+    expect(emitted.length, '多行评论没发 line_range').toBeGreaterThan(0);
+
+    for (const endpoint of ['start', 'end']) {
+      const prefix = `position[line_range][${endpoint}]`;
+      const fields = emitted
+        .filter((key) => key.startsWith(`${prefix}[`))
+        .map((key) => key.slice(prefix.length + 1, -1));
+      // position.json 里 line_range.start / .end 都是 additionalProperties: false，多一个键整条 400
+      expect(fields.filter((field) => !SCHEMA_FIELDS.includes(field)), `${endpoint} 多了 schema 不允许的键`).toEqual([]);
+
+      // 文档标的两个 Required 键：line_code 是 SHA1(path)_old_new，type 只能是 'new' / 'old'
+      expect(params[`${prefix}[line_code]`], `${endpoint} 缺 line_code`).toMatch(/^[0-9a-f]{40}_\d+_\d+$/);
+      expect(['new', 'old'], `${endpoint} 的 type 不是字符串枚举`).toContain(params[`${prefix}[type]`]);
+
+      // line_code 里的行号必须和同一 endpoint 的 old_line / new_line 对得上，缺的一侧按 GitLab 口径补 0
+      const [, oldPart, newPart] = params[`${prefix}[line_code]`].split('_');
+      expect(Number(oldPart), `${endpoint} line_code 的 old 行号和 old_line 不一致`)
+        .toBe(params[`${prefix}[old_line]`] === undefined ? 0 : Number(params[`${prefix}[old_line]`]));
+      expect(Number(newPart), `${endpoint} line_code 的 new 行号和 new_line 不一致`)
+        .toBe(params[`${prefix}[new_line]`] === undefined ? 0 : Number(params[`${prefix}[new_line]`]));
+      // 只有本 commit 新增的行（没有 old_line）才是 'new'
+      expect(params[`${prefix}[type]`], `${endpoint} 的 type 和行号配对不自洽`)
+        .toBe(params[`${prefix}[old_line]`] === undefined ? 'new' : 'old');
+    }
+  }
+
+  it('start / end 各自把 line_code + type 补齐，四个键一个不缺', () => {
+    const params = paramsOf({
+      startLine: 18, endLine: 20, side: 'new',
+      start: { oldLine: 18, newLine: 18 }, end: { newLine: 20 },
+    });
+    expect(params).toMatchObject({
+      'position[line_range][start][line_code]': `${HASH['a.ts']}_18_18`,
+      'position[line_range][start][type]': 'old',
+      'position[line_range][start][old_line]': '18',
+      'position[line_range][start][new_line]': '18',
+      'position[line_range][end][line_code]': `${HASH['a.ts']}_0_20`,
+      'position[line_range][end][type]': 'new',
+      'position[line_range][end][new_line]': '20',
+    });
+    expect(params['position[line_range][end][old_line]']).toBeUndefined();
+    expectStrictLineRange(params);
+  });
+
+  it('type 三态：新增行 new、删除行 old、上下文行 old', () => {
+    const params = paramsOf({
+      startLine: 19, endLine: 21, side: 'old',
+      start: { oldLine: 19 }, end: { oldLine: 20, newLine: 21 },
+    });
+    // start 是 removed 行：只有 old_line → 'old'；end 是 context 行：两侧都有 → 也是 'old'
+    expect(params['position[line_range][start][type]']).toBe('old');
+    expect(params['position[line_range][end][type]']).toBe('old');
+    expect(params['position[line_range][start][line_code]']).toBe(`${HASH['a.ts']}_19_0`);
+    expect(params['position[line_range][end][line_code]']).toBe(`${HASH['a.ts']}_20_21`);
+    expectStrictLineRange(params);
+  });
+
+  it('line_code 缺的一侧补 0，不是留空串', () => {
+    const params = paramsOf({ startLine: 2, endLine: 5, side: 'new', start: { newLine: 2 }, end: { newLine: 5 } });
+    expect(params['position[line_range][start][line_code]']).toBe(`${HASH['a.ts']}_0_2`);
+    expect(params['position[line_range][end][line_code]']).toBe(`${HASH['a.ts']}_0_5`);
+    expect(params['position[line_range][start][line_code]']).not.toContain('__');
+    expect(params['position[line_range][start][line_code]']).not.toMatch(/_$/);
+    expectStrictLineRange(params);
+  });
+
+  it('哈希的是 new_path.presence || old_path：rename 用新路径，删除文件回落旧路径', () => {
+    const renamed = paramsOf({
+      path: 'src/new.ts', oldPath: 'src/old.ts', newPath: 'src/new.ts',
+      startLine: 3, endLine: 4, side: 'new', start: { oldLine: 3, newLine: 3 }, end: { newLine: 4 },
+    });
+    expect(renamed['position[new_path]']).toBe('src/new.ts');
+    expect(renamed['position[line_range][start][line_code]']).toBe(`${HASH['src/new.ts']}_3_3`);
+    expectStrictLineRange(renamed);
+
+    // 新增文件：old_path 是 /dev/null，两侧都只能哈希新路径
+    const created = paramsOf({
+      path: 'src/new.ts', oldPath: '/dev/null', newPath: 'src/new.ts',
+      startLine: 1, endLine: 3, side: 'new', start: { newLine: 1 }, end: { newLine: 3 },
+    });
+    expect(created['position[line_range][start][line_code]']).toBe(`${HASH['src/new.ts']}_0_1`);
+    expect(created['position[line_range][end][line_code]']).toBe(`${HASH['src/new.ts']}_0_3`);
+    expectStrictLineRange(created);
+
+    // 删除文件：new_path 是 /dev/null，哈希回落 old_path
+    const deleted = paramsOf({
+      path: 'src/gone.ts', oldPath: 'src/gone.ts', newPath: '/dev/null',
+      startLine: 7, endLine: 9, side: 'old', start: { oldLine: 7 }, end: { oldLine: 9 },
+    });
+    expect(deleted['position[new_path]']).toBe('src/gone.ts');
+    expect(deleted['position[line_range][start][line_code]']).toBe(`${HASH['src/gone.ts']}_7_0`);
+    expect(deleted['position[line_range][start][type]']).toBe('old');
+    expectStrictLineRange(deleted);
+  });
+
+  it('没有 diff 行配对时按 side 兜底，两个必填键照样发得出去', () => {
+    const byNew = paramsOf({ startLine: 2, endLine: 5, side: 'new' });
+    expect(byNew).toMatchObject({
+      'position[line_range][start][line_code]': `${HASH['a.ts']}_0_2`,
+      'position[line_range][start][type]': 'new',
+      'position[line_range][end][line_code]': `${HASH['a.ts']}_0_5`,
+      'position[line_range][end][type]': 'new',
+    });
+    expectStrictLineRange(byNew);
+
+    const byOld = paramsOf({ startLine: 4, endLine: 6, side: 'old' });
+    expect(byOld).toMatchObject({
+      'position[line_range][start][line_code]': `${HASH['a.ts']}_4_0`,
+      'position[line_range][start][type]': 'old',
+      'position[line_range][end][line_code]': `${HASH['a.ts']}_6_0`,
+      'position[line_range][end][type]': 'old',
+    });
+    expectStrictLineRange(byOld);
+  });
+
+  it('单行评论一个 line_range 键都不发：文档的单行示例只有顶层 old_line / new_line', () => {
+    for (const position of [
+      { path: 'a.ts', startLine: 9, endLine: 9, side: 'new' as const, start: { newLine: 9 }, end: { newLine: 9 }, diffRefs: REFS },
+      { path: 'a.ts', startLine: 9, endLine: 9, side: 'old' as const, start: { oldLine: 9 }, end: { oldLine: 9 }, diffRefs: REFS },
+      { path: 'a.ts', startLine: 9, endLine: 9, side: 'new' as const, diffRefs: REFS },
+    ]) {
+      const params = Object.fromEntries(buildDiscussionPayload({ body: 'c', position })) as Record<string, string>;
+      expect(Object.keys(params).filter((key) => key.includes('line_range'))).toEqual([]);
+      expect(params['position[new_line]'] ?? params['position[old_line]']).toBe('9');
+    }
+  });
+
+  it('MR 级全文评论不发任何 position 键', () => {
+    const params = Object.fromEntries(buildDiscussionPayload({ body: 'c' }));
+    expect(Object.keys(params)).toEqual(['body']);
   });
 });
