@@ -1,4 +1,5 @@
 import { normalizeFileDiff } from './diff';
+import { sha1Hex } from './sha1';
 import { buildFullTextComment } from './findings';
 import { parseGitLabUrl, projectApiIdentifier } from './gitlab-url';
 import { debugBus } from './debug-bus';
@@ -202,6 +203,48 @@ function sideLineRef(side: 'old' | 'new', line: number): PositionLineRef {
 }
 
 /**
+ * GitLab 算 line_code 的路径口径是 `new_path.presence || old_path`
+ * （lib/gitlab/diff/file.rb#file_path，MergeRequests::ResolveDiffPositionService 也照这个解析），
+ * 和 payload 里 position[new_path] 用的是同一个值：rename 后哈希的是新路径。
+ */
+function lineCodePath(position: DiscussionPosition) {
+  return setPositionPath(position.newPath, position.oldPath, position.path)
+    || setPositionPath(position.oldPath, position.newPath, position.path);
+}
+
+/**
+ * `SHA1(file_path)_old_line_new_line`（lib/gitlab/git.rb#diff_line_code）。缺的那一侧按
+ * ResolveDiffPositionService#build_line_range_entry 的口径补 0，不是留空串——新增文件与删除文件
+ * 本来就是这个值（GitLab 解析器给它们的 old_pos / new_pos 就是 0）。
+ * 已知差异：改动文件里的新增 / 删除行，GitLab 页面上那行自己的 line_code 用的是 old_pos / new_pos
+ * （插入点行号，非 0），前端按 start.line_code 找范围起点会落空、整段不高亮；评论本身照常创建，
+ * 挂在顶层 position 那一行上（与 0.4.22 一致，不是回归）。
+ */
+function lineCode(filePath: string, line: PositionLineRef) {
+  return `${sha1Hex(filePath)}_${line.oldLine ?? 0}_${line.newLine ?? 0}`;
+}
+
+/**
+ * 文档口径：本 commit 新增的行（只有 new_line）才是 'new'，删除行与上下文行一律 'old'。
+ * GitLab 自己的 ResolveDiffPositionService 对上下文行给 nil，但文档把这 4 个键标成必填、
+ * 类型是 string，老版本严格校验时 null 一样会被 schema 拒，所以恒发字符串。
+ */
+function lineAge(line: PositionLineRef) {
+  return line.newLine !== undefined && line.oldLine === undefined ? 'new' : 'old';
+}
+
+/**
+ * line_range 的 start / end 各自 4 个键都是官方文档标的 Required：line_code、type、old_line、new_line。
+ * 19.4 的 position.json 没写 required，缺键本地照样 201；老 GitLab 严格校验就是
+ * 400 `position must be a valid json schema`。
+ */
+function setPositionRangeEndpoint(payload: URLSearchParams, prefix: string, filePath: string, line: PositionLineRef) {
+  payload.set(`${prefix}[line_code]`, lineCode(filePath, line));
+  payload.set(`${prefix}[type]`, lineAge(line));
+  setPositionLine(payload, prefix, line);
+}
+
+/**
  * 无 position 时只带 body，GitLab 会创建 MR 级全文评论。
  * position[line_range] 会被 GitLab 原样存下并按 json schema 校验（additionalProperties: false），
  * 多一个键就是 `position must be a valid json schema`，所以只发 schema 里存在的键。
@@ -222,10 +265,13 @@ export function buildDiscussionPayload(input: DiscussionDraft) {
   // 顶层 old_line / new_line 描述的是评论结束行，必须和该行在 diff 里的配对完全一致。
   const end = position.end ?? sideLineRef(position.side, position.endLine);
   setPositionLine(payload, 'position', end);
+  // 单行评论不进 line_range：文档的单行示例也只有顶层 old_line / new_line。
   if (position.startLine === position.endLine) return payload;
 
-  setPositionLine(payload, 'position[line_range][start]', position.start ?? sideLineRef(position.side, position.startLine));
-  setPositionLine(payload, 'position[line_range][end]', end);
+  const filePath = lineCodePath(position);
+  setPositionRangeEndpoint(payload, 'position[line_range][start]', filePath,
+    position.start ?? sideLineRef(position.side, position.startLine));
+  setPositionRangeEndpoint(payload, 'position[line_range][end]', filePath, end);
   return payload;
 }
 
