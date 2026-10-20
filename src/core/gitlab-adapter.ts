@@ -177,11 +177,9 @@ interface RawMergeRequestSummary {
 
 /** position 的 JSON 结构：键名逐字抄 19.4 容器 app/validators/json_schemas/position.json。 */
 export interface PositionLineRangeEndpoint {
+  /** 起止端点只有这两个键：行号一律编进 line_code，见 lineRangeEndpoint。 */
   line_code: string;
   type: 'old' | 'new';
-  /** line_range 里两侧行号恒发，缺的一侧补 0（与 line_code 的 `_0_` 同口径）。 */
-  old_line: number;
-  new_line: number;
 }
 
 export interface DiscussionPositionPayload {
@@ -248,7 +246,7 @@ function lineCode(filePath: string, line: PositionLineRef) {
 
 /**
  * 文档口径：本 commit 新增的行（只有 new_line）才是 'new'，删除行与上下文行一律 'old'。
- * GitLab 自己的 ResolveDiffPositionService 对上下文行给 nil，但文档把这 4 个键标成必填、
+ * GitLab 自己的 ResolveDiffPositionService 对上下文行给 nil，但文档把这个键标成必填、
  * 类型是 string，老版本严格校验时 null 一样会被 schema 拒，所以恒发字符串。
  */
 function lineAge(line: PositionLineRef): 'old' | 'new' {
@@ -256,21 +254,19 @@ function lineAge(line: PositionLineRef): 'old' | 'new' {
 }
 
 /**
- * line_range 的 start / end 各自 4 个键都是官方文档标的 Required：line_code、type、old_line、new_line。
- * 19.4 的 position.json 没写 required，缺键本地照样 201；老 GitLab 严格校验就是
- * 400 `position must be a valid json schema`。
- * 缺的一侧补 0，不是不发键：同一 endpoint 的 line_code 本来就按 `SHA1(path)_old_new`、缺侧为 0 生成
- * （见 lineCode），只发存在的键就和 line_code 口径打架（实测老 GitLab 上 start 两键齐、end 只有
- * new_line=674 而 line_code 已是 …_0_674 → 400）。
- * 顶层 old_line / new_line 不补：那里 GitLab 拿 (old_line, new_line) 精确比对 diff 行，补 0 反而匹配不到。
+ * line_range 的起止端点只发 line_code + type 两个键，old_line / new_line 一个都不发。
+ * 这两个行号键在 GitLab 16/17 上是类型对撞的（gitlab#572121）：API 参数层声明成 String、
+ * position.json 校验层是 integer|null —— 传整数过不了参数层、传字符串过不了 schema 层，
+ * 两头都是 400 `position 必须是有效的 json schema`。0.4.26 的「缺侧补 0」正好踩在这上面。
+ * 行号本来就已经编进 line_code（`SHA1(path)_old_new`，缺侧为 0，见 lineCode），
+ * GitLab 解析多行范围也只认 line_code：它自己的
+ * ResolveDiffPositionService#build_line_range_entry 同样只保证 line_code + type，
+ * old_line / new_line 是有值才附带的可选键。不发这两个键，两条校验路径就都碰不到对撞。
+ * 顶层 old_line / new_line 不动：对撞只在 line_range 内部，顶层照旧只发真实存在的那一侧
+ * （GitLab 拿它们精确比对 diff 行，补 0 反而匹配不到）。
  */
 function lineRangeEndpoint(filePath: string, line: PositionLineRef): PositionLineRangeEndpoint {
-  return {
-    line_code: lineCode(filePath, line),
-    type: lineAge(line),
-    old_line: line.oldLine ?? 0,
-    new_line: line.newLine ?? 0,
-  };
+  return { line_code: lineCode(filePath, line), type: lineAge(line) };
 }
 
 /**
