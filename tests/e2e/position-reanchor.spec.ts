@@ -342,16 +342,20 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
   });
 
   /**
-   * line_range 的 line_code / type 在官方文档里是 Required，19.4 容器的 position.json 没写 required，
-   * 缺键本地也 201（老 GitLab 才 400），所以这里两件事都要量：
-   * ① 4 个键齐全且值符合 GitLab 口径；② 补键之后真实 GitLab 仍然照收，并且原样把 line_range 存下来。
+   * line_range 的 4 个键（line_code / type / old_line / new_line）在官方文档里全是 Required，
+   * 19.4 容器的 position.json 没写 required，缺键本地也 201（老 GitLab 才 400），所以这里两件事都要量：
+   * ① 4 个键齐全且值符合 GitLab 口径 —— 缺的一侧补 0，和同一 endpoint 的 line_code `…_0_N` 对齐
+   *   （用户老实例的 400 现场就是 start 两键齐、end 只有 new_line 而 line_code 已是 `_0_674`）；
+   * ② 补键 / 补 0 之后真实 GitLab 仍然照收，并且原样把 line_range（含 0）存下来。
    */
-  test('多行评论：line_range 补齐官方必填的 line_code + type，真实发布仍 201 且被原样存下', async () => {
+  test('多行评论：line_range 四键齐全（缺侧 old_line / new_line 补 0），真实发布仍 201 且被原样存下', async () => {
     const results: {
       sandbox: string; pair: string; path: string; side: string; status?: number; detail?: string;
       params: SentPosition; stored?: unknown; types: string[];
     }[] = [];
     const PER_SANDBOX = 3;
+    // 真正量到「缺侧补 0」的端点数：光看 201 证明不了 0 发出去了
+    let zeroFilled = 0;
 
     for (const sandbox of SANDBOXES) {
       const label = `${sandbox.projectPath}!${sandbox.iid}`;
@@ -412,11 +416,14 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
             .toBe(`${fileHash}_${ref.oldLine ?? 0}_${ref.newLine ?? 0}`);
           expect(sent.type, `${label} ${pair} ${endpoint} 的 type 不合文档口径`)
             .toBe(ref.oldLine === undefined && ref.newLine !== undefined ? 'new' : 'old');
-          // additionalProperties: false —— schema 之外的键一个都不能有
-          expect(Object.keys(sent).sort())
-            .toEqual(['line_code', ...(ref.oldLine !== undefined ? ['old_line'] : []),
-              ...(ref.newLine !== undefined ? ['new_line'] : []), 'type'].sort());
+          // additionalProperties: false —— schema 之外的键一个都不能有；文档标的 4 个必填键一个都不能少
+          expect(Object.keys(sent).sort(), `${label} ${pair} ${endpoint} 的键不齐`)
+            .toEqual(['line_code', 'new_line', 'old_line', 'type']);
+          // 缺的一侧补 0，与上面 line_code 的 `_0_` / `_0` 逐字对齐
+          expect(sent.old_line, `${label} ${pair} ${endpoint} old_line`).toBe(ref.oldLine ?? 0);
+          expect(sent.new_line, `${label} ${pair} ${endpoint} new_line`).toBe(ref.newLine ?? 0);
           types.push(String(sent.type));
+          if (sent.old_line === 0 || sent.new_line === 0) zeroFilled += 1;
         }
 
         const posted = await postDiscussion(sandbox, position, candidate.comment);
@@ -441,19 +448,16 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
       '补齐 line_code + type 后多行评论被 GitLab 拒了').toEqual([]);
     expect(results.filter((row) => row.status === 400), '出现了 400').toHaveLength(0);
 
-    // GitLab 原样存下我们发的 4 个键（存的时候不会自己补 line_code / type）
+    // GitLab 原样存下我们发的 4 个键（存的时候不会自己补 line_code / type，也不会把 0 抹掉）
     for (const row of results) {
       const stored = row.stored as { start?: Record<string, unknown>; end?: Record<string, unknown> };
       for (const endpoint of ['start', 'end'] as const) {
         const sent = row.params.line_range![endpoint];
         expect(stored?.[endpoint], `${row.sandbox} ${row.pair} ${endpoint} 没被存下来`).toMatchObject({
-          line_code: sent.line_code, type: sent.type,
+          line_code: sent.line_code, type: sent.type, old_line: sent.old_line, new_line: sent.new_line,
         });
-        for (const field of ['old_line', 'new_line'] as const) {
-          if (sent[field] === undefined) expect(stored![endpoint]![field]).toBeUndefined();
-          else expect(stored![endpoint]![field], `${row.sandbox} ${row.pair} ${endpoint} ${field}`)
-            .toBe(sent[field]);
-        }
+        expect(Object.keys(stored![endpoint]!).sort(), `${row.sandbox} ${row.pair} ${endpoint} 存下来的键不齐`)
+          .toEqual(['line_code', 'new_line', 'old_line', 'type']);
       }
     }
 
@@ -461,6 +465,8 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
     const observed = new Set(results.flatMap((row) => row.types));
     expect(observed.has('new'), '没量到新增行端点（type=new）').toBe(true);
     expect(observed.has('old'), '没量到上下文 / 删除行端点（type=old）').toBe(true);
+    // 缺侧补 0 也真的被量到并 201：added 端点 old_line=0、removed 端点 new_line=0
+    expect(zeroFilled, '一个缺侧补 0 的端点都没量到').toBeGreaterThan(0);
   });
 
   /**
