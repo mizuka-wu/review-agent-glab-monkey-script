@@ -103,6 +103,25 @@ function payloadOf(input: Partial<Finding>, files: FileDiff[]) {
   };
 }
 
+/** line_code 的行号尾巴逐字对齐，哈希部分只校验形态（哈希值由容器里的 SHA1 决定）。 */
+const lineCode = (tail: string) => expect.stringMatching(new RegExp(`^[0-9a-f]{40}_${tail}$`));
+
+/**
+ * line_range 的起止端点只有 line_code + type 两个键：old_line / new_line 在 GitLab 16/17 上类型对撞
+ * （gitlab#572121，参数层 String、position.json 是 integer|null），传整数或字符串都会 400，所以一律不发。
+ */
+function expectLineRangeKeys(params: Record<string, string> | undefined) {
+  for (const endpoint of ['start', 'end']) {
+    const keys = Object.keys(params!)
+      .filter((key) => key.startsWith(`position[line_range][${endpoint}][`))
+      .sort();
+    expect(keys, `${endpoint} 端点只该发 line_code + type`).toEqual([
+      `position[line_range][${endpoint}][line_code]`,
+      `position[line_range][${endpoint}][type]`,
+    ]);
+  }
+}
+
 const expectNoPosition = (publish: { publishable: boolean }, position?: DiscussionPosition) => {
   expect(publish.publishable).toBe(false);
   expect(position).toBeUndefined();
@@ -118,6 +137,8 @@ describe('position 逐形态：三类 diff 行各自的行号配对', () => {
     expect(publish.lines).toEqual({ start: { newLine: 19 }, end: { newLine: 19 } });
     expect(params).toMatchObject({ 'position[new_line]': '19' });
     expect(params!['position[old_line]']).toBeUndefined();
+    // 单行评论压根没有 line_range：端点键（含行号键）自然一个都不存在
+    expect(params!['position[line_range][start][line_code]']).toBeUndefined();
     expect(params!['position[line_range][start][new_line]']).toBeUndefined();
   });
 
@@ -175,11 +196,11 @@ describe('发出去的整条 body：JSON，不是 form 平铺字段', () => {
     expect(sent!.body).toBe('b');
     const range = sent!.position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
     expect(typeof sent!.position!.new_line).toBe('number');
-    expect(range.start).toMatchObject({ type: 'new', old_line: 0, new_line: 19 });
-    expect(range.end).toMatchObject({ type: 'old', old_line: 20, new_line: 21 });
-    // 多行时 line_range 两端四个键都齐（缺侧补 0），单行时顶层仍只发真实侧
-    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'new_line', 'old_line', 'type']);
-    expect(typeof range.start.old_line).toBe('number');
+    expect(range.start).toEqual({ type: 'new', line_code: lineCode('0_19') });
+    expect(range.end).toEqual({ type: 'old', line_code: lineCode('20_21') });
+    // 多行时 line_range 两端只有 line_code + type，单行时顶层仍只发真实侧
+    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'type']);
+    expect(Object.keys(range.end).sort()).toEqual(['line_code', 'type']);
   });
 
   it('不可发布时压根没有 body：连请求都不该发出去', () => {
@@ -277,9 +298,10 @@ describe('position 逐形态：模型行号只作提示', () => {
     expect(publish.lines).toEqual({ start: { newLine: 19 }, end: { oldLine: 20, newLine: 21 } });
     expect(params).toMatchObject({
       'position[new_line]': '21', 'position[old_line]': '20',
-      'position[line_range][start][old_line]': '0', 'position[line_range][start][new_line]': '19',
-      'position[line_range][end][old_line]': '20', 'position[line_range][end][new_line]': '21',
+      'position[line_range][start][line_code]': lineCode('0_19'), 'position[line_range][start][type]': 'new',
+      'position[line_range][end][line_code]': lineCode('20_21'), 'position[line_range][end][type]': 'old',
     });
+    expectLineRangeKeys(params);
   });
 
   it('提示行号与命中位置不一致时不拿它凑 end：只覆盖真正匹配上的那一行', () => {
@@ -292,7 +314,7 @@ describe('position 逐形态：模型行号只作提示', () => {
 });
 
 describe('position 逐形态：多行评论', () => {
-  it('跨 context + added 的多行范围，起止各自取真实 diff 行的配对', () => {
+  it('跨 context + added 的多行范围，起止各自把真实 diff 行的配对编进 line_code', () => {
     const { publish, params } = payloadOf({
       line: 18, endLine: 20,
       existingCode: [
@@ -307,13 +329,14 @@ describe('position 逐形态：多行评论', () => {
       start: { oldLine: 18, newLine: 18 },
       end: { newLine: 20 },
     });
-    // 顶层 old_line / new_line 描述的是结束行，line_range 的起止再各自配对
+    // 顶层 old_line / new_line 描述的是结束行；line_range 的起止只发 line_code + type
     expect(params).toMatchObject({
       'position[new_line]': '20',
-      'position[line_range][start][old_line]': '18', 'position[line_range][start][new_line]': '18',
-      // end 是 added 行：line_range 内部缺的一侧补 0，和自己的 line_code `…_0_20` 对齐
-      'position[line_range][end][old_line]': '0', 'position[line_range][end][new_line]': '20',
+      'position[line_range][start][line_code]': lineCode('18_18'), 'position[line_range][start][type]': 'old',
+      // end 是 added 行：缺的 old 侧按 0 编进 line_code（数字进字符串，碰不到 gitlab#572121 的类型对撞）
+      'position[line_range][end][line_code]': lineCode('0_20'), 'position[line_range][end][type]': 'new',
     });
+    expectLineRangeKeys(params);
     // 顶层单侧照旧：added 行的 old_line 压根不发（GitLab 拿它精确比对 diff 行，补 0 就匹配不到）
     expect(params!['position[old_line]']).toBeUndefined();
   });
@@ -328,9 +351,10 @@ describe('position 逐形态：多行评论', () => {
     expect(publish.lines).toEqual({ start: { oldLine: 19 }, end: { oldLine: 20, newLine: 21 } });
     expect(params).toMatchObject({
       'position[old_line]': '20', 'position[new_line]': '21',
-      'position[line_range][start][old_line]': '19',
-      'position[line_range][end][old_line]': '20', 'position[line_range][end][new_line]': '21',
+      'position[line_range][start][line_code]': lineCode('19_0'), 'position[line_range][start][type]': 'old',
+      'position[line_range][end][line_code]': lineCode('20_21'), 'position[line_range][end][type]': 'old',
     });
+    expectLineRangeKeys(params);
   });
 
   it('片段里带着 diff 真实存在的空行时整段锚定，范围一直覆盖到第 5 行', () => {
@@ -345,9 +369,10 @@ describe('position 逐形态：多行评论', () => {
     expect(publish.lines).toEqual({ start: { newLine: 2 }, end: { newLine: 5 } });
     expect(params).toMatchObject({
       'position[new_line]': '5',
-      'position[line_range][start][old_line]': '0', 'position[line_range][start][new_line]': '2',
-      'position[line_range][end][old_line]': '0', 'position[line_range][end][new_line]': '5',
+      'position[line_range][start][line_code]': lineCode('0_2'), 'position[line_range][start][type]': 'new',
+      'position[line_range][end][line_code]': lineCode('0_5'), 'position[line_range][end][type]': 'new',
     });
+    expectLineRangeKeys(params);
     expect(params!['position[old_line]']).toBeUndefined();
   });
 

@@ -99,7 +99,7 @@ describe('发布链路 · GM.xmlHttpRequest 环境', () => {
     expect(JSON.parse(post.data!)).toEqual(JSON.parse(buildDiscussionPayload(singleLine)) as unknown);
   });
 
-  it('行内多行：嵌套 line_range 原样进 JSON，行号是整数不是字符串', async () => {
+  it('行内多行：嵌套 line_range 原样进 JSON，端点只有 line_code + type、顶层行号是整数', async () => {
     const details = stubGm();
     const adapter = new GitLabAdapter(page, 'glpat-test');
 
@@ -110,12 +110,15 @@ describe('发布链路 · GM.xmlHttpRequest 环境', () => {
     const range = body.position.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
     expect(body.body).toBe('inline multi');
     expect(body.position).toMatchObject({ position_type: 'text', head_sha: 'head', new_line: 14, old_line: 13 });
-    // line_range 内部两侧键恒发：start 是 added 行、缺 old 侧 → 补整数 0（与 line_code 的 `_0_12` 同口径）
-    expect(range.start).toMatchObject({ type: 'new', old_line: 0, new_line: 12 });
-    expect(range.end).toMatchObject({ type: 'old', old_line: 13, new_line: 14 });
-    expect(typeof range.end.new_line).toBe('number');
-    expect(typeof range.start.old_line).toBe('number');
-    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'new_line', 'old_line', 'type']);
+    // line_range 内部只有 line_code + type：start 是 added 行，缺的 old 侧按 0 编进 line_code 的 `_0_12`
+    expect(range.start).toMatchObject({ type: 'new', line_code: expect.stringMatching(/^[0-9a-f]{40}_0_12$/) });
+    expect(range.end).toMatchObject({ type: 'old', line_code: expect.stringMatching(/^[0-9a-f]{40}_13_14$/) });
+    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'type']);
+    expect(Object.keys(range.end).sort()).toEqual(['line_code', 'type']);
+    // 顶层行号仍是 JSON 原生整数（position.json 的 old_line / new_line 就是 integer）
+    expect(typeof body.position.new_line).toBe('number');
+    expect(typeof body.position.old_line).toBe('number');
+    expect(post.data).not.toContain('"old_line":0');
   });
 
   it('MR 总评论（notes 端点）同样是 JSON，接口照样 201', async () => {

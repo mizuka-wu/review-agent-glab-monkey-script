@@ -26,6 +26,9 @@ const payment = normalizeFileDiff({
 
 const diffRefs = { baseSha: 'base-sha', headSha: 'head-sha-abcdef', startSha: 'start-sha' };
 
+/** 19.4 容器里 Digest::SHA1.hexdigest('src/payment.ts') 跑出来的值（与本机 shasum 一致），不是测试自己算的。 */
+const PAYMENT_HASH = '605cb4731a7c5462bec11f720ce8319a24592593';
+
 /** 行内可发布时的校验结果：App 发布时手里的就是这一份。 */
 const publishable = () => resolvePublishPosition(finding(), [payment]);
 
@@ -103,11 +106,14 @@ describe('日志内容：原因 + 当时的完整参数，用户复制 console �
     expect(log).toContain('position[new_path]=src/payment.ts');
     expect(log).toContain('position[old_path]=src/payment.ts');
     expect(log).toContain('position[new_line]=10');
-    expect(log).toContain('position[line_range][start][new_line]=9');
-    expect(log).toContain('position[line_range][end][new_line]=10');
-    // line_range 缺侧补 0 之后，日志里两端都是四键齐：用户复制 positionParams 就能直接对上 line_code
-    expect(log).toContain('position[line_range][start][old_line]=0');
-    expect(log).toContain('position[line_range][end][old_line]=0');
+    // line_range 端点只有 line_code + type：行号（含缺侧的 0）全编在 line_code 里。
+    // old_line / new_line 在 GitLab 16/17 上类型对撞（gitlab#572121），传整数或字符串都会 400，所以压根不发。
+    expect(log).toContain(`position[line_range][start][line_code]=${PAYMENT_HASH}_0_9`);
+    expect(log).toContain(`position[line_range][end][line_code]=${PAYMENT_HASH}_0_10`);
+    expect(log).toContain('position[line_range][start][type]=new');
+    expect(log).toContain('position[line_range][end][type]=new');
+    expect(log).not.toContain('position[line_range][start][new_line]');
+    expect(log).not.toContain('position[line_range][end][old_line]');
     expect(log).toContain('head_sha=head-sha-abcdef');
     expect(log).toContain('server: HTTP 400');
     expect(log).toContain('line_code');
