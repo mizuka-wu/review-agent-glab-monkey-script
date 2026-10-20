@@ -156,21 +156,35 @@ Content-Type: application/json
 }
 ```
 
-旧路径行使用 `old_path` 与 `old_line`；跨多行再带 `line_range`，`start` / `end` 各自补齐官方必填的
-`line_code`、`type`、`old_line`、`new_line`（否则只锚定最相关新增行）。MR 级总评论走同一族的
+旧路径行使用 `old_path` 与 `old_line`；跨多行再带 `line_range`，`start` / `end` 各自**只带
+`line_code` 与 `type` 两个键**（否则只锚定最相关新增行）。MR 级总评论走同一族的
 `POST .../notes`，body 同样是 JSON（只有 `body` 一个键）。
 
-`line_range` 内部两侧行号**恒发**：新增行缺 `old_line` 就补 `0`、删除行缺 `new_line` 也补 `0`，
-与同一 endpoint 的 `line_code`（`SHA1(path)_old_new`，缺侧本来就是 0）口径一致。19.4 容器的
-`position.json` 没写 `required`，缺键本地照样 201，老 GitLab 严格校验就是 400
-`{:position=>['必须是有效的 json schema']}`；实测把 `line_range.start` / `.end` 的四个键标成 required 后，
-缺键的那份 payload 报 `/line_range/end … required`，补 0 的那份 0 错误、真实发布 201 并被原样存下（含 `old_line: 0`）。
-顶层 `old_line` / `new_line` 不补 0：GitLab 拿它们精确比对 diff 行（added 行只有 `new_line`、
-removed 行只有 `old_line`），补 0 反而匹配不到，单行评论因此仍然只发真实存在的那一侧。
+```json
+"line_range": {
+  "start": { "line_code": "52007ba039cb50ce9a88ec2b8d9a9f1f8996d6e8_0_16", "type": "new" },
+  "end":   { "line_code": "52007ba039cb50ce9a88ec2b8d9a9f1f8996d6e8_16_17", "type": "old" }
+}
+```
+
+`line_range` 内部**不发** `old_line` / `new_line`：这两个键在 GitLab 16/17 上类型对撞
+（[gitlab#572121](https://gitlab.com/gitlab-org/gitlab/-/issues/572121)）—— API 参数层把它们声明成
+`String`，`position.json` 校验层却是 `integer|null`：传字符串过不了 schema、传整数过不了参数层，
+两头都是 400 `{:position=>['必须是有效的 json schema']}`。0.4.26 曾按「缺侧补 `0`」把四个键齐发，
+正好踩在这个对撞上，0.4.27 撤销。行号本来就编在 `line_code`
+（`SHA1(new_path.presence || old_path)_old_line_new_line`，缺的那一侧按 0 编进字符串，没有类型问题）里，
+GitLab 解析多行范围也只认 `line_code`：它自己的
+`MergeRequests::ResolveDiffPositionService#build_line_range_entry` 同样只保证 `line_code` + `type`，
+`old_line` / `new_line` 是有值才附带的可选键。19.4 容器实测两键形态 201，且原样存下
+`{"start":{"line_code":…,"type":"new"},"end":{"line_code":…,"type":"old"}}`（服务端不会自己补行号键）。
+
+顶层 `old_line` / `new_line` 不动：类型对撞只发生在 `line_range` 内部，顶层照旧只发真实存在的那一侧
+（GitLab 拿它们精确比对 diff 行：added 行只有 `new_line`、removed 行只有 `old_line`，补 0 反而匹配不到），
+单行评论因此仍然没有 `line_range`。
 
 不用 `application/x-www-form-urlencoded`：嵌套的 `position[line_range][start][line_code]` 被 form 拆成
 平铺字段后，老 GitLab 与油猴 `GM.xmlHttpRequest` 这条链路解析出来的不是合法 position 结构，
-一律 400 `position must be a valid json schema`。JSON 直发原生结构，行号也天然是 `integer`
+一律 400 `position must be a valid json schema`。JSON 直发原生结构，顶层行号也天然是 `integer`
 （`position.json` 里 `old_line` / `new_line` 就是整数），不依赖 form 的字符串强转。
 唯一还吃 form 默认 `Content-Type` 的是没有 body 的 `POST .../approve`。
 

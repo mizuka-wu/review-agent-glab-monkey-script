@@ -159,27 +159,42 @@ Content-Type: application/json
 ```
 
 For lines on the old path, use `old_path` with `old_line`. For multiple lines, add `line_range` whose
-`start` / `end` each carry the officially required `line_code`, `type`, `old_line` and `new_line`
-(otherwise anchor only the most relevant added line). The MR-level summary note uses the sibling
-`POST .../notes` endpoint with a JSON body as well (a single `body` key).
+`start` / `end` each carry **only** `line_code` and `type` (otherwise anchor only the most relevant
+added line). The MR-level summary note uses the sibling `POST .../notes` endpoint with a JSON body as
+well (a single `body` key).
 
-Inside `line_range` both line numbers are **always** sent: an added line missing `old_line` sends `0`,
-a removed line missing `new_line` sends `0`, matching the `line_code` of the same endpoint
-(`SHA1(path)_old_new`, where the missing side is already 0). The 19.4 container's `position.json`
-declares no `required`, so a missing key still returns 201 locally while older GitLab releases answer
-400 `{:position=>['must be a valid json schema']}`. Marking the four keys of `line_range.start` / `.end`
-as required reproduces it: the payload missing a key fails with `/line_range/end … required`, while the
-zero-filled one validates cleanly, publishes with 201 and is stored verbatim (including `old_line: 0`).
-The top-level `old_line` / `new_line` are *not* zero-filled: GitLab matches them exactly against diff
-lines (an added line has only `new_line`, a removed line only `old_line`), so a 0 would match nothing —
-single-line comments therefore still send only the side that really exists.
+```json
+"line_range": {
+  "start": { "line_code": "52007ba039cb50ce9a88ec2b8d9a9f1f8996d6e8_0_16", "type": "new" },
+  "end":   { "line_code": "52007ba039cb50ce9a88ec2b8d9a9f1f8996d6e8_16_17", "type": "old" }
+}
+```
+
+Inside `line_range`, `old_line` / `new_line` are **not** sent at all: on GitLab 16/17 these two keys
+collide on type ([gitlab#572121](https://gitlab.com/gitlab-org/gitlab/-/issues/572121)) — the API
+parameter layer declares them as `String` while the `position.json` validator declares
+`integer|null`. A string fails the schema, an integer fails the parameter layer, and both answers are
+400 `{:position=>['must be a valid json schema']}`. 0.4.26 zero-filled the missing side to send all
+four keys and landed exactly on that collision; 0.4.27 reverts it. The line numbers already live in
+`line_code` (`SHA1(new_path.presence || old_path)_old_line_new_line`, the missing side encoded as `0`
+inside a string, where no type collision exists), and `line_code` is what GitLab actually resolves a
+multi-line range from: its own `MergeRequests::ResolveDiffPositionService#build_line_range_entry`
+likewise guarantees only `line_code` + `type`, attaching `old_line` / `new_line` merely when present.
+Measured on the 19.4 container, the two-key shape publishes with 201 and is stored verbatim as
+`{"start":{"line_code":…,"type":"new"},"end":{"line_code":…,"type":"old"}}` (the server adds no line
+number keys of its own).
+
+The top-level `old_line` / `new_line` are untouched: the collision only exists inside `line_range`, so
+the top level still sends only the side that really exists (GitLab matches those two exactly against
+diff lines — an added line has only `new_line`, a removed line only `old_line`, and a 0 would match
+nothing). Single-line comments therefore keep having no `line_range` at all.
 
 Never `application/x-www-form-urlencoded`: form encoding flattens the nested
 `position[line_range][start][line_code]` fields, and on older GitLab releases over the Tampermonkey
 `GM.xmlHttpRequest` path the server parses that into a malformed position, answering
-400 `position must be a valid json schema`. JSON sends the native structure, and line numbers are
-natively integers (`old_line` / `new_line` are `integer` in `position.json`) instead of relying on form
-string coercion. The only endpoint still taking the form default `Content-Type` is the bodyless
+400 `position must be a valid json schema`. JSON sends the native structure, and the top-level line
+numbers are natively integers (`old_line` / `new_line` are `integer` in `position.json`) instead of
+relying on form string coercion. The only endpoint still taking the form default `Content-Type` is the bodyless
 `POST .../approve`.
 
 ## 4. Comment Position Rules
