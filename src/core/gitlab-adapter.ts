@@ -179,8 +179,9 @@ interface RawMergeRequestSummary {
 export interface PositionLineRangeEndpoint {
   line_code: string;
   type: 'old' | 'new';
-  old_line?: number;
-  new_line?: number;
+  /** line_range 里两侧行号恒发，缺的一侧补 0（与 line_code 的 `_0_` 同口径）。 */
+  old_line: number;
+  new_line: number;
 }
 
 export interface DiscussionPositionPayload {
@@ -258,9 +259,18 @@ function lineAge(line: PositionLineRef): 'old' | 'new' {
  * line_range 的 start / end 各自 4 个键都是官方文档标的 Required：line_code、type、old_line、new_line。
  * 19.4 的 position.json 没写 required，缺键本地照样 201；老 GitLab 严格校验就是
  * 400 `position must be a valid json schema`。
+ * 缺的一侧补 0，不是不发键：同一 endpoint 的 line_code 本来就按 `SHA1(path)_old_new`、缺侧为 0 生成
+ * （见 lineCode），只发存在的键就和 line_code 口径打架（实测老 GitLab 上 start 两键齐、end 只有
+ * new_line=674 而 line_code 已是 …_0_674 → 400）。
+ * 顶层 old_line / new_line 不补：那里 GitLab 拿 (old_line, new_line) 精确比对 diff 行，补 0 反而匹配不到。
  */
 function lineRangeEndpoint(filePath: string, line: PositionLineRef): PositionLineRangeEndpoint {
-  return { line_code: lineCode(filePath, line), type: lineAge(line), ...positionLines(line) };
+  return {
+    line_code: lineCode(filePath, line),
+    type: lineAge(line),
+    old_line: line.oldLine ?? 0,
+    new_line: line.newLine ?? 0,
+  };
 }
 
 /**
