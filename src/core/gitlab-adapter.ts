@@ -4,6 +4,7 @@ import { buildFullTextComment } from './findings';
 import { parseGitLabUrl, projectApiIdentifier } from './gitlab-url';
 import { debugBus } from './debug-bus';
 import { httpRequest } from './http';
+import { isPublishRequest, logPublishRequest } from './publish-request-log';
 import type {
   AdapterCapabilities,
   DiffRefs,
@@ -365,6 +366,7 @@ export class GitLabAdapter {
   ) {}
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const method = options.method ?? 'GET';
     const headers: Record<string, string> = {
       Accept: 'application/json',
       ...options.headers,
@@ -376,11 +378,16 @@ export class GitLabAdapter {
       headers['Content-Type'] ??= 'application/x-www-form-urlencoded';
     }
 
+    const url = `${this.page.origin}${path}`;
+    // 发布链路的每一次写请求都留一份完整现场（URL / headers / body 原文 / 响应 / curl 重放）：
+    // 用户老实例上的 400 只能靠这条真实发出的请求定位，脚本侧的 position 参数替代不了它。
+    const scene = isPublishRequest(method, path) ? { method, url, headers, body: options.body } : undefined;
+
     const startedAt = Date.now();
     let response: Response;
     try {
-      response = await this.fetcher(`${this.page.origin}${path}`, {
-        method: options.method ?? 'GET',
+      response = await this.fetcher(url, {
+        method,
         headers,
         body: options.body,
         credentials: 'same-origin',
@@ -388,15 +395,19 @@ export class GitLabAdapter {
       });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
-      debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, ms: Date.now() - startedAt, error: 'network_error' });
-      debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} 连接失败`, String(error));
+      const ms = Date.now() - startedAt;
+      debugBus.network({ kind: 'gitlab', method, url: path, ms, error: 'network_error' });
+      debugBus.log('error', 'gitlab', `${method} ${path} 连接失败`, String(error));
+      if (scene) logPublishRequest({ ...scene, ok: false, ms, error: String(error) });
       throw new GitLabApiError(0, `无法连接 GitLab API：${String(error)}`, 'network_error');
     }
 
     if (!response.ok) {
       const detail = await response.text().catch(() => response.statusText);
-      debugBus.network({ kind: 'gitlab', method: options.method ?? 'GET', url: path, status: response.status, ms: Date.now() - startedAt, error: detail.slice(0, 200) });
-      debugBus.log('error', 'gitlab', `${options.method ?? 'GET'} ${path} → HTTP ${response.status}`, detail.slice(0, 300));
+      const ms = Date.now() - startedAt;
+      debugBus.network({ kind: 'gitlab', method, url: path, status: response.status, ms, error: detail.slice(0, 200) });
+      debugBus.log('error', 'gitlab', `${method} ${path} → HTTP ${response.status}`, detail.slice(0, 300));
+      if (scene) logPublishRequest({ ...scene, ok: false, ms, status: response.status, responseText: detail });
       throw new GitLabApiError(
         response.status,
         `GitLab API ${response.status}：${detail.slice(0, 300)}`,
@@ -405,10 +416,12 @@ export class GitLabAdapter {
     }
 
     const payload = (await response.json()) as T;
+    const ms = Date.now() - startedAt;
     debugBus.network({
-      kind: 'gitlab', method: options.method ?? 'GET', url: path, status: response.status,
-      ms: Date.now() - startedAt, bytes: JSON.stringify(payload).length,
+      kind: 'gitlab', method, url: path, status: response.status,
+      ms, bytes: JSON.stringify(payload).length,
     });
+    if (scene) logPublishRequest({ ...scene, ok: true, ms, status: response.status });
     return payload;
   }
 

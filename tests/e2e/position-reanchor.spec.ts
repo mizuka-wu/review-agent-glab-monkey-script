@@ -1,6 +1,9 @@
+import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import { resolvePublishPosition } from '../../src/core/anchor';
+import { debugBus } from '../../src/core/debug-bus';
 import { buildDiscussionPayload, GitLabAdapter } from '../../src/core/gitlab-adapter';
+import { CURL_TOKEN_PLACEHOLDER, PUBLISH_REQUEST_PREFIX } from '../../src/core/publish-request-log';
 import { toDiscussionPosition } from '../../src/core/reanchor';
 import { sha1Hex } from '../../src/core/sha1';
 import type {
@@ -458,5 +461,112 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
     const observed = new Set(results.flatMap((row) => row.types));
     expect(observed.has('new'), '没量到新增行端点（type=new）').toBe(true);
     expect(observed.has('old'), '没量到上下文 / 删除行端点（type=old）').toBe(true);
+  });
+
+  /**
+   * 用户老实例上 0.4.24（JSON 直发）仍然 400，脚本侧的 position 参数已经推断过两轮都没命中，
+   * 只剩「真实发出的那一条请求」这一个证据来源。这里在真实 GitLab 上各发一条：
+   * ① 故意坏的 position（行号远在 diff 之外）必被拒 → [inline-request] 必须留下 error 级现场，
+   *    含完整 URL、headers（PAT 脱敏）、body 原文、响应原文与一条 curl；
+   * ② 锚定后的真 position 必 201 → 同样留一份 debug 级现场。
+   * 并且把日志里那条 curl 原样执行一遍（只替换 <PAT>）：能跑出同一个 400 才证明用户复制过去就能重放。
+   */
+  test('发布现场日志：真实 400 带完整请求与可执行 curl，真实 201 打 debug 级', async () => {
+    const sandbox = SANDBOXES[0];
+    // Playwright 的 Node 环境里没有 document：request() 只在建 POST headers 时读一次页面 csrf meta
+    (globalThis as { document?: unknown }).document ??= { querySelector: () => null };
+    const adapter = new GitLabAdapter(
+      { origin: realGitlabUrl, route: 'diff', projectPath: sandbox.projectPath, mergeRequestIid: sandbox.iid },
+      gitlabPat,
+    );
+    const snapshot = await adapter.fetchMrDiffSnapshot(refFor(sandbox));
+    const file = snapshot.files.find((candidate) => pickRow(candidate, 'added') ?? pickRow(candidate, 'context'));
+    test.skip(file === undefined, '沙箱 MR 里没有可用的 diff 行');
+
+    const row = pickRow(file!, 'added') ?? pickRow(file!, 'context')!;
+    const path = file!.newPath === '/dev/null' ? file!.oldPath : file!.newPath;
+    const realLine = row.newLine ?? row.oldLine!;
+    const endpoint = `${realGitlabUrl}/api/v4/projects/${encodeURIComponent(sandbox.projectPath)}`
+      + `/merge_requests/${sandbox.iid}/discussions`;
+    const scenes = () => debugBus.getLogs().filter((entry) => entry.message.startsWith(PUBLISH_REQUEST_PREFIX));
+    const text = (entry: { message: string; detail?: string }) => `${entry.message}\n${entry.detail ?? ''}`;
+
+    // ① 坏 position：sha 与路径都真，只有行号在 diff 之外；正文里带一个单引号，顺便验 curl 转义
+    const brokenLine = realLine + 900000;
+    const brokenBody = `${MARKER} broken-position it's ${path}:${brokenLine}`;
+    debugBus.clear('all');
+    await expect(adapter.createDiscussion(refFor(sandbox), {
+      body: brokenBody,
+      position: {
+        path, startLine: brokenLine, endLine: brokenLine, side: 'new',
+        end: { newLine: brokenLine }, diffRefs: snapshot.context.diffRefs,
+      },
+    })).rejects.toThrow();
+
+    const failed = scenes();
+    expect(failed.length, '真实 400 没留下 [inline-request] 现场').toBe(1);
+    expect(failed[0].level).toBe('error');
+    const failedText = text(failed[0]);
+    expect(failed[0].message).toContain(`POST ${endpoint}`);
+    expect(failedText).toMatch(/HTTP \d{3}（失败）/);
+    expect(failedText).toContain('payload=inline');
+    expect(failedText).toContain('Content-Type=application/json');
+    expect(failedText).toContain('Accept=application/json');
+    // PAT 脱敏：只留首尾 4 位与长度，原值一个字都不许出现
+    expect(failedText).toContain(`PRIVATE-TOKEN=${gitlabPat.slice(0, 4)}…${gitlabPat.slice(-4)}（${gitlabPat.length} 字符）`);
+    expect(failedText).not.toContain(gitlabPat);
+    // body 原文：position 结构、行号、sha 全在里面，且与实际发出的字节一致
+    const sentBody = buildDiscussionPayload({
+      body: brokenBody,
+      position: {
+        path, startLine: brokenLine, endLine: brokenLine, side: 'new',
+        end: { newLine: brokenLine }, diffRefs: snapshot.context.diffRefs,
+      },
+    });
+    expect(failedText).toContain(`${PUBLISH_REQUEST_PREFIX} body(${sentBody.length} 字符): ${sentBody}`);
+    expect(failedText).toContain(`"new_line":${brokenLine}`);
+    expect(failedText).toContain(`"head_sha":"${snapshot.context.diffRefs.headSha}"`);
+    // 响应原文：GitLab 自己那句拒绝理由
+    expect(failedText).toContain(`${PUBLISH_REQUEST_PREFIX} response: HTTP`);
+    expect(failedText).toMatch(/position|line_code|note/i);
+
+    // curl 重放命令：单行、带 <PAT> 占位、body 里的单引号已转义，原样执行得到同一个拒绝
+    const curlLine = failedText.split('\n').find((line) => line.includes('curl -sS'));
+    expect(curlLine, '现场里没有 curl 重放命令').toBeDefined();
+    const command = curlLine!.slice(curlLine!.indexOf('curl -sS'));
+    expect(command).toContain(`-X POST '${endpoint}'`);
+    expect(command).toContain(`-H 'Content-Type: application/json'`);
+    expect(command).toContain(`-H 'PRIVATE-TOKEN: ${CURL_TOKEN_PLACEHOLDER}'`);
+    expect(command).toContain(`--data '${sentBody.replace(/'/g, `'\\''`)}'`);
+    expect(command).toContain(`it'\\''s`);
+    expect(command.split('\n')).toHaveLength(1);
+    const replay = execFileSync('bash', ['-c', command.replaceAll(CURL_TOKEN_PLACEHOLDER, gitlabPat)], { encoding: 'utf8' });
+    expect(replay, 'curl 重放没跑出 GitLab 的拒绝响应').toMatch(/message|position|line_code/i);
+
+    // ② 真 position：内容重新锚定后真实 201，同样留一份 debug 级现场
+    const candidate = draft({
+      path, line: realLine + 11, endLine: realLine + 11, side: 'new', existingCode: row.text,
+      comment: `${MARKER} request-log ${path}:${realLine}`,
+    });
+    const publish = resolvePublishPosition(candidate, snapshot.files);
+    expect(publish.publishable, `锚定失败：${publish.reason}`).toBe(true);
+    const position = toDiscussionPosition(publish, snapshot.context.diffRefs)!;
+    debugBus.clear('logs');
+    const created = await adapter.createDiscussion(refFor(sandbox), { body: candidate.comment, position });
+    expect(created.id).not.toBe('');
+
+    const succeeded = scenes();
+    expect(succeeded.length, '真实 201 没留下 [inline-request] 现场').toBe(1);
+    expect(succeeded[0].level).toBe('debug');
+    const okText = text(succeeded[0]);
+    expect(okText).toContain('HTTP 201（成功）');
+    expect(okText).toContain('payload=inline');
+    expect(okText).toContain(buildDiscussionPayload({ body: candidate.comment, position }));
+    expect(okText).toContain('curl -sS -X POST');
+    expect(okText).not.toContain(gitlabPat);
+    // 面板导出包里也是同一份现场：用户不用翻 console 也能把它发过来
+    expect(debugBus.exportBundle()).toContain('inline-request');
+
+    await cleanProbes(sandbox);
   });
 });

@@ -166,6 +166,13 @@ Content-Type: application/json
 （`position.json` 里 `old_line` / `new_line` 就是整数），不依赖 form 的字符串强转。
 唯一还吃 form 默认 `Content-Type` 的是没有 body 的 `POST .../approve`。
 
+这一族的每一次写请求都在传输层出口留下完整现场（`[inline-request]` 前缀，console + 调试面板 + 导出包同一份）：
+method 与完整 URL、真实发出的 headers（`PRIVATE-TOKEN` 只留首尾 4 位与长度，CSRF / Authorization 全抹）、
+body 原文（不截断，`position` 的每个键都在里面）、响应状态与失败时的响应 body 原文，以及一条替换 `<PAT>`
+后即可直接粘贴执行的 `curl` 重放命令。失败必打（error 级），成功也打一条 debug 级。自部署实例上的
+400 / 409 / 422 只能靠这条真实请求定位——脚本侧的 `[inline-fallback]` 参数说明「我们想发什么」，
+`[inline-request]` 说明「实际发出去了什么字节」，两者一起看才分得清是脚本拼错还是那台 GitLab 校验更严。
+
 ## 4. 评论位置规则
 
 ### 4.1 可定位条件
