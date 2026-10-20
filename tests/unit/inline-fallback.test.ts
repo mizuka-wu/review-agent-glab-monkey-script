@@ -105,6 +105,9 @@ describe('日志内容：原因 + 当时的完整参数，用户复制 console �
     expect(log).toContain('position[new_line]=10');
     expect(log).toContain('position[line_range][start][new_line]=9');
     expect(log).toContain('position[line_range][end][new_line]=10');
+    // line_range 缺侧补 0 之后，日志里两端都是四键齐：用户复制 positionParams 就能直接对上 line_code
+    expect(log).toContain('position[line_range][start][old_line]=0');
+    expect(log).toContain('position[line_range][end][old_line]=0');
     expect(log).toContain('head_sha=head-sha-abcdef');
     expect(log).toContain('server: HTTP 400');
     expect(log).toContain('line_code');

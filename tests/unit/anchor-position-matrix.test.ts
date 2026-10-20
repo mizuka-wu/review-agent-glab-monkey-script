@@ -175,8 +175,11 @@ describe('发出去的整条 body：JSON，不是 form 平铺字段', () => {
     expect(sent!.body).toBe('b');
     const range = sent!.position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
     expect(typeof sent!.position!.new_line).toBe('number');
-    expect(range.start).toMatchObject({ type: 'new', new_line: 19 });
+    expect(range.start).toMatchObject({ type: 'new', old_line: 0, new_line: 19 });
     expect(range.end).toMatchObject({ type: 'old', old_line: 20, new_line: 21 });
+    // 多行时 line_range 两端四个键都齐（缺侧补 0），单行时顶层仍只发真实侧
+    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'new_line', 'old_line', 'type']);
+    expect(typeof range.start.old_line).toBe('number');
   });
 
   it('不可发布时压根没有 body：连请求都不该发出去', () => {
@@ -274,7 +277,7 @@ describe('position 逐形态：模型行号只作提示', () => {
     expect(publish.lines).toEqual({ start: { newLine: 19 }, end: { oldLine: 20, newLine: 21 } });
     expect(params).toMatchObject({
       'position[new_line]': '21', 'position[old_line]': '20',
-      'position[line_range][start][new_line]': '19',
+      'position[line_range][start][old_line]': '0', 'position[line_range][start][new_line]': '19',
       'position[line_range][end][old_line]': '20', 'position[line_range][end][new_line]': '21',
     });
   });
@@ -308,10 +311,11 @@ describe('position 逐形态：多行评论', () => {
     expect(params).toMatchObject({
       'position[new_line]': '20',
       'position[line_range][start][old_line]': '18', 'position[line_range][start][new_line]': '18',
-      'position[line_range][end][new_line]': '20',
+      // end 是 added 行：line_range 内部缺的一侧补 0，和自己的 line_code `…_0_20` 对齐
+      'position[line_range][end][old_line]': '0', 'position[line_range][end][new_line]': '20',
     });
+    // 顶层单侧照旧：added 行的 old_line 压根不发（GitLab 拿它精确比对 diff 行，补 0 就匹配不到）
     expect(params!['position[old_line]']).toBeUndefined();
-    expect(params!['position[line_range][end][old_line]']).toBeUndefined();
   });
 
   it('跨 removed + context 的多行范围落在 old 侧，结束行的两个号都带上', () => {
@@ -341,9 +345,10 @@ describe('position 逐形态：多行评论', () => {
     expect(publish.lines).toEqual({ start: { newLine: 2 }, end: { newLine: 5 } });
     expect(params).toMatchObject({
       'position[new_line]': '5',
-      'position[line_range][start][new_line]': '2',
-      'position[line_range][end][new_line]': '5',
+      'position[line_range][start][old_line]': '0', 'position[line_range][start][new_line]': '2',
+      'position[line_range][end][old_line]': '0', 'position[line_range][end][new_line]': '5',
     });
+    expect(params!['position[old_line]']).toBeUndefined();
   });
 
   it('模型多带的首尾空行剪掉后仍能锚定，范围按真正匹配上的行算', () => {

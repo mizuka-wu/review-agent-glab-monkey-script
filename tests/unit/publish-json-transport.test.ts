@@ -110,10 +110,12 @@ describe('发布链路 · GM.xmlHttpRequest 环境', () => {
     const range = body.position.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
     expect(body.body).toBe('inline multi');
     expect(body.position).toMatchObject({ position_type: 'text', head_sha: 'head', new_line: 14, old_line: 13 });
-    expect(range.start).toMatchObject({ type: 'new', new_line: 12 });
+    // line_range 内部两侧键恒发：start 是 added 行、缺 old 侧 → 补整数 0（与 line_code 的 `_0_12` 同口径）
+    expect(range.start).toMatchObject({ type: 'new', old_line: 0, new_line: 12 });
     expect(range.end).toMatchObject({ type: 'old', old_line: 13, new_line: 14 });
     expect(typeof range.end.new_line).toBe('number');
-    expect('old_line' in range.start).toBe(false);
+    expect(typeof range.start.old_line).toBe('number');
+    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'new_line', 'old_line', 'type']);
   });
 
   it('MR 总评论（notes 端点）同样是 JSON，接口照样 201', async () => {

@@ -111,8 +111,8 @@ describe('GitLab discussion payload（JSON body）', () => {
     expect(position!.new_line).toBe(16);
     expect('old_line' in position!).toBe(false);
     expect(range.start).toMatchObject({ old_line: 15, new_line: 15 });
-    expect(range.end.new_line).toBe(16);
-    expect('old_line' in range.end).toBe(false);
+    // line_range 内部两侧恒发：added 行缺 old 侧就补 0，与 end 自己的 line_code `…_0_16` 同口径
+    expect(range.end).toMatchObject({ old_line: 0, new_line: 16 });
   });
 
   it('only emits line_range keys the GitLab json schema allows', () => {
@@ -804,19 +804,18 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
       // position.json 里 line_range.start / .end 都是 additionalProperties: false，多一个键整条 400
       expect(Object.keys(sent).filter((field) => !SCHEMA_FIELDS.includes(field)), `${endpoint} 多了 schema 不允许的键`).toEqual([]);
 
-      // 文档标的两个 Required 键：line_code 是 SHA1(path)_old_new，type 只能是 'new' / 'old'
+      // 文档标的 4 个 Required 键一个都不许少：缺键就是老 GitLab 的 400 `position 必须是有效的 json schema`
+      expect(SCHEMA_FIELDS.filter((field) => !(field in sent)), `${endpoint} 缺了必填键`).toEqual([]);
       expect(sent.line_code, `${endpoint} 缺 line_code`).toMatch(/^[0-9a-f]{40}_\d+_\d+$/);
       expect(['new', 'old'], `${endpoint} 的 type 不是字符串枚举`).toContain(sent.type);
 
-      // line_code 里的行号必须和同一 endpoint 的 old_line / new_line 对得上，缺的一侧按 GitLab 口径补 0
+      // line_code 里的行号必须和同一 endpoint 的 old_line / new_line 逐字对得上（缺侧两边都是 0）
       const [, oldPart, newPart] = String(sent.line_code).split('_');
-      expect(Number(oldPart), `${endpoint} line_code 的 old 行号和 old_line 不一致`)
-        .toBe(sent.old_line === undefined ? 0 : Number(sent.old_line));
-      expect(Number(newPart), `${endpoint} line_code 的 new 行号和 new_line 不一致`)
-        .toBe(sent.new_line === undefined ? 0 : Number(sent.new_line));
-      // 只有本 commit 新增的行（没有 old_line）才是 'new'
+      expect(Number(oldPart), `${endpoint} line_code 的 old 行号和 old_line 不一致`).toBe(Number(sent.old_line));
+      expect(Number(newPart), `${endpoint} line_code 的 new 行号和 new_line 不一致`).toBe(Number(sent.new_line));
+      // 只有本 commit 新增的行（old 侧为 0）才是 'new'
       expect(sent.type, `${endpoint} 的 type 和行号配对不自洽`)
-        .toBe(sent.old_line === undefined ? 'new' : 'old');
+        .toBe(Number(sent.old_line) === 0 && Number(sent.new_line) !== 0 ? 'new' : 'old');
     }
   }
 
@@ -829,8 +828,7 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
     expect(range.start).toEqual({
       line_code: `${HASH['a.ts']}_18_18`, type: 'old', old_line: 18, new_line: 18,
     });
-    expect(range.end).toEqual({ line_code: `${HASH['a.ts']}_0_20`, type: 'new', new_line: 20 });
-    expect('old_line' in range.end).toBe(false);
+    expect(range.end).toEqual({ line_code: `${HASH['a.ts']}_0_20`, type: 'new', old_line: 0, new_line: 20 });
     expectStrictLineRange(params);
   });
 
@@ -918,6 +916,102 @@ describe('discussion payload: line_range 官方必填键（line_code + type）',
 });
 
 /**
+ * 用户老实例（0.4.25）的 400 现场：673–674 的两行 Finding，start 是 context 行、end 是 added 行。
+ * [inline-fallback] 的 positionParams 里量到 start 两键齐（old_line=652, new_line=673）、end 只有
+ * new_line=674，而同一 endpoint 的 line_code 已经是 `…_0_674` —— 键与 line_code 口径不一致，
+ * 老 GitLab 回 400 `{:position=>['必须是有效的 json schema']}`。
+ * 修法：line_range 内部 start / end 一律 old_line + new_line 两键齐发，缺的那侧补 0。
+ */
+describe('line_range 缺侧补 0：键与 line_code 口径对齐（老实例 400 回归）', () => {
+  const REFS = { baseSha: 'b', headSha: 'h', startSha: 's' };
+  // 19.4 容器里 Digest::SHA1.hexdigest('src/pricing.ts') 跑出来的值，不是测试自己算的
+  const PRICING = '9d3d2f4d24112ccf27049b387c057b9d7d9676ce';
+  const SCHEMA_FIELDS = ['line_code', 'new_line', 'old_line', 'type'];
+
+  type SentRange = { start: Record<string, unknown>; end: Record<string, unknown> };
+
+  const payloadOf = (position: Partial<DiscussionPosition> & { startLine: number; endLine: number }) =>
+    buildDiscussionPayload({
+      body: 'c',
+      position: { path: 'src/pricing.ts', side: 'new', diffRefs: REFS, ...position } as DiscussionPosition,
+    });
+
+  const rangeOf = (payload: string) =>
+    (JSON.parse(payload) as SentDiscussion).position!.line_range as unknown as SentRange;
+
+  it('老实例形态：context 起点 + added 终点，start / end 都是 old_line + new_line 两键齐发', () => {
+    const payload = payloadOf({
+      startLine: 673, endLine: 674, side: 'new',
+      start: { oldLine: 652, newLine: 673 }, end: { newLine: 674 },
+    });
+    const range = rangeOf(payload);
+    expect(range.start).toEqual({ line_code: `${PRICING}_652_673`, type: 'old', old_line: 652, new_line: 673 });
+    // 补 0 之前这里是 { line_code: `${PRICING}_0_674`, type: 'new', new_line: 674 } —— 少了 old_line
+    expect(range.end).toEqual({ line_code: `${PRICING}_0_674`, type: 'new', old_line: 0, new_line: 674 });
+    // JSON 原文里就是整数 0：不是 null、不是空串、更不是缺键
+    expect(payload).toContain('"old_line":0');
+    expect(payload).not.toContain('"old_line":null');
+    for (const endpoint of ['start', 'end'] as const) {
+      expect(Object.keys(range[endpoint]).sort()).toEqual(SCHEMA_FIELDS);
+    }
+  });
+
+  it('removed 端点缺 new 侧同样补 0，键与 line_code 的 `_0` 对齐', () => {
+    const range = rangeOf(payloadOf({
+      startLine: 19, endLine: 21, side: 'old',
+      start: { oldLine: 19 }, end: { oldLine: 20, newLine: 21 },
+    }));
+    expect(range.start).toMatchObject({ type: 'old', old_line: 19, new_line: 0 });
+    expect(range.start.line_code).toBe(`${PRICING}_19_0`);
+    expect(range.end).toMatchObject({ type: 'old', old_line: 20, new_line: 21 });
+    expect(Object.keys(range.start).sort()).toEqual(SCHEMA_FIELDS);
+  });
+
+  it('新增文件：两端 old 侧都是 0，四个键照样齐', () => {
+    const range = rangeOf(payloadOf({
+      path: 'src/new.ts', oldPath: '/dev/null', newPath: 'src/new.ts',
+      startLine: 1, endLine: 3, side: 'new', start: { newLine: 1 }, end: { newLine: 3 },
+    }));
+    for (const endpoint of ['start', 'end'] as const) {
+      expect(Object.keys(range[endpoint]).sort()).toEqual(SCHEMA_FIELDS);
+      expect(range[endpoint].old_line).toBe(0);
+    }
+    expect(range.start.new_line).toBe(1);
+    expect(range.end.new_line).toBe(3);
+  });
+
+  it('没有 diff 行配对时按 side 兜底：兜出来的一侧是真实行号，另一侧是 0', () => {
+    const byNew = rangeOf(payloadOf({ startLine: 2, endLine: 5, side: 'new' }));
+    expect(byNew.start).toMatchObject({ old_line: 0, new_line: 2 });
+    expect(byNew.end).toMatchObject({ old_line: 0, new_line: 5 });
+
+    const byOld = rangeOf(payloadOf({ startLine: 4, endLine: 6, side: 'old' }));
+    expect(byOld.start).toMatchObject({ old_line: 4, new_line: 0 });
+    expect(byOld.end).toMatchObject({ old_line: 6, new_line: 0 });
+  });
+
+  it('单行评论不动：顶层只发真实存在的那一侧，且压根没有 line_range', () => {
+    const cases = [
+      // added 行：顶层只有 new_line（补 0 会让 GitLab 比对不到 diff 行）
+      { position: { path: 'a.ts', startLine: 674, endLine: 674, side: 'new' as const, start: { newLine: 674 }, end: { newLine: 674 }, diffRefs: REFS }, sides: ['new_line'], lines: { new_line: 674 } },
+      // removed 行：顶层只有 old_line
+      { position: { path: 'a.ts', startLine: 19, endLine: 19, side: 'old' as const, start: { oldLine: 19 }, end: { oldLine: 19 }, diffRefs: REFS }, sides: ['old_line'], lines: { old_line: 19 } },
+      // context 行：两侧都真实存在，两侧都发，一个 0 都不该出现
+      { position: { path: 'a.ts', startLine: 21, endLine: 21, side: 'new' as const, start: { oldLine: 20, newLine: 21 }, end: { oldLine: 20, newLine: 21 }, diffRefs: REFS }, sides: ['old_line', 'new_line'], lines: { old_line: 20, new_line: 21 } },
+    ];
+    for (const { position, sides, lines } of cases) {
+      const payload = buildDiscussionPayload({ body: 'c', position });
+      const params = (JSON.parse(payload) as SentDiscussion).position!;
+      expect('line_range' in params).toBe(false);
+      expect(payload).not.toContain('line_range');
+      expect(payload).not.toContain('"old_line":0');
+      expect(['old_line', 'new_line'].filter((field) => field in params)).toEqual(sides);
+      expect(params).toMatchObject(lines);
+    }
+  });
+});
+
+/**
  * 真实链路（老 GitLab + 油猴 GM.xmlHttpRequest）上 form 编码的嵌套 position 会被解析成畸形结构，
  * GitLab 只回一句 400 `position 必须是有效的 json schema`。发布端点因此一律改发 JSON：
  * 这里把「真的打到 fetcher 的那一次请求」的 Content-Type 与 body 结构钉死。
@@ -977,7 +1071,7 @@ describe('发布端点走 JSON body（不再 form 编码嵌套 position）', () 
     });
   });
 
-  it('多行行内评论：line_range 是嵌套对象，行号是整数，缺的一侧整个键都不出现', async () => {
+  it('多行行内评论：line_range 是嵌套对象，行号是整数，缺的一侧补 0', async () => {
     const { adapter, seen } = recorder();
 
     await adapter.createDiscussion(ref, {
@@ -993,12 +1087,14 @@ describe('发布端点走 JSON body（不再 form 编码嵌套 position）', () 
     const range = body.position!.line_range as { start: Record<string, unknown>; end: Record<string, unknown> };
     expect(body.body).toBe('inline multi');
     expect(body.position).toMatchObject({ position_type: 'text', old_line: 13, new_line: 14 });
-    expect(range.start).toMatchObject({ type: 'new', new_line: 12 });
+    expect(range.start).toMatchObject({ type: 'new', old_line: 0, new_line: 12 });
     expect(range.start.line_code).toMatch(/^[0-9a-f]{40}_0_12$/);
     expect(range.end).toMatchObject({ type: 'old', old_line: 13, new_line: 14 });
     expect(range.end.line_code).toMatch(/^[0-9a-f]{40}_13_14$/);
-    expect('old_line' in range.start).toBe(false);
+    // line_range 内部四个键恒发（缺侧 0），顶层 old_line / new_line 仍只发真实存在的那侧
+    expect(Object.keys(range.start).sort()).toEqual(['line_code', 'new_line', 'old_line', 'type']);
     expect(Object.keys(range)).toEqual(['start', 'end']);
+    expect(seen[0].body).toContain('"old_line":0');
   });
 
   it('MR 级全文评论：body 里只有 body 一个键，position 整个不出现', async () => {
