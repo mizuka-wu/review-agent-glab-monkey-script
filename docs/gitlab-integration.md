@@ -160,6 +160,14 @@ Content-Type: application/json
 `line_code`、`type`、`old_line`、`new_line`（否则只锚定最相关新增行）。MR 级总评论走同一族的
 `POST .../notes`，body 同样是 JSON（只有 `body` 一个键）。
 
+`line_range` 内部两侧行号**恒发**：新增行缺 `old_line` 就补 `0`、删除行缺 `new_line` 也补 `0`，
+与同一 endpoint 的 `line_code`（`SHA1(path)_old_new`，缺侧本来就是 0）口径一致。19.4 容器的
+`position.json` 没写 `required`，缺键本地照样 201，老 GitLab 严格校验就是 400
+`{:position=>['必须是有效的 json schema']}`；实测把 `line_range.start` / `.end` 的四个键标成 required 后，
+缺键的那份 payload 报 `/line_range/end … required`，补 0 的那份 0 错误、真实发布 201 并被原样存下（含 `old_line: 0`）。
+顶层 `old_line` / `new_line` 不补 0：GitLab 拿它们精确比对 diff 行（added 行只有 `new_line`、
+removed 行只有 `old_line`），补 0 反而匹配不到，单行评论因此仍然只发真实存在的那一侧。
+
 不用 `application/x-www-form-urlencoded`：嵌套的 `position[line_range][start][line_code]` 被 form 拆成
 平铺字段后，老 GitLab 与油猴 `GM.xmlHttpRequest` 这条链路解析出来的不是合法 position 结构，
 一律 400 `position must be a valid json schema`。JSON 直发原生结构，行号也天然是 `integer`

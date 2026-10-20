@@ -163,6 +163,17 @@ For lines on the old path, use `old_path` with `old_line`. For multiple lines, a
 (otherwise anchor only the most relevant added line). The MR-level summary note uses the sibling
 `POST .../notes` endpoint with a JSON body as well (a single `body` key).
 
+Inside `line_range` both line numbers are **always** sent: an added line missing `old_line` sends `0`,
+a removed line missing `new_line` sends `0`, matching the `line_code` of the same endpoint
+(`SHA1(path)_old_new`, where the missing side is already 0). The 19.4 container's `position.json`
+declares no `required`, so a missing key still returns 201 locally while older GitLab releases answer
+400 `{:position=>['must be a valid json schema']}`. Marking the four keys of `line_range.start` / `.end`
+as required reproduces it: the payload missing a key fails with `/line_range/end … required`, while the
+zero-filled one validates cleanly, publishes with 201 and is stored verbatim (including `old_line: 0`).
+The top-level `old_line` / `new_line` are *not* zero-filled: GitLab matches them exactly against diff
+lines (an added line has only `new_line`, a removed line only `old_line`), so a 0 would match nothing —
+single-line comments therefore still send only the side that really exists.
+
 Never `application/x-www-form-urlencoded`: form encoding flattens the nested
 `position[line_range][start][line_code]` fields, and on older GitLab releases over the Tampermonkey
 `GM.xmlHttpRequest` path the server parses that into a malformed position, answering
