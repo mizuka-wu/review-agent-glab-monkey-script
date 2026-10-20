@@ -342,20 +342,21 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
   });
 
   /**
-   * line_range 的 4 个键（line_code / type / old_line / new_line）在官方文档里全是 Required，
-   * 19.4 容器的 position.json 没写 required，缺键本地也 201（老 GitLab 才 400），所以这里两件事都要量：
-   * ① 4 个键齐全且值符合 GitLab 口径 —— 缺的一侧补 0，和同一 endpoint 的 line_code `…_0_N` 对齐
-   *   （用户老实例的 400 现场就是 start 两键齐、end 只有 new_line 而 line_code 已是 `_0_674`）；
-   * ② 补键 / 补 0 之后真实 GitLab 仍然照收，并且原样把 line_range（含 0）存下来。
+   * line_range 的起止端点只发 line_code + type：old_line / new_line 在 GitLab 16/17 上类型对撞
+   * （gitlab#572121）——API 参数层声明成 String、position.json 校验层是 integer|null，
+   * 传整数过不了参数层、传字符串过不了 schema 层，两头都是 400。行号一律编进 line_code
+   * （`SHA1(path)_old_new`，缺侧为 0）。这里两件事都要量：
+   * ① 发出去的端点恰好两个键，line_code 与真实 diff 行的配对逐字对齐；
+   * ② 真实 GitLab 照收（201），并且原样把 {line_code, type} 存下来，不自己补行号键。
    */
-  test('多行评论：line_range 四键齐全（缺侧 old_line / new_line 补 0），真实发布仍 201 且被原样存下', async () => {
+  test('多行评论：line_range 只发 line_code + type，真实发布仍 201 且被原样存下', async () => {
     const results: {
       sandbox: string; pair: string; path: string; side: string; status?: number; detail?: string;
       params: SentPosition; stored?: unknown; types: string[];
     }[] = [];
     const PER_SANDBOX = 3;
-    // 真正量到「缺侧补 0」的端点数：光看 201 证明不了 0 发出去了
-    let zeroFilled = 0;
+    // 真正量到「缺侧编成 0」的端点数：光看 201 证明不了 added / removed 端点的 line_code 里那个 0
+    let zeroEncoded = 0;
 
     for (const sandbox of SANDBOXES) {
       const label = `${sandbox.projectPath}!${sandbox.iid}`;
@@ -416,14 +417,13 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
             .toBe(`${fileHash}_${ref.oldLine ?? 0}_${ref.newLine ?? 0}`);
           expect(sent.type, `${label} ${pair} ${endpoint} 的 type 不合文档口径`)
             .toBe(ref.oldLine === undefined && ref.newLine !== undefined ? 'new' : 'old');
-          // additionalProperties: false —— schema 之外的键一个都不能有；文档标的 4 个必填键一个都不能少
-          expect(Object.keys(sent).sort(), `${label} ${pair} ${endpoint} 的键不齐`)
-            .toEqual(['line_code', 'new_line', 'old_line', 'type']);
-          // 缺的一侧补 0，与上面 line_code 的 `_0_` / `_0` 逐字对齐
-          expect(sent.old_line, `${label} ${pair} ${endpoint} old_line`).toBe(ref.oldLine ?? 0);
-          expect(sent.new_line, `${label} ${pair} ${endpoint} new_line`).toBe(ref.newLine ?? 0);
+          // additionalProperties: false，且 gitlab#572121 的对撞键一个都不发：端点恰好两个键
+          expect(Object.keys(sent).sort(), `${label} ${pair} ${endpoint} 的键不是 line_code + type`)
+            .toEqual(['line_code', 'type']);
+          expect(sent.old_line, `${label} ${pair} ${endpoint} 又发了 old_line`).toBeUndefined();
+          expect(sent.new_line, `${label} ${pair} ${endpoint} 又发了 new_line`).toBeUndefined();
           types.push(String(sent.type));
-          if (sent.old_line === 0 || sent.new_line === 0) zeroFilled += 1;
+          if (ref.oldLine === undefined || ref.newLine === undefined) zeroEncoded += 1;
         }
 
         const posted = await postDiscussion(sandbox, position, candidate.comment);
@@ -445,19 +445,18 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
     expect(results.length, '沙箱 MR 里一段连续两行都没量到').toBeGreaterThan(0);
     const rejected = results.filter((row) => row.status !== 201);
     expect(rejected.map((row) => `${row.sandbox} ${row.pair} ${row.path} → ${row.status} ${row.detail}`),
-      '补齐 line_code + type 后多行评论被 GitLab 拒了').toEqual([]);
+      '只发 line_code + type 后多行评论被 GitLab 拒了').toEqual([]);
     expect(results.filter((row) => row.status === 400), '出现了 400').toHaveLength(0);
 
-    // GitLab 原样存下我们发的 4 个键（存的时候不会自己补 line_code / type，也不会把 0 抹掉）
+    // GitLab 原样存下我们发的两个键：不会自己补 old_line / new_line，也不会改 line_code / type
     for (const row of results) {
       const stored = row.stored as { start?: Record<string, unknown>; end?: Record<string, unknown> };
       for (const endpoint of ['start', 'end'] as const) {
         const sent = row.params.line_range![endpoint];
-        expect(stored?.[endpoint], `${row.sandbox} ${row.pair} ${endpoint} 没被存下来`).toMatchObject({
-          line_code: sent.line_code, type: sent.type, old_line: sent.old_line, new_line: sent.new_line,
-        });
-        expect(Object.keys(stored![endpoint]!).sort(), `${row.sandbox} ${row.pair} ${endpoint} 存下来的键不齐`)
-          .toEqual(['line_code', 'new_line', 'old_line', 'type']);
+        expect(stored?.[endpoint], `${row.sandbox} ${row.pair} ${endpoint} 没被存下来`)
+          .toEqual({ line_code: sent.line_code, type: sent.type });
+        expect(Object.keys(stored![endpoint]!).sort(), `${row.sandbox} ${row.pair} ${endpoint} 存下来的键不是两个`)
+          .toEqual(['line_code', 'type']);
       }
     }
 
@@ -465,8 +464,8 @@ test.describe('anchor → GitLab position 重新锚定（真实 GitLab）', () =
     const observed = new Set(results.flatMap((row) => row.types));
     expect(observed.has('new'), '没量到新增行端点（type=new）').toBe(true);
     expect(observed.has('old'), '没量到上下文 / 删除行端点（type=old）').toBe(true);
-    // 缺侧补 0 也真的被量到并 201：added 端点 old_line=0、removed 端点 new_line=0
-    expect(zeroFilled, '一个缺侧补 0 的端点都没量到').toBeGreaterThan(0);
+    // 缺侧编进 line_code 的 0 也真的被量到并 201：added 端点 `…_0_N`、removed 端点 `…_N_0`
+    expect(zeroEncoded, '一个缺侧编 0 的端点都没量到').toBeGreaterThan(0);
   });
 
   /**
